@@ -1,0 +1,48 @@
+name: Classify Properties
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_csv:
+        description: >
+          Paste the full contents of your input CSV here.
+          Required columns: RecordID, Property Name, Address, MDU
+        required: true
+        type: string
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install openai requests beautifulsoup4
+
+      - name: Write input CSV
+        run: |
+          cat << 'INPUT_EOF' > input_properties.csv
+          ${{ github.event.inputs.input_csv }}
+          INPUT_EOF
+
+      - name: Run property classifier
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python classifier.py --input input_properties.csv --output classified_results.csv
+
+      - name: Upload results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: classified-results
+          path: classified_results.csv
+          retention-days: 30
+
+      - name: Print results to log
+        run: cat classified_results.csv
