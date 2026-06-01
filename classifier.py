@@ -8,7 +8,10 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 BATCH_SIZE = 20
 
-SYSTEM_PROMPT = """You are a property classification agent. You will be given a list of properties, each with the following fields: Property Name, Address, MDU, and RecordID. Your job is to classify each property as an **Apartment**, **COA**, **HOA**, or **Other** by searching the web.
+# The model only needs to return the 4 classification columns, keyed by row index.
+# Input fields (RecordID, Property Name, Address, MDU) are always taken from the
+# original parsed CSV — never from the model output.
+SYSTEM_PROMPT = """You are a property classification agent. You will be given a list of properties, each with the following fields: RowIndex, Property Name, Address, MDU, and RecordID. Your job is to classify each property as an **Apartment**, **COA**, **HOA**, or **Other** by searching the web.
 
 Follow these steps for each property:
 
@@ -63,19 +66,19 @@ Follow these steps for each property:
    - If both sets of keywords appear, flag as ambiguous in the Notes field.
    - If neither set appears, note low confidence and make a best guess based on whatever association language is present.
 
-4. **Output a CSV file** with the following columns in this exact order:
-
-   RecordID, Property Name, Address, MDU, Classification, Confidence, Key Evidence, Notes
+4. **Output format:**
+   Return a CSV with exactly these columns in this order:
+   RowIndex, Classification, Confidence, Key Evidence, Notes
 
    Rules:
-   - **RecordID, Property Name, Address, and MDU must be copied exactly from the input — do not alter, clean, or reformat them.**
+   - RowIndex: copy exactly from the input
    - Classification: one of Apartment | COA | HOA | Other – <subtype>
    - Confidence: High | Medium | Low
-   - Key Evidence: the exact keyword or phrase found and the source it was found on (e.g. "homeowners association" — zillow.com)
-   - Notes: any conflicts, ambiguities, or multiple properties matching the same name and zip; leave blank if none
-   - Wrap all fields in double quotes to handle commas within values
-
-Return ONLY the CSV output with no additional text, explanation, or markdown formatting. Include the header row."""
+   - Key Evidence: the exact keyword or phrase found and the source (e.g. "homeowners association" — zillow.com)
+   - Notes: any conflicts or ambiguities; leave blank if none
+   - Wrap all fields in double quotes
+   - Include the header row
+   - Return ONLY the CSV — no extra text, explanation, or markdown"""
 
 
 def strip_fences(text: str) -> str:
@@ -85,24 +88,47 @@ def strip_fences(text: str) -> str:
     return text
 
 
-def classify_batch(header: str, rows: list[str], batch_num: int, total_batches: int) -> str:
-    batch_csv = header + "\n" + "\n".join(rows)
-    print(f"  Classifying batch {batch_num}/{total_batches} ({len(rows)} properties)...", flush=True)
+def classify_batch(batch: list[dict], batch_num: int, total_batches: int) -> dict[int, dict]:
+    """Send a batch to OpenAI and return {row_index: {Classification, Confidence, Key Evidence, Notes}}."""
+    # Build a minimal CSV with RowIndex so the model can key its output
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=["RowIndex", "RecordID", "Property Name", "Address", "MDU"])
+    writer.writeheader()
+    for row in batch:
+        writer.writerow({
+            "RowIndex": row["_row_index"],
+            "RecordID": row.get("RecordID", ""),
+            "Property Name": row.get("Property Name", ""),
+            "Address": row.get("Address", ""),
+            "MDU": row.get("MDU", ""),
+        })
+    input_csv = buf.getvalue()
+
+    print(f"  Classifying batch {batch_num}/{total_batches} ({len(batch)} properties)...", flush=True)
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"**Properties to classify:**\n\n{batch_csv}"},
+            {"role": "user", "content": f"**Properties to classify:**\n\n{input_csv}"},
         ],
         max_tokens=4096,
     )
-    result = strip_fences(response.choices[0].message.content.strip())
+    raw = strip_fences(response.choices[0].message.content.strip())
 
-    # Drop the header row from all batches except the first
-    lines = result.splitlines()
-    if batch_num > 1 and lines and lines[0].lower().startswith('"recordid'):
-        lines = lines[1:]
-    return "\n".join(lines)
+    results = {}
+    reader = csv.DictReader(io.StringIO(raw))
+    for parsed_row in reader:
+        try:
+            idx = int(parsed_row["RowIndex"])
+        except (KeyError, ValueError):
+            continue
+        results[idx] = {
+            "Classification": parsed_row.get("Classification", ""),
+            "Confidence": parsed_row.get("Confidence", ""),
+            "Key Evidence": parsed_row.get("Key Evidence", ""),
+            "Notes": parsed_row.get("Notes", ""),
+        }
+    return results
 
 
 def main():
@@ -113,35 +139,55 @@ def main():
     args = parser.parse_args()
 
     with open(args.input, "r", encoding="utf-8-sig") as f:
-        lines = [line.rstrip("\n") for line in f if line.strip()]
+        reader = csv.DictReader(f)
+        input_rows = list(reader)
 
-    if not lines:
+    if not input_rows:
         raise SystemExit("Input CSV is empty.")
 
-    header = lines[0]
-    data_rows = lines[1:]
-    total = len(data_rows)
+    # Tag each row with a stable numeric index for matching model output
+    for i, row in enumerate(input_rows):
+        row["_row_index"] = i
+
+    total = len(input_rows)
     batch_size = args.batch_size
     total_batches = (total + batch_size - 1) // batch_size
-
     print(f"Read {args.input}: {total} properties, splitting into {total_batches} batch(es) of up to {batch_size}.", flush=True)
 
-    output_parts = []
+    all_results: dict[int, dict] = {}
     for i in range(total_batches):
-        batch_rows = data_rows[i * batch_size : (i + 1) * batch_size]
-        part = classify_batch(header, batch_rows, i + 1, total_batches)
-        output_parts.append(part)
+        batch = input_rows[i * batch_size : (i + 1) * batch_size]
+        batch_results = classify_batch(batch, i + 1, total_batches)
+        all_results.update(batch_results)
 
-    final_csv = "\n".join(output_parts)
+    # Write output — input fields always come from the original parsed CSV
+    out_fields = ["RecordID", "Property Name", "Address", "MDU",
+                  "Classification", "Confidence", "Key Evidence", "Notes"]
+    missing = 0
+    with open(args.output, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=out_fields, quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        for row in input_rows:
+            idx = row["_row_index"]
+            classification = all_results.get(idx, {})
+            if not classification:
+                missing += 1
+                print(f"  WARNING: No result returned for row {idx} ({row.get('Property Name', '')})", flush=True)
+            writer.writerow({
+                "RecordID": row.get("RecordID", ""),
+                "Property Name": row.get("Property Name", ""),
+                "Address": row.get("Address", ""),
+                "MDU": row.get("MDU", ""),
+                "Classification": classification.get("Classification", ""),
+                "Confidence": classification.get("Confidence", ""),
+                "Key Evidence": classification.get("Key Evidence", ""),
+                "Notes": classification.get("Notes", ""),
+            })
 
-    with open(args.output, "w", encoding="utf-8") as f:
-        f.write(final_csv + "\n")
-
-    output_lines = [l for l in final_csv.splitlines() if l.strip()]
-    classified_count = len(output_lines) - 1  # subtract header
-    print(f"\nDone. {classified_count}/{total} properties classified. Results written to {args.output}.")
-    if classified_count != total:
-        print(f"WARNING: Expected {total} rows but got {classified_count}. Check the log above for any batch errors.")
+    classified = total - missing
+    print(f"\nDone. {classified}/{total} properties classified. Results written to {args.output}.")
+    if missing:
+        print(f"WARNING: {missing} row(s) had no model output — check the log above.")
 
 
 if __name__ == "__main__":
