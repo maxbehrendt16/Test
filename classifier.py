@@ -1,12 +1,12 @@
 import os
 import csv
 import io
-import json
 import argparse
-import requests
 from openai import OpenAI
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+BATCH_SIZE = 20
 
 SYSTEM_PROMPT = """You are a property classification agent. You will be given a list of properties, each with the following fields: Property Name, Address, MDU, and RecordID. Your job is to classify each property as an **Apartment**, **COA**, **HOA**, or **Other** by searching the web.
 
@@ -78,45 +78,70 @@ Follow these steps for each property:
 Return ONLY the CSV output with no additional text, explanation, or markdown formatting. Include the header row."""
 
 
-def classify_properties(input_csv_text: str) -> str:
+def strip_fences(text: str) -> str:
+    if text.startswith("```"):
+        lines = text.splitlines()
+        return "\n".join(line for line in lines if not line.startswith("```")).strip()
+    return text
+
+
+def classify_batch(header: str, rows: list[str], batch_num: int, total_batches: int) -> str:
+    batch_csv = header + "\n" + "\n".join(rows)
+    print(f"  Classifying batch {batch_num}/{total_batches} ({len(rows)} properties)...", flush=True)
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"**Properties to classify:**\n\n{input_csv_text}"},
+            {"role": "user", "content": f"**Properties to classify:**\n\n{batch_csv}"},
         ],
         max_tokens=4096,
     )
-    return response.choices[0].message.content.strip()
+    result = strip_fences(response.choices[0].message.content.strip())
+
+    # Drop the header row from all batches except the first
+    lines = result.splitlines()
+    if batch_num > 1 and lines and lines[0].lower().startswith('"recordid'):
+        lines = lines[1:]
+    return "\n".join(lines)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Classify properties using OpenAI")
     parser.add_argument("--input", required=True, help="Path to input CSV file")
     parser.add_argument("--output", default="classified_results.csv", help="Path to output CSV file")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Rows per API call (default: 20)")
     args = parser.parse_args()
 
-    with open(args.input, "r", encoding="utf-8") as f:
-        input_csv_text = f.read()
+    with open(args.input, "r", encoding="utf-8-sig") as f:
+        lines = [line.rstrip("\n") for line in f if line.strip()]
 
-    print(f"Read {args.input} — sending to OpenAI for classification...", flush=True)
-    result_csv = classify_properties(input_csv_text)
+    if not lines:
+        raise SystemExit("Input CSV is empty.")
 
-    # Strip markdown code fences if the model wrapped the output
-    if result_csv.startswith("```"):
-        lines = result_csv.splitlines()
-        result_csv = "\n".join(
-            line for line in lines if not line.startswith("```")
-        ).strip()
+    header = lines[0]
+    data_rows = lines[1:]
+    total = len(data_rows)
+    batch_size = args.batch_size
+    total_batches = (total + batch_size - 1) // batch_size
+
+    print(f"Read {args.input}: {total} properties, splitting into {total_batches} batch(es) of up to {batch_size}.", flush=True)
+
+    output_parts = []
+    for i in range(total_batches):
+        batch_rows = data_rows[i * batch_size : (i + 1) * batch_size]
+        part = classify_batch(header, batch_rows, i + 1, total_batches)
+        output_parts.append(part)
+
+    final_csv = "\n".join(output_parts)
 
     with open(args.output, "w", encoding="utf-8") as f:
-        f.write(result_csv)
+        f.write(final_csv + "\n")
 
-    print(f"Classification complete. Results written to {args.output}")
-
-    # Print a summary row count
-    rows = [r for r in result_csv.splitlines() if r.strip()]
-    print(f"Output contains {len(rows) - 1} classified properties (excluding header).")
+    output_lines = [l for l in final_csv.splitlines() if l.strip()]
+    classified_count = len(output_lines) - 1  # subtract header
+    print(f"\nDone. {classified_count}/{total} properties classified. Results written to {args.output}.")
+    if classified_count != total:
+        print(f"WARNING: Expected {total} rows but got {classified_count}. Check the log above for any batch errors.")
 
 
 if __name__ == "__main__":
