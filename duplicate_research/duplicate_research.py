@@ -1,16 +1,22 @@
 """
 CLP Duplicate Property Research Tool.
 
-For each candidate duplicate pair in an input spreadsheet, calls the Claude API
-(with the web search tool enabled) to research both properties online and decide
-whether they are a genuine database duplicate. See the spec this was built from
-for the full research procedure and false-positive ruleset embedded in
-SYSTEM_PROMPT below.
+For each candidate duplicate pair in an input spreadsheet, calls an LLM (with a
+web search tool enabled) to research both properties online and decide whether
+they are a genuine database duplicate. See the spec this was built from for the
+full research procedure and false-positive ruleset embedded in SYSTEM_PROMPT
+below. Supports either Anthropic (Claude) or OpenAI as the backend — pick
+whichever provider you have an API key for.
 
 Usage:
-    export ANTHROPIC_API_KEY=...
+    export ANTHROPIC_API_KEY=...      # if using Claude
+    export OPENAI_API_KEY=...         # if using OpenAI
     python duplicate_research.py --input pairs.xlsx --output results.xlsx
     python duplicate_research.py --input pairs.csv --output results.csv --limit 10   # dry run
+
+The provider is auto-detected from whichever API key env var is set. If both are
+set, pass --provider explicitly. Model defaults to DEFAULT_MODELS[provider]; override
+with --model.
 """
 import argparse
 import json
@@ -25,8 +31,13 @@ import requests
 from bs4 import BeautifulSoup
 
 import anthropic
+import openai
+from openai import OpenAI
 
-MODEL = "claude-sonnet-5"
+DEFAULT_MODELS = {
+    "anthropic": "claude-sonnet-5",
+    "openai": "gpt-4o",
+}
 MAX_SEARCHES_PER_PAIR = 8
 MAX_TURNS = 6
 URL_FETCH_TIMEOUT = 10
@@ -143,52 +154,67 @@ and do not just describe your answer in plain text — the tool call is the only
 recorded.
 """
 
-WEB_SEARCH_TOOL = {
+SUBMIT_TOOL_DESCRIPTION = (
+    "Submit the final duplicate-property research decision for this candidate pair. "
+    "Call exactly once, after research is complete."
+)
+
+SUBMIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {
+            "type": "string",
+            "enum": DECISION_LABELS,
+        },
+        "archetype": {
+            "type": "string",
+            "description": (
+                "Short free-text label for how the decision was reached. For 'Not Duplicate', "
+                "generally one of the six false-positive ruleset categories (or a new one, noted "
+                "as new, if none fit). For 'Duplicate', describe the nature of the match in your "
+                "own words. For 'Not Enough Info', briefly describe what's missing."
+            ),
+        },
+        "confidence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "1 = pure guess, 10 = certain, directly confirmed by an authoritative source.",
+        },
+        "evidence_summary": {
+            "type": "string",
+            "description": "2-4 sentences explaining the finding in plain language, citing specific facts found.",
+        },
+        "sources": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Specific URLs or named sources used. Empty list if none.",
+        },
+    },
+    "required": ["decision", "archetype", "confidence", "evidence_summary", "sources"],
+    "additionalProperties": False,
+}
+
+# --- Anthropic tool shapes ---
+ANTHROPIC_WEB_SEARCH_TOOL = {
     "type": "web_search_20250305",
     "name": "web_search",
     "max_uses": MAX_SEARCHES_PER_PAIR,
 }
-
-SUBMIT_TOOL = {
+ANTHROPIC_SUBMIT_TOOL = {
     "name": "submit_assessment",
-    "description": (
-        "Submit the final duplicate-property research decision for this candidate pair. "
-        "Call exactly once, after research is complete."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "decision": {
-                "type": "string",
-                "enum": DECISION_LABELS,
-            },
-            "archetype": {
-                "type": "string",
-                "description": (
-                    "Short free-text label for how the decision was reached. For 'Not Duplicate', "
-                    "generally one of the six false-positive ruleset categories (or a new one, noted "
-                    "as new, if none fit). For 'Duplicate', describe the nature of the match in your "
-                    "own words. For 'Not Enough Info', briefly describe what's missing."
-                ),
-            },
-            "confidence": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 10,
-                "description": "1 = pure guess, 10 = certain, directly confirmed by an authoritative source.",
-            },
-            "evidence_summary": {
-                "type": "string",
-                "description": "2-4 sentences explaining the finding in plain language, citing specific facts found.",
-            },
-            "sources": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Specific URLs or named sources used. Empty list if none.",
-            },
-        },
-        "required": ["decision", "archetype", "confidence", "evidence_summary", "sources"],
-    },
+    "description": SUBMIT_TOOL_DESCRIPTION,
+    "input_schema": SUBMIT_SCHEMA,
+}
+
+# --- OpenAI (Responses API) tool shapes ---
+OPENAI_WEB_SEARCH_TOOL = {"type": "web_search"}
+OPENAI_SUBMIT_TOOL = {
+    "type": "function",
+    "name": "submit_assessment",
+    "description": SUBMIT_TOOL_DESCRIPTION,
+    "parameters": SUBMIT_SCHEMA,
+    "strict": True,
 }
 
 RETRYABLE_ANTHROPIC_ERRORS = (
@@ -198,14 +224,35 @@ RETRYABLE_ANTHROPIC_ERRORS = (
     anthropic.APITimeoutError,
 )
 
+RETRYABLE_OPENAI_ERRORS = (
+    openai.RateLimitError,
+    openai.APIConnectionError,
+    openai.InternalServerError,
+    openai.APITimeoutError,
+)
 
-def call_with_backoff(client, **kwargs):
+
+def call_anthropic_with_backoff(client, **kwargs):
     delay = 2.0
     last_err = None
     for attempt in range(5):
         try:
             return client.messages.create(**kwargs)
         except RETRYABLE_ANTHROPIC_ERRORS as e:
+            last_err = e
+            sleep_for = delay * (2 ** attempt) + random.uniform(0, 1)
+            print(f"    API error ({e.__class__.__name__}), retrying in {sleep_for:.1f}s...", flush=True)
+            time.sleep(sleep_for)
+    raise last_err
+
+
+def call_openai_with_backoff(client, **kwargs):
+    delay = 2.0
+    last_err = None
+    for attempt in range(5):
+        try:
+            return client.responses.create(**kwargs)
+        except RETRYABLE_OPENAI_ERRORS as e:
             last_err = e
             sleep_for = delay * (2 ** attempt) + random.uniform(0, 1)
             print(f"    API error ({e.__class__.__name__}), retrying in {sleep_for:.1f}s...", flush=True)
@@ -285,15 +332,15 @@ def extract_sources_from_search(content_blocks):
     return sources
 
 
-def research_pair(client, record_a: dict, record_b: dict, distance: str, url_cache: dict, model: str) -> dict:
+def research_pair_anthropic(client, record_a: dict, record_b: dict, distance: str, url_cache: dict, model: str) -> dict:
     messages = [{"role": "user", "content": build_user_message(record_a, record_b, distance, url_cache)}]
-    tools = [WEB_SEARCH_TOOL, SUBMIT_TOOL]
+    tools = [ANTHROPIC_WEB_SEARCH_TOOL, ANTHROPIC_SUBMIT_TOOL]
     searched_sources = []
 
     for turn in range(MAX_TURNS):
         is_last_turn = turn == MAX_TURNS - 1
         tool_choice = {"type": "tool", "name": "submit_assessment"} if is_last_turn else {"type": "auto"}
-        response = call_with_backoff(
+        response = call_anthropic_with_backoff(
             client,
             model=model,
             max_tokens=4096,
@@ -320,6 +367,69 @@ def research_pair(client, record_a: dict, record_b: dict, distance: str, url_cac
         # already executed within this response) just loop and let the model continue.
 
     raise RuntimeError("Model did not produce a submit_assessment call within the turn budget")
+
+
+def find_function_call(output_items, name):
+    for item in output_items:
+        if getattr(item, "type", None) == "function_call" and item.name == name:
+            return item
+    return None
+
+
+def extract_openai_sources(output_items):
+    sources = []
+    for item in output_items:
+        if getattr(item, "type", None) != "message":
+            continue
+        for part in getattr(item, "content", []) or []:
+            for annotation in getattr(part, "annotations", []) or []:
+                url = getattr(annotation, "url", None)
+                if url:
+                    sources.append(url)
+    return sources
+
+
+def research_pair_openai(client, record_a: dict, record_b: dict, distance: str, url_cache: dict, model: str) -> dict:
+    input_items = [{"role": "user", "content": build_user_message(record_a, record_b, distance, url_cache)}]
+    tools = [OPENAI_WEB_SEARCH_TOOL, OPENAI_SUBMIT_TOOL]
+    previous_response_id = None
+    searched_sources = []
+
+    for turn in range(MAX_TURNS):
+        is_last_turn = turn == MAX_TURNS - 1
+        tool_choice = {"type": "function", "name": "submit_assessment"} if is_last_turn else "auto"
+        kwargs = dict(
+            model=model,
+            instructions=SYSTEM_PROMPT,
+            input=input_items,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
+        if previous_response_id:
+            kwargs["previous_response_id"] = previous_response_id
+        response = call_openai_with_backoff(client, **kwargs)
+        previous_response_id = response.id
+        searched_sources.extend(extract_openai_sources(response.output))
+
+        submit_call = find_function_call(response.output, "submit_assessment")
+        if submit_call:
+            result = json.loads(submit_call.arguments)
+            if not result.get("sources"):
+                result["sources"] = sorted(set(searched_sources))
+            return result
+
+        input_items = [{
+            "role": "user",
+            "content": "Please call submit_assessment now with your final conclusion based on the research so far.",
+        }]
+
+    raise RuntimeError("Model did not produce a submit_assessment call within the turn budget")
+
+
+def research_pair(provider: str, client, record_a: dict, record_b: dict, distance: str, url_cache: dict, model: str) -> dict:
+    if provider == "anthropic":
+        return research_pair_anthropic(client, record_a, record_b, distance, url_cache, model)
+    return research_pair_openai(client, record_a, record_b, distance, url_cache, model)
 
 
 def load_input(path: str) -> pd.DataFrame:
@@ -367,7 +477,7 @@ def append_checkpoint(path: Path, record: dict, lock: threading.Lock):
             f.write(json.dumps(record) + "\n")
 
 
-def process_group(client, model, group_id, rows, error, url_cache):
+def process_group(provider, client, model, group_id, rows, error, url_cache):
     if error:
         return {
             "group": group_id,
@@ -383,7 +493,7 @@ def process_group(client, model, group_id, rows, error, url_cache):
     record_a, record_b = rows[0], rows[1]
     distance = record_a.get("DISTANCE_MILES", "")
     try:
-        result = research_pair(client, record_a, record_b, distance, url_cache, model)
+        result = research_pair(provider, client, record_a, record_b, distance, url_cache, model)
         decision = result.get("decision")
         if decision not in DECISION_LABELS:
             raise ValueError(f"Model returned invalid decision label: {decision!r}")
@@ -492,22 +602,52 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
         print(f"Summary also written to {summary_path}")
 
 
+def resolve_provider(explicit_provider: str | None) -> str:
+    has_anthropic_key = "ANTHROPIC_API_KEY" in os.environ
+    has_openai_key = "OPENAI_API_KEY" in os.environ
+
+    provider = explicit_provider
+    if provider is None:
+        if has_anthropic_key and has_openai_key:
+            raise SystemExit(
+                "Both ANTHROPIC_API_KEY and OPENAI_API_KEY are set — pass --provider anthropic|openai explicitly."
+            )
+        if has_anthropic_key:
+            provider = "anthropic"
+        elif has_openai_key:
+            provider = "openai"
+        else:
+            raise SystemExit(
+                "Set ANTHROPIC_API_KEY or OPENAI_API_KEY (or pass --provider once one of them is set)."
+            )
+
+    if provider == "anthropic" and not has_anthropic_key:
+        raise SystemExit("--provider anthropic requires the ANTHROPIC_API_KEY environment variable to be set.")
+    if provider == "openai" and not has_openai_key:
+        raise SystemExit("--provider openai requires the OPENAI_API_KEY environment variable to be set.")
+    return provider
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Research candidate duplicate property pairs via the Claude API.")
+    parser = argparse.ArgumentParser(description="Research candidate duplicate property pairs via an LLM.")
     parser.add_argument("--input", required=True, help="Path to input CSV or XLSX file")
     parser.add_argument("--output", required=True, help="Path to output CSV or XLSX file (never overwrites input)")
     parser.add_argument("--checkpoint", default=None, help="Checkpoint JSONL path (default: <output>.checkpoint.jsonl)")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N pairs (dry-run mode)")
     parser.add_argument("--concurrency", type=int, default=1, help="Number of pairs to research in parallel (default: 1)")
-    parser.add_argument("--model", default=MODEL, help=f"Anthropic model id (default: {MODEL})")
+    parser.add_argument("--provider", choices=["anthropic", "openai"], default=None,
+                         help="LLM backend to use (default: auto-detected from whichever API key env var is set)")
+    parser.add_argument("--model", default=None,
+                         help="Model id (default: DEFAULT_MODELS[provider], e.g. claude-sonnet-5 or gpt-4o)")
     parser.add_argument("--restart", action="store_true", help="Ignore any existing checkpoint and reprocess everything")
     args = parser.parse_args()
 
     if str(Path(args.input).resolve()) == str(Path(args.output).resolve()):
         raise SystemExit("Output path must differ from input path.")
 
-    if "ANTHROPIC_API_KEY" not in os.environ:
-        raise SystemExit("ANTHROPIC_API_KEY environment variable is not set.")
+    provider = resolve_provider(args.provider)
+    model = args.model or DEFAULT_MODELS[provider]
+    print(f"Using provider={provider}, model={model}", flush=True)
 
     checkpoint_path = Path(args.checkpoint) if args.checkpoint else Path(str(args.output) + ".checkpoint.jsonl")
 
@@ -527,14 +667,14 @@ def main():
     pending = [(gid, rows, err) for gid, rows, err in all_groups if gid not in results_by_group]
     print(f"{len(pending)} pair(s) remaining to process.", flush=True)
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic() if provider == "anthropic" else OpenAI()
     url_cache = {}
     checkpoint_lock = threading.Lock()
     done_count = 0
 
     def run_one(item):
         group_id, rows, error = item
-        result = process_group(client, args.model, group_id, rows, error, url_cache)
+        result = process_group(provider, client, model, group_id, rows, error, url_cache)
         append_checkpoint(checkpoint_path, result, checkpoint_lock)
         return result
 

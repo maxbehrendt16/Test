@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -64,10 +65,57 @@ class CheckpointTests(unittest.TestCase):
 class ProcessGroupErrorTests(unittest.TestCase):
     def test_malformed_group_short_circuits_without_client(self):
         rows = [{"RecordID": "1", "Address": "1 Main St"}]
-        result = dr.process_group(None, None, "9", rows, "some error reason", {})
+        result = dr.process_group(None, None, None, "9", rows, "some error reason", {})
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertTrue(result["is_error"])
         self.assertEqual(result["evidence_summary"], "some error reason")
+
+
+class ResolveProviderTests(unittest.TestCase):
+    def _clear_keys(self):
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("OPENAI_API_KEY", None)
+
+    def test_auto_detects_anthropic(self):
+        self._clear_keys()
+        os.environ["ANTHROPIC_API_KEY"] = "x"
+        try:
+            self.assertEqual(dr.resolve_provider(None), "anthropic")
+        finally:
+            self._clear_keys()
+
+    def test_auto_detects_openai(self):
+        self._clear_keys()
+        os.environ["OPENAI_API_KEY"] = "x"
+        try:
+            self.assertEqual(dr.resolve_provider(None), "openai")
+        finally:
+            self._clear_keys()
+
+    def test_both_keys_require_explicit_provider(self):
+        self._clear_keys()
+        os.environ["ANTHROPIC_API_KEY"] = "x"
+        os.environ["OPENAI_API_KEY"] = "y"
+        try:
+            with self.assertRaises(SystemExit):
+                dr.resolve_provider(None)
+            self.assertEqual(dr.resolve_provider("openai"), "openai")
+        finally:
+            self._clear_keys()
+
+    def test_no_keys_raises(self):
+        self._clear_keys()
+        with self.assertRaises(SystemExit):
+            dr.resolve_provider(None)
+
+    def test_explicit_provider_without_matching_key_raises(self):
+        self._clear_keys()
+        os.environ["OPENAI_API_KEY"] = "x"
+        try:
+            with self.assertRaises(SystemExit):
+                dr.resolve_provider("anthropic")
+        finally:
+            self._clear_keys()
 
 
 class BuildOutputAndSummaryTests(unittest.TestCase):
