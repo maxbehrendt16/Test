@@ -1,0 +1,6 @@
+anthropic
+openai
+pandas
+openpyxl
+requests
+beautifulsoup4

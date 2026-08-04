@@ -1,0 +1,7 @@
+Group Number,RecordID,Address,Master_Property Name,Master_Property Type,Master_Ownership Type,Master_Units_50+,Master_Build Year,Lat,Lon,DISTANCE_MILES,Owner,Cleaned Owner,Cleaned Property Manager,LLM_Property_URL,Building Count
+8,43042,"1 Costa Del Sol Boulevard, Doral, FL 33178-2309, USA",Costa Del Sol,SFU,HOA,768,1974,25.7889,-80.3553,0.08,,,,,
+8,99289565,"9940 Costa Del Sol Boulevard, Doral, FL 33178-2357, USA","Costa Del Sol Association, Inc.",MDU,COA,739,1990,25.7891,-80.3556,0.08,,,,,
+15,201001,"400 Lakeview Drive, Building A, Springfield, IL 62704, USA",Lakeview Building A,MDU,APT,120,2005,39.7817,-89.6501,0.02,,,,,1
+15,201002,"400 Lakeview Drive, Springfield, IL 62704, USA",Lakeview Apartments,MDU,APT,480,2005,39.7818,-89.6502,0.02,,,,,4
+22,305510,"88 Magnolia Court, Charleston, SC 29401, USA",Magnolia Court,SFU,HOA,64,1998,32.7765,-79.9311,142.3,,,,,
+22,305511,"12 Magnolia Court, Greenville, SC 29601, USA",Magnolia Court,SFU,HOA,64,2001,34.8526,-82.3940,142.3,,,,,

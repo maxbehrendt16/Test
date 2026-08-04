@@ -3,7 +3,7 @@ name: Classify Properties
 on:
   push:
     paths:
-      - "input_properties.csv"
+      - "property_classifier/input_properties.csv"
   workflow_dispatch:
 
 jobs:
@@ -20,19 +20,20 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install openai requests beautifulsoup4
+        run: pip install -r property_classifier/requirements.txt
 
       - name: Run property classifier
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        working-directory: property_classifier
         run: python classifier.py --input input_properties.csv --output classified_results.csv
 
       - name: Upload results as artifact
         uses: actions/upload-artifact@v4
         with:
           name: classified-results
-          path: classified_results.csv
+          path: property_classifier/classified_results.csv
           retention-days: 30
 
       - name: Print results to log
-        run: cat classified_results.csv
+        run: cat property_classifier/classified_results.csv

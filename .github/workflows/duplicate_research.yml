@@ -1,0 +1,54 @@
+name: Duplicate Property Research
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_file:
+        description: "Input CSV/XLSX path, relative to duplicate_research/"
+        required: true
+        default: "sample_pairs.csv"
+      limit:
+        description: "Only process the first N pairs (leave blank for a full run)"
+        required: false
+        default: ""
+      concurrency:
+        description: "Pairs to research in parallel"
+        required: false
+        default: "1"
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r duplicate_research/requirements.txt
+
+      - name: Run duplicate property research
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        working-directory: duplicate_research
+        run: |
+          args=(--input "${{ inputs.input_file }}" --output results.xlsx --concurrency "${{ inputs.concurrency }}")
+          if [ -n "${{ inputs.limit }}" ]; then
+            args+=(--limit "${{ inputs.limit }}")
+          fi
+          python duplicate_research.py "${args[@]}"
+
+      - name: Upload results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: duplicate-research-results
+          path: |
+            duplicate_research/results.xlsx
+            duplicate_research/results.xlsx.checkpoint.jsonl
+          retention-days: 30
