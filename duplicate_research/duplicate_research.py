@@ -603,8 +603,11 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
 
 
 def resolve_provider(explicit_provider: str | None) -> str:
-    has_anthropic_key = "ANTHROPIC_API_KEY" in os.environ
-    has_openai_key = "OPENAI_API_KEY" in os.environ
+    # bool(...) rather than an `in os.environ` check: CI providers (e.g. GitHub Actions
+    # referencing an unset secret) can set the env var to an empty string rather than
+    # omitting it, which should still count as "not configured".
+    has_anthropic_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_openai_key = bool(os.environ.get("OPENAI_API_KEY"))
 
     provider = explicit_provider
     if provider is None:
