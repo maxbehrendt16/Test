@@ -1,3 +1,6 @@
 openai
 requests
 beautifulsoup4
+anthropic
+pandas
+openpyxl
