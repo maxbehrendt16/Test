@@ -369,6 +369,58 @@ class DuplicateFlagsTests(unittest.TestCase):
         self.assertTrue((out["Same Master Source"] == "No").all())
 
 
+class DuplicateFlagSummaryTests(unittest.TestCase):
+    def _row(self, group, record_id, address, name, units, hw, costar, fa, ownership=""):
+        return {"Group Number": group, "RecordID": record_id, "Address": address,
+                "Master_Property Name": name, "Master_Units_50+": units,
+                "In HW": hw, "In Costar": costar, "In FA": fa,
+                "Master_Ownership Type": ownership}
+
+    def test_counts_one_row_per_pair_not_per_record(self):
+        df = pd.DataFrame([
+            # Pair 1: Duplicate, everything matches
+            self._row("1", "a", "1 Main St", "X", "100", "1", "0", "0", ownership="HOA"),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "0", "0", ownership="HOA"),
+            # Pair 2: Duplicate, addresses/names/ownership differ, units far apart
+            self._row("2", "c", "1 Main St", "X", "50", "0", "0", "0", ownership="HOA"),
+            self._row("2", "d", "2 Other Ave", "Y", "500", "0", "0", "0", ownership="COA"),
+            # Pair 3: Not Duplicate -- must not count toward the flag breakdown at all
+            self._row("3", "e", "9 Ninth St", "Z", "10", "0", "0", "0"),
+            self._row("3", "f", "9 Ninth St", "Z", "10", "0", "0", "0"),
+        ])
+        results = {
+            "1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                  "confidence": 9, "evidence_summary": "es", "sources": [], "is_error": False},
+            "2": {"group": "2", "decision": "Duplicate", "archetype": "Separate Buildings",
+                  "confidence": 5, "evidence_summary": "es", "sources": [], "is_error": False},
+            "3": {"group": "3", "decision": "Not Duplicate", "archetype": "Coincidental Name Match",
+                  "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False},
+        }
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertEqual(summary["total_duplicate_pairs"], 2)  # not 4 (rows) or 3 (all pairs)
+        self.assertEqual(summary["flags"]["Address Match"], {"Yes": 1, "No": 1, "Unknown": 0})
+        self.assertEqual(summary["flags"]["Name Match"], {"Yes": 1, "No": 1, "Unknown": 0})
+        self.assertEqual(summary["flags"]["Unit Counts Within 10"], {"Yes": 1, "No": 1, "Unknown": 0})
+        self.assertEqual(summary["flags"]["Different Ownership Type"], {"Yes": 1, "No": 1, "Unknown": 0})
+
+    def test_no_duplicates_gives_empty_breakdown(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("1", "b", "1 Main St", "X", "100", "0", "0", "0"),
+        ])
+        results = {"1": {"group": "1", "decision": "Not Duplicate", "archetype": "Coincidental Name Match",
+                         "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertEqual(summary["total_duplicate_pairs"], 0)
+
+    def test_print_and_write_output_do_not_crash_without_flag_summary(self):
+        # Older call sites (or tests) that never set summary["duplicate_flags"] must still work.
+        dr.print_summary({"total_pairs": 0, "by_decision": {l: 0 for l in dr.DECISION_LABELS},
+                           "average_confidence": 0, "archetype_counts": {}, "errors": 0})
+
+
 class FlaggedRecordIdTests(unittest.TestCase):
     def setUp(self):
         self.df = pd.DataFrame([

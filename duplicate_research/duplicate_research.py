@@ -937,6 +937,37 @@ def compute_summary(results_by_group: dict) -> dict:
     }
 
 
+DUPLICATE_FLAG_COLUMNS = [
+    "Address Match",
+    "Name Match",
+    "Unit Counts Within 10",
+    "Different Ownership Type",
+    "Both In Hotwire",
+    "Both In CoStar",
+    "Both In First American",
+    "Same Master Source",
+]
+
+
+def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
+    """Yes/No/Unknown breakdown of the Duplicate-only cross-check flags, one count per pair
+    (not per row) -- shows how confirmed duplicates in this batch break out across those checks."""
+    dup_df = out_df[out_df.get("Decision", "") == "Duplicate"]
+    if "Group Number" in dup_df.columns:
+        dup_df = dup_df.drop_duplicates(subset="Group Number")
+    flags = {}
+    for col in DUPLICATE_FLAG_COLUMNS:
+        if col not in dup_df.columns:
+            continue
+        counts = dup_df[col].value_counts(dropna=False)
+        flags[col] = {
+            "Yes": int(counts.get("Yes", 0)),
+            "No": int(counts.get("No", 0)),
+            "Unknown": int(counts.get("", 0)),
+        }
+    return {"total_duplicate_pairs": len(dup_df), "flags": flags}
+
+
 def print_summary(summary: dict):
     print("\n=== Run Summary ===")
     print(f"Total pairs processed: {summary['total_pairs']}")
@@ -947,6 +978,14 @@ def print_summary(summary: dict):
     print("Archetype breakdown:")
     for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
         print(f"  {count:>4}  {archetype}")
+    flag_summary = summary.get("duplicate_flags")
+    if flag_summary and flag_summary["total_duplicate_pairs"]:
+        print(f"\nDuplicate pair flag breakdown (of {flag_summary['total_duplicate_pairs']} duplicate pair(s)):")
+        for col, counts in flag_summary["flags"].items():
+            line = f"  {col}: Yes={counts['Yes']}  No={counts['No']}"
+            if counts["Unknown"]:
+                line += f"  Unknown={counts['Unknown']}"
+            print(line)
 
 
 # Characters illegal in XML 1.0 (and therefore in .xlsx cell values) -- LLM output can
@@ -972,6 +1011,7 @@ def sanitize_df_for_excel(df: pd.DataFrame) -> pd.DataFrame:
 
 def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
     out_df = sanitize_df_for_excel(out_df)
+    flag_summary = summary.get("duplicate_flags")
     if output_path.lower().endswith((".xlsx", ".xls")):
         summary_rows = [{"Metric": "Total pairs processed", "Value": summary["total_pairs"]}]
         for label, count in summary["by_decision"].items():
@@ -980,6 +1020,16 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
         summary_rows.append({"Metric": "Errors", "Value": summary["errors"]})
         for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
             summary_rows.append({"Metric": f"Archetype: {archetype}", "Value": count})
+        if flag_summary and flag_summary["total_duplicate_pairs"]:
+            summary_rows.append({
+                "Metric": "Duplicate pairs (flag breakdown below)",
+                "Value": flag_summary["total_duplicate_pairs"],
+            })
+            for col, counts in flag_summary["flags"].items():
+                summary_rows.append({"Metric": f"{col}: Yes", "Value": counts["Yes"]})
+                summary_rows.append({"Metric": f"{col}: No", "Value": counts["No"]})
+                if counts["Unknown"]:
+                    summary_rows.append({"Metric": f"{col}: Unknown", "Value": counts["Unknown"]})
         summary_df = sanitize_df_for_excel(pd.DataFrame(summary_rows))
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             summary_df.to_excel(writer, sheet_name="Summary", index=False)
@@ -996,6 +1046,14 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
             f.write("Archetype breakdown:\n")
             for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
                 f.write(f"  {count:>4}  {archetype}\n")
+            if flag_summary and flag_summary["total_duplicate_pairs"]:
+                f.write(f"\nDuplicate pair flag breakdown (of {flag_summary['total_duplicate_pairs']} "
+                        f"duplicate pair(s)):\n")
+                for col, counts in flag_summary["flags"].items():
+                    line = f"  {col}: Yes={counts['Yes']}  No={counts['No']}"
+                    if counts["Unknown"]:
+                        line += f"  Unknown={counts['Unknown']}"
+                    f.write(line + "\n")
         print(f"Summary also written to {summary_path}")
 
 
@@ -1101,6 +1159,7 @@ def main():
     out_df = df[df["Group Number"].astype(str).isin(processed_group_ids)] if args.limit is not None else df
     out_df = build_output_df(out_df, scoped_results)
     summary = compute_summary(scoped_results)
+    summary["duplicate_flags"] = compute_duplicate_flag_summary(out_df)
     write_output(out_df, summary, args.output)
     print_summary(summary)
     print(f"\nResults written to {args.output}")
