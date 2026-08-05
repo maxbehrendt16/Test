@@ -223,6 +223,90 @@ class BuildOutputAndSummaryTests(unittest.TestCase):
         self.assertTrue((out["Flagged As Anomaly"] == "").all())
 
 
+class DuplicateFlagsTests(unittest.TestCase):
+    def _row(self, group, record_id, address, name, units, hw, costar, fa):
+        return {"Group Number": group, "RecordID": record_id, "Address": address,
+                "Master_Property Name": name, "Master_Units_50+": units,
+                "In HW": hw, "In Costar": costar, "In FA": fa}
+
+    def test_all_flags_true_for_clean_duplicate(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "Vizcaya", "100", "1", "1", "1"),
+            self._row("1", "b", "1 Main St", "Vizcaya", "105", "1", "1", "1"),
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 9, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Address Match"] == "Yes").all())
+        self.assertTrue((out["Name Match"] == "Yes").all())
+        self.assertTrue((out["Unit Counts Within 10"] == "Yes").all())
+        self.assertTrue((out["Both In Hotwire"] == "Yes").all())
+        self.assertTrue((out["Both In CoStar"] == "Yes").all())
+        self.assertTrue((out["Both In First American"] == "Yes").all())
+
+    def test_mismatches_and_one_sided_db_membership(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "Vizcaya", "96", "1", "0", "1"),
+            self._row("1", "b", "2 Other Ave", "Vizcaya Condo", "127", "0", "0", "0"),
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Separate Buildings",
+                         "confidence": 6, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Address Match"] == "No").all())
+        self.assertTrue((out["Name Match"] == "No").all())
+        self.assertTrue((out["Unit Counts Within 10"] == "No").all())  # |96-127| = 31 > 10
+        self.assertTrue((out["Both In Hotwire"] == "No").all())  # only one side is 1
+        self.assertTrue((out["Both In CoStar"] == "No").all())   # neither side is 1
+        self.assertTrue((out["Both In First American"] == "No").all())  # only one side is 1
+
+    def test_flags_blank_for_non_duplicate_decisions(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "1", "1"),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "1", "1"),
+        ])
+        results = {"1": {"group": "1", "decision": "Not Duplicate", "archetype": "Coincidental Name Match",
+                         "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        for col in ["Address Match", "Name Match", "Unit Counts Within 10",
+                    "Both In Hotwire", "Both In CoStar", "Both In First American"]:
+            self.assertTrue((out[col] == "").all(), f"{col} should be blank for a non-Duplicate decision")
+
+    def test_missing_source_columns_do_not_crash(self):
+        # A dataset without In HW/In Costar/In FA/Master_Units_50+ at all (e.g. sample_pairs.csv).
+        df = pd.DataFrame([
+            {"Group Number": "1", "RecordID": "a", "Address": "1 Main St"},
+            {"Group Number": "1", "RecordID": "b", "Address": "1 Main St"},
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Unit Counts Within 10"] == "").all())
+        self.assertTrue((out["Both In Hotwire"] == "No").all())
+        self.assertTrue((out["Master Source"] == "Other").all())
+
+    def test_master_source_priority_and_per_record_computation(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "1", "1"),   # Hotwire wins
+            self._row("1", "b", "1 Main St", "X", "100", "0", "1", "1"),   # CoStar wins
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertEqual(out[out["RecordID"] == "a"].iloc[0]["Master Source"], "Hotwire")
+        self.assertEqual(out[out["RecordID"] == "b"].iloc[0]["Master Source"], "CoStar")
+
+    def test_master_source_computed_regardless_of_decision(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "0", "0", "1"),
+            self._row("1", "b", "2 Other Ave", "Y", "999", "0", "0", "0"),
+        ])
+        results = {"1": {"group": "1", "decision": "Not Duplicate", "archetype": "Coincidental Name Match",
+                         "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertEqual(out[out["RecordID"] == "a"].iloc[0]["Master Source"], "First American")
+        self.assertEqual(out[out["RecordID"] == "b"].iloc[0]["Master Source"], "Other")
+
+
 class FlaggedRecordIdTests(unittest.TestCase):
     def setUp(self):
         self.df = pd.DataFrame([

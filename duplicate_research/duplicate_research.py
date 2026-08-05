@@ -779,6 +779,64 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
         }
 
 
+UNIT_COUNT_CLOSE_THRESHOLD = 10
+DATABASE_FLAG_FIELDS = {
+    "Both In Hotwire": "In HW",
+    "Both In CoStar": "In Costar",
+    "Both In First American": "In FA",
+}
+MASTER_SOURCE_PRIORITY = [
+    ("In HW", "Hotwire"),
+    ("In Costar", "CoStar"),
+    ("In FA", "First American"),
+]
+
+
+def _normalize_text(value) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip().lower()
+
+
+def _values_match(a, b) -> str:
+    """'Yes'/'No', or '' when either side is missing so a match can't be determined."""
+    na, nb = _normalize_text(a), _normalize_text(b)
+    if not na or not nb:
+        return ""
+    return "Yes" if na == nb else "No"
+
+
+def _parse_number(value):
+    try:
+        if value is None or (isinstance(value, float) and pd.isna(value)) or str(value).strip() == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _units_within_threshold(a, b) -> str:
+    na, nb = _parse_number(a), _parse_number(b)
+    if na is None or nb is None:
+        return ""
+    return "Yes" if abs(na - nb) <= UNIT_COUNT_CLOSE_THRESHOLD else "No"
+
+
+def _is_flag_true(value) -> bool:
+    return _parse_number(value) == 1
+
+
+def _both_flag_true(a, b) -> str:
+    return "Yes" if _is_flag_true(a) and _is_flag_true(b) else "No"
+
+
+def _master_source(row: dict) -> str:
+    for column, label in MASTER_SOURCE_PRIORITY:
+        if _is_flag_true(row.get(column)):
+            return label
+    return "Other"
+
+
 def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
     out = df.copy()
     out["Decision"] = pd.Series([""] * len(out), index=out.index, dtype=object)
@@ -787,6 +845,13 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
     out["Evidence Summary"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Sources"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Flagged As Anomaly"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Address Match"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Name Match"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Unit Counts Within 10"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    for flag_col in DATABASE_FLAG_FIELDS:
+        out[flag_col] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Master Source"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+
     for group_id, group_df in out.groupby("Group Number", sort=False):
         result = results_by_group.get(str(group_id))
         if not result:
@@ -800,6 +865,28 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
             out.at[idx, "Sources"] = "; ".join(result.get("sources", []))
             if flagged_record_id and str(out.at[idx, "RecordID"]) == flagged_record_id:
                 out.at[idx, "Flagged As Anomaly"] = "Yes"
+
+        # Master Source is a per-record field: computed independently for each row,
+        # not mirrored across the pair like the other Duplicate-only fields below.
+        for idx in group_df.index:
+            out.at[idx, "Master Source"] = _master_source(out.loc[idx].to_dict())
+
+        if result["decision"] != "Duplicate" or len(group_df) != 2:
+            continue
+        row_a, row_b = group_df.iloc[0], group_df.iloc[1]
+        address_match = _values_match(row_a.get("Address"), row_b.get("Address"))
+        name_match = _values_match(row_a.get("Master_Property Name"), row_b.get("Master_Property Name"))
+        units_close = _units_within_threshold(row_a.get("Master_Units_50+"), row_b.get("Master_Units_50+"))
+        flag_values = {
+            flag_col: _both_flag_true(row_a.get(source_col), row_b.get(source_col))
+            for flag_col, source_col in DATABASE_FLAG_FIELDS.items()
+        }
+        for idx in group_df.index:
+            out.at[idx, "Address Match"] = address_match
+            out.at[idx, "Name Match"] = name_match
+            out.at[idx, "Unit Counts Within 10"] = units_close
+            for flag_col, value in flag_values.items():
+                out.at[idx, flag_col] = value
     return out
 
 
