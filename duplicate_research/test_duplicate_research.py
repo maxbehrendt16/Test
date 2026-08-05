@@ -182,6 +182,61 @@ class BuildOutputAndSummaryTests(unittest.TestCase):
         self.assertEqual(summary["average_confidence"], 7.0)
         self.assertEqual(summary["errors"], 0)
 
+    def test_missing_flagged_record_id_is_backward_compatible(self):
+        # Older checkpoint records won't have this key at all.
+        out = dr.build_output_df(self.df, self.results)
+        self.assertTrue((out["Flagged As Anomaly"] == "").all())
+
+
+class FlaggedRecordIdTests(unittest.TestCase):
+    def setUp(self):
+        self.df = pd.DataFrame([
+            {"Group Number": "10", "RecordID": "31599054", "Address": "2 Keimel Court"},
+            {"Group Number": "10", "RecordID": "107054", "Address": "1 Metzger Drive"},
+        ])
+
+    def test_flagged_row_marked_the_other_left_blank(self):
+        results = {"10": {"group": "10", "decision": "Not Duplicate", "archetype": "Mislabeled Property",
+                           "confidence": 7, "evidence_summary": "es", "sources": [],
+                           "flagged_record_id": "31599054", "is_error": False}}
+        out = dr.build_output_df(self.df, results)
+        flagged = out[out["RecordID"] == "31599054"].iloc[0]
+        other = out[out["RecordID"] == "107054"].iloc[0]
+        self.assertEqual(flagged["Flagged As Anomaly"], "Yes")
+        self.assertEqual(other["Flagged As Anomaly"], "")
+
+    def test_process_group_drops_flagged_id_not_in_pair(self):
+        rows = [{"RecordID": "31599054", "Address": "2 Keimel Court"},
+                {"RecordID": "107054", "Address": "1 Metzger Drive"}]
+
+        def fake_research_pair(provider, client, record_a, record_b, distance, url_cache, model):
+            return {"decision": "Not Duplicate", "archetype": "Mislabeled Property", "confidence": 7,
+                    "evidence_summary": "es", "sources": [], "flagged_record_id": "Record A"}
+
+        original = dr.research_pair
+        dr.research_pair = fake_research_pair
+        try:
+            result = dr.process_group("anthropic", object(), "m", "10", rows, None, {})
+        finally:
+            dr.research_pair = original
+        self.assertEqual(result["flagged_record_id"], "")
+
+    def test_process_group_keeps_valid_flagged_id(self):
+        rows = [{"RecordID": "31599054", "Address": "2 Keimel Court"},
+                {"RecordID": "107054", "Address": "1 Metzger Drive"}]
+
+        def fake_research_pair(provider, client, record_a, record_b, distance, url_cache, model):
+            return {"decision": "Not Duplicate", "archetype": "Mislabeled Property", "confidence": 7,
+                    "evidence_summary": "es", "sources": [], "flagged_record_id": "31599054"}
+
+        original = dr.research_pair
+        dr.research_pair = fake_research_pair
+        try:
+            result = dr.process_group("anthropic", object(), "m", "10", rows, None, {})
+        finally:
+            dr.research_pair = original
+        self.assertEqual(result["flagged_record_id"], "31599054")
+
 
 if __name__ == "__main__":
     unittest.main()
