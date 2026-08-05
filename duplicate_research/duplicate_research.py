@@ -779,6 +779,80 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
         }
 
 
+UNIT_COUNT_CLOSE_THRESHOLD = 10
+DATABASE_FLAG_FIELDS = {
+    "Both In Hotwire": "In HW",
+    "Both In CoStar": "In Costar",
+    "Both In First American": "In FA",
+}
+MASTER_SOURCE_PRIORITY = [
+    ("In HW", "Hotwire"),
+    ("In Costar", "CoStar"),
+    ("In FA", "First American"),
+]
+
+
+def _normalize_text(value) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip().lower()
+
+
+def _values_match(a, b) -> str:
+    """'Yes'/'No', or '' when either side is missing so a match can't be determined."""
+    na, nb = _normalize_text(a), _normalize_text(b)
+    if not na or not nb:
+        return ""
+    return "Yes" if na == nb else "No"
+
+
+def _parse_number(value):
+    try:
+        if value is None or (isinstance(value, float) and pd.isna(value)) or str(value).strip() == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _units_within_threshold(a, b) -> str:
+    na, nb = _parse_number(a), _parse_number(b)
+    if na is None or nb is None:
+        return ""
+    return "Yes" if abs(na - nb) <= UNIT_COUNT_CLOSE_THRESHOLD else "No"
+
+
+def _is_flag_true(value) -> bool:
+    return _parse_number(value) == 1
+
+
+def _both_flag_true(a, b) -> str:
+    return "Yes" if _is_flag_true(a) and _is_flag_true(b) else "No"
+
+
+def _master_source(row: dict) -> str:
+    for column, label in MASTER_SOURCE_PRIORITY:
+        if _is_flag_true(row.get(column)):
+            return label
+    return "Other"
+
+
+def _values_differ(a, b) -> str:
+    """'Yes'/'No', or '' when either side is missing so a difference can't be determined."""
+    match = _values_match(a, b)
+    if match == "":
+        return ""
+    return "No" if match == "Yes" else "Yes"
+
+
+def _same_master_source(source_a: str, source_b: str) -> str:
+    """'Yes' only when both records' Master Source match AND that shared value isn't 'Other' --
+    two unmatched "Other" records don't share a real source, so that case is 'No', not 'Yes'."""
+    if source_a == "Other" or source_b == "Other":
+        return "No"
+    return "Yes" if source_a == source_b else "No"
+
+
 def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
     out = df.copy()
     out["Decision"] = pd.Series([""] * len(out), index=out.index, dtype=object)
@@ -787,6 +861,15 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
     out["Evidence Summary"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Sources"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Flagged As Anomaly"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Address Match"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Name Match"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Unit Counts Within 10"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Different Ownership Type"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    for flag_col in DATABASE_FLAG_FIELDS:
+        out[flag_col] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Same Master Source"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Master Source"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+
     for group_id, group_df in out.groupby("Group Number", sort=False):
         result = results_by_group.get(str(group_id))
         if not result:
@@ -800,6 +883,35 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
             out.at[idx, "Sources"] = "; ".join(result.get("sources", []))
             if flagged_record_id and str(out.at[idx, "RecordID"]) == flagged_record_id:
                 out.at[idx, "Flagged As Anomaly"] = "Yes"
+
+        # Master Source is a per-record field: computed independently for each row,
+        # not mirrored across the pair like the other Duplicate-only fields below.
+        for idx in group_df.index:
+            out.at[idx, "Master Source"] = _master_source(out.loc[idx].to_dict())
+
+        if result["decision"] != "Duplicate" or len(group_df) != 2:
+            continue
+        row_a, row_b = group_df.iloc[0], group_df.iloc[1]
+        address_match = _values_match(row_a.get("Address"), row_b.get("Address"))
+        name_match = _values_match(row_a.get("Master_Property Name"), row_b.get("Master_Property Name"))
+        units_close = _units_within_threshold(row_a.get("Master_Units_50+"), row_b.get("Master_Units_50+"))
+        ownership_differs = _values_differ(row_a.get("Master_Ownership Type"), row_b.get("Master_Ownership Type"))
+        idx_a, idx_b = group_df.index[0], group_df.index[1]
+        same_master_source = _same_master_source(
+            out.at[idx_a, "Master Source"], out.at[idx_b, "Master Source"]
+        )
+        flag_values = {
+            flag_col: _both_flag_true(row_a.get(source_col), row_b.get(source_col))
+            for flag_col, source_col in DATABASE_FLAG_FIELDS.items()
+        }
+        for idx in group_df.index:
+            out.at[idx, "Address Match"] = address_match
+            out.at[idx, "Name Match"] = name_match
+            out.at[idx, "Unit Counts Within 10"] = units_close
+            out.at[idx, "Different Ownership Type"] = ownership_differs
+            out.at[idx, "Same Master Source"] = same_master_source
+            for flag_col, value in flag_values.items():
+                out.at[idx, flag_col] = value
     return out
 
 
@@ -825,6 +937,37 @@ def compute_summary(results_by_group: dict) -> dict:
     }
 
 
+DUPLICATE_FLAG_COLUMNS = [
+    "Address Match",
+    "Name Match",
+    "Unit Counts Within 10",
+    "Different Ownership Type",
+    "Both In Hotwire",
+    "Both In CoStar",
+    "Both In First American",
+    "Same Master Source",
+]
+
+
+def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
+    """Yes/No/Unknown breakdown of the Duplicate-only cross-check flags, one count per pair
+    (not per row) -- shows how confirmed duplicates in this batch break out across those checks."""
+    dup_df = out_df[out_df.get("Decision", "") == "Duplicate"]
+    if "Group Number" in dup_df.columns:
+        dup_df = dup_df.drop_duplicates(subset="Group Number")
+    flags = {}
+    for col in DUPLICATE_FLAG_COLUMNS:
+        if col not in dup_df.columns:
+            continue
+        counts = dup_df[col].value_counts(dropna=False)
+        flags[col] = {
+            "Yes": int(counts.get("Yes", 0)),
+            "No": int(counts.get("No", 0)),
+            "Unknown": int(counts.get("", 0)),
+        }
+    return {"total_duplicate_pairs": len(dup_df), "flags": flags}
+
+
 def print_summary(summary: dict):
     print("\n=== Run Summary ===")
     print(f"Total pairs processed: {summary['total_pairs']}")
@@ -835,6 +978,14 @@ def print_summary(summary: dict):
     print("Archetype breakdown:")
     for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
         print(f"  {count:>4}  {archetype}")
+    flag_summary = summary.get("duplicate_flags")
+    if flag_summary and flag_summary["total_duplicate_pairs"]:
+        print(f"\nDuplicate pair flag breakdown (of {flag_summary['total_duplicate_pairs']} duplicate pair(s)):")
+        for col, counts in flag_summary["flags"].items():
+            line = f"  {col}: Yes={counts['Yes']}  No={counts['No']}"
+            if counts["Unknown"]:
+                line += f"  Unknown={counts['Unknown']}"
+            print(line)
 
 
 # Characters illegal in XML 1.0 (and therefore in .xlsx cell values) -- LLM output can
@@ -860,6 +1011,7 @@ def sanitize_df_for_excel(df: pd.DataFrame) -> pd.DataFrame:
 
 def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
     out_df = sanitize_df_for_excel(out_df)
+    flag_summary = summary.get("duplicate_flags")
     if output_path.lower().endswith((".xlsx", ".xls")):
         summary_rows = [{"Metric": "Total pairs processed", "Value": summary["total_pairs"]}]
         for label, count in summary["by_decision"].items():
@@ -868,6 +1020,16 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
         summary_rows.append({"Metric": "Errors", "Value": summary["errors"]})
         for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
             summary_rows.append({"Metric": f"Archetype: {archetype}", "Value": count})
+        if flag_summary and flag_summary["total_duplicate_pairs"]:
+            summary_rows.append({
+                "Metric": "Duplicate pairs (flag breakdown below)",
+                "Value": flag_summary["total_duplicate_pairs"],
+            })
+            for col, counts in flag_summary["flags"].items():
+                summary_rows.append({"Metric": f"{col}: Yes", "Value": counts["Yes"]})
+                summary_rows.append({"Metric": f"{col}: No", "Value": counts["No"]})
+                if counts["Unknown"]:
+                    summary_rows.append({"Metric": f"{col}: Unknown", "Value": counts["Unknown"]})
         summary_df = sanitize_df_for_excel(pd.DataFrame(summary_rows))
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             summary_df.to_excel(writer, sheet_name="Summary", index=False)
@@ -884,6 +1046,14 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
             f.write("Archetype breakdown:\n")
             for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
                 f.write(f"  {count:>4}  {archetype}\n")
+            if flag_summary and flag_summary["total_duplicate_pairs"]:
+                f.write(f"\nDuplicate pair flag breakdown (of {flag_summary['total_duplicate_pairs']} "
+                        f"duplicate pair(s)):\n")
+                for col, counts in flag_summary["flags"].items():
+                    line = f"  {col}: Yes={counts['Yes']}  No={counts['No']}"
+                    if counts["Unknown"]:
+                        line += f"  Unknown={counts['Unknown']}"
+                    f.write(line + "\n")
         print(f"Summary also written to {summary_path}")
 
 
@@ -989,6 +1159,7 @@ def main():
     out_df = df[df["Group Number"].astype(str).isin(processed_group_ids)] if args.limit is not None else df
     out_df = build_output_df(out_df, scoped_results)
     summary = compute_summary(scoped_results)
+    summary["duplicate_flags"] = compute_duplicate_flag_summary(out_df)
     write_output(out_df, summary, args.output)
     print_summary(summary)
     print(f"\nResults written to {args.output}")
