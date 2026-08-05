@@ -85,10 +85,16 @@ For each pair:
 database's name is correct). Look for: the property's own official website or HOA/condo association \
 site; county property/tax records; real estate listing platforms (Zillow, Redfin, Realtor.com, Compass, \
 Apartments.com, Homes.com); HOA/condo association directories; local news or developer press coverage.
-2. If you find an authoritative stated total unit count, compare it against BOTH records, not just one. \
-The test is whether that total is reasonably close to *both* paired records' unit counts. A total that \
-closely matches only ONE of the two records, while the other record's count is substantially different, \
-is NOT evidence that the two records are the same property.
+2. **Always specifically try to find an independent, third-party source stating a unit count** for the \
+property/complex (an HOA/condo site, a registry, a real estate listing, local news) — this is one of your \
+standard searches for every pair, not something you only look for opportunistically. If you find one, \
+compare it against BOTH records, not just one: the test is whether that total is reasonably close to \
+*both* paired records' unit counts. A total that closely matches only ONE of the two records, while the \
+other record's count is substantially different, is NOT evidence that the two records are the same \
+property. If, after a genuine attempt, you cannot find any independent unit-count source at all, say so \
+explicitly in the evidence summary — that absence should modestly lower your confidence even when other \
+signals (name, address, HOA identity) point clearly in one direction, since the unit-count cross-check is \
+the ruleset's most decisive signal and you weren't able to run it.
 3. Determine if there is one governing entity or two. Search for the legal HOA/condo association \
 name(s) tied to each address.
 4. Check geographic plausibility. When DISTANCE_MILES is provided (already computed — do not recalculate \
@@ -219,7 +225,11 @@ that is sufficient for "Separate Buildings" — just use a lower confidence to r
 was independently confirmed, rather than downgrading the decision itself to Not Enough Info. Reserve Not \
 Enough Info for when the found evidence doesn't correspond to either record at all (wrong address, wildly \
 different count — see the high-bar guardrail below), not for "confirmed on one side, plausible on the \
-other."
+other." A modest, non-catastrophic gap between an unconfirmed record's count and the confirmed one is not \
+itself suspicious — it's ordinary and expected for real database records, most often just a stale entry \
+(e.g. the count as of an earlier renovation or a prior year) or a small data error, not evidence the record \
+describes something else. Treat it exactly the way you'd treat any other minor data-quality noise: worth a \
+lower confidence, not a reason to reach for a different archetype or a different decision.
 - **Same Building** — the two records' addresses look different as plain text (different formatting, an \
 alternate entrance, a unit/suite suffix, an old vs. new street-numbering convention, or a plain data-entry \
 error) but independent research confirms they are literally the same physical building/address, not two \
@@ -266,6 +276,11 @@ decision the totality of evidence actually favors — it is not, by itself, a re
 Info. Reserve Not Enough Info for when the evidence is genuinely ambiguous, contradictory, or simply too \
 thin to favor either decision — not as a default whenever confirmation isn't perfectly complete on both \
 sides.
+  Not finding any independent third-party unit-count source at all is its own, separate reason to keep \
+confidence out of the high range (below roughly 7), even when every other signal (name match, address, \
+HOA identity, property type) lines up cleanly and points to a clear decision. The unit-count comparison is \
+the ruleset's single most decisive test; a conclusion reached without ever running it — however clean the \
+rest of the picture looks — is missing its most important check and should not score as if it weren't.
 - **The bar for concluding "Duplicate" must be high — but "high" means the evidence must actually \
 correspond to these two records, not that every field must be independently re-confirmed one by one.** \
 Only conclude Duplicate when your evidence — taken as a whole (name match, geographic proximity, and the \
@@ -444,13 +459,17 @@ def fetch_url_cached(url: str, cache: dict) -> str | None:
 
 
 INTERNAL_COLUMNS = {"_row_index"}
+# Excluded outright rather than just told to ignore in the prompt -- the model should never
+# even see these fields, so a misread can't happen. Master_Units_50+ is the authoritative unit
+# count; Master_Units_20+ uses a different, less-relevant threshold and must never be used instead.
+EXCLUDED_COLUMNS = {"master_units_20+"}
 
 
 def format_record(row: dict, label: str, url_cache: dict) -> str:
     lines = [f"### {label} (RecordID: {row.get('RecordID', '')})"]
     url_value = None
     for key, value in row.items():
-        if key in INTERNAL_COLUMNS or pd.isna(value) or value == "":
+        if key in INTERNAL_COLUMNS or key.strip().lower() in EXCLUDED_COLUMNS or pd.isna(value) or value == "":
             continue
         lines.append(f"- {key}: {value}")
         if "url" in key.lower() and not url_value:

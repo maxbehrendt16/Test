@@ -9,6 +9,20 @@ import pandas as pd
 import duplicate_research as dr
 
 
+class FormatRecordFieldExclusionTests(unittest.TestCase):
+    def test_master_units_20_plus_is_never_shown(self):
+        row = {"RecordID": "1", "Master_Units_50+": "355", "Master_Units_20+": "402"}
+        text = dr.format_record(row, "Record A", {})
+        self.assertIn("Master_Units_50+: 355", text)
+        self.assertNotIn("402", text)
+        self.assertNotIn("Master_Units_20+", text)
+
+    def test_exclusion_is_case_insensitive(self):
+        row = {"RecordID": "1", "master_units_20+": "999"}
+        text = dr.format_record(row, "Record A", {})
+        self.assertNotIn("999", text)
+
+
 class BuildUserMessageDistanceTests(unittest.TestCase):
     def test_distance_present_is_included_verbatim(self):
         msg = dr.build_user_message({"RecordID": "1"}, {"RecordID": "2"}, "0.08", {})
