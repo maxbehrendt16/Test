@@ -130,6 +130,74 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(loaded, {})
 
 
+class VerifyCitedTotalArithmeticTests(unittest.TestCase):
+    def _record(self, units):
+        return {"Master_Units_50+": units}
+
+    def test_overrides_crestview_style_incoherent_total(self):
+        # 74 and 120 vs a cited total of 277: 27%/43%/70% off -- none within threshold.
+        result = {"decision": "Not Duplicate", "archetype": "Separate Children Within One Complex",
+                  "confidence": 8, "evidence_summary": "orig", "cited_total_units": "277"}
+        out = dr._verify_cited_total_arithmetic(self._record("74"), self._record("120"), result)
+        self.assertEqual(out["decision"], "Not Enough Info")
+        self.assertEqual(out["archetype"], "Cited total does not match either record or their sum")
+        self.assertLessEqual(out["confidence"], 3)
+        self.assertIn("orig", out["evidence_summary"])
+
+    def test_does_not_override_costa_del_sol_style_close_match(self):
+        # 768 exact match, 739 within ~4% -- well within threshold via record A alone.
+        result = {"decision": "Duplicate", "archetype": "Separate Buildings",
+                  "confidence": 8, "evidence_summary": "orig", "cited_total_units": "768"}
+        out = dr._verify_cited_total_arithmetic(self._record("768"), self._record("739"), result)
+        self.assertEqual(out["decision"], "Duplicate")
+        self.assertEqual(out["archetype"], "Separate Buildings")
+
+    def test_does_not_override_ocean_grove_style_looser_but_real_match(self):
+        # 200 and 208 vs 251: ~20% and ~17% off -- B is within the 25% threshold.
+        result = {"decision": "Duplicate", "archetype": "Separate Buildings",
+                  "confidence": 6, "evidence_summary": "orig", "cited_total_units": "251"}
+        out = dr._verify_cited_total_arithmetic(self._record("200"), self._record("208"), result)
+        self.assertEqual(out["decision"], "Duplicate")
+
+    def test_passthrough_when_no_total_cited(self):
+        result = {"decision": "Duplicate", "archetype": "Separate Buildings",
+                  "confidence": 8, "evidence_summary": "orig", "cited_total_units": ""}
+        out = dr._verify_cited_total_arithmetic(self._record("74"), self._record("120"), result)
+        self.assertEqual(out["decision"], "Duplicate")
+
+    def test_passthrough_for_archetypes_not_covered(self):
+        # Same Building/Mislabeled Property/etc. don't hinge on a cited total this way.
+        result = {"decision": "Duplicate", "archetype": "Same Building",
+                  "confidence": 8, "evidence_summary": "orig", "cited_total_units": "277"}
+        out = dr._verify_cited_total_arithmetic(self._record("74"), self._record("120"), result)
+        self.assertEqual(out["decision"], "Duplicate")
+
+    def test_passthrough_when_unit_counts_missing_or_non_numeric(self):
+        result = {"decision": "Not Duplicate", "archetype": "Separate Children Within One Complex",
+                  "confidence": 8, "evidence_summary": "orig", "cited_total_units": "277"}
+        out = dr._verify_cited_total_arithmetic(self._record(""), self._record("120"), result)
+        self.assertEqual(out["decision"], "Not Duplicate")
+
+    def test_process_group_applies_override_end_to_end(self):
+        rows = [{"RecordID": "5657202", "Address": "11 Lilly Ln", "Master_Units_50+": "74"},
+                {"RecordID": "16416", "Address": "1 Azalea Ln", "Master_Units_50+": "120"}]
+
+        def fake_research_pair(provider, client, record_a, record_b, distance, url_cache, model):
+            return {"decision": "Not Duplicate", "archetype": "Separate Children Within One Complex",
+                    "confidence": 8, "evidence_summary": "unit counts fit as fractions of 277",
+                    "sources": [], "flagged_record_id": "", "cited_total_units": "277"}
+
+        original = dr.research_pair
+        dr.research_pair = fake_research_pair
+        try:
+            result = dr.process_group("anthropic", object(), "m", "7", rows, None, {})
+        finally:
+            dr.research_pair = original
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["archetype"], "Cited total does not match either record or their sum")
+        self.assertLessEqual(result["confidence"], 3)
+
+
 class ProcessGroupErrorTests(unittest.TestCase):
     def test_malformed_group_short_circuits_without_client(self):
         rows = [{"RecordID": "1", "Address": "1 Main St"}]
