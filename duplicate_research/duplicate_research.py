@@ -134,6 +134,9 @@ formatted differently (e.g. "X" vs. "X Association, Inc.") is NOT this signal.
 [Building A]" for that building's own confirmed unit count to try to establish it, but if you can't, prefer \
 Not Enough Info (if the picture is genuinely unclear) or Duplicate/Separate Buildings (if the two records' \
 counts are each already reasonably close to each other or to a found total) over guessing Parent/Child.
+   When you do conclude this archetype, set `flagged_record_id` to whichever record's RecordID is the \
+child/specific-building one (not the parent/master-association one) — the two records aren't peers here, \
+so say which is which rather than leaving it to be inferred from prose.
 2. **Separate Children Within One Complex** — two genuine peer buildings (e.g. "Building A" vs \
 "Building B"). Like Parent/Child Mismatch, this requires BOTH of the following:
    - **Magnitude**: EACH record's own unit count is independently confirmed to be well below any found \
@@ -171,7 +174,9 @@ properties exist, and one record's Property Name was incorrectly copied from/con
 deciding question is: does independent research on the "wrong" record's address turn up a *different, \
 unrelated, confirmed real property* — i.e. a second genuine, independently identifiable property that \
 just happens to have gotten the wrong name? If yes, that's this archetype (Not Duplicate). Search the \
-address directly (not the name) to find that property's real, independently confirmed name/type.
+address directly (not the name) to find that property's real, independently confirmed name/type. Set \
+`flagged_record_id` to that record's RecordID (the one with the wrong name) — the two records aren't \
+symmetric here, so identify the specific one rather than leaving it to be inferred from prose.
    Do NOT use this archetype for a bad *address* rather than a bad *name*: if the "wrong" record's address \
 doesn't correspond to any real, distinct second property at all (e.g. it doesn't exist, or every source \
 you find for it redirects back to the SAME single building as the paired record), there is only ONE real \
@@ -370,8 +375,21 @@ SUBMIT_SCHEMA = {
             "items": {"type": "string"},
             "description": "Specific URLs or named sources used. Empty list if none.",
         },
+        "flagged_record_id": {
+            "type": "string",
+            "description": (
+                "For archetypes where ONE specific record is the anomaly and the other is the "
+                "normal reference point -- 'Mislabeled Property' (the record with the wrong "
+                "name/address) and 'Parent/Child Mismatch' (the record that's the child/specific-"
+                "building one, not the parent/master-association one) -- set this to that record's "
+                "exact RecordID (copy it verbatim from the input, not 'Record A' or 'Record B'). "
+                "Leave as an empty string for every other archetype, including symmetric ones like "
+                "'Separate Buildings', 'Same Building', 'Coincidental Name Match', or 'Separate "
+                "Children Within One Complex', where neither record is more anomalous than the other."
+            ),
+        },
     },
-    "required": ["decision", "archetype", "confidence", "evidence_summary", "sources"],
+    "required": ["decision", "archetype", "confidence", "evidence_summary", "sources", "flagged_record_id"],
     "additionalProperties": False,
 }
 
@@ -680,6 +698,7 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
             "confidence": 1,
             "evidence_summary": error,
             "sources": [],
+            "flagged_record_id": "",
             "is_error": True,
         }
 
@@ -690,14 +709,21 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
         decision = result.get("decision")
         if decision not in DECISION_LABELS:
             raise ValueError(f"Model returned invalid decision label: {decision!r}")
+        record_ids = [record_a.get("RecordID"), record_b.get("RecordID")]
+        flagged_record_id = str(result.get("flagged_record_id") or "").strip()
+        if flagged_record_id and flagged_record_id not in {str(rid) for rid in record_ids}:
+            # Model named something other than one of this pair's actual RecordIDs (e.g.
+            # hallucinated, or wrote "Record A" literally) -- drop it rather than mislead.
+            flagged_record_id = ""
         return {
             "group": group_id,
-            "record_ids": [record_a.get("RecordID"), record_b.get("RecordID")],
+            "record_ids": record_ids,
             "decision": decision,
             "archetype": result.get("archetype", ""),
             "confidence": int(result.get("confidence", 1)),
             "evidence_summary": result.get("evidence_summary", ""),
             "sources": result.get("sources", []),
+            "flagged_record_id": flagged_record_id,
             "is_error": False,
         }
     except Exception as e:
@@ -709,6 +735,7 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
             "confidence": 1,
             "evidence_summary": f"{e.__class__.__name__}: {e}",
             "sources": [],
+            "flagged_record_id": "",
             "is_error": True,
         }
 
@@ -720,16 +747,20 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
     out["Confidence"] = pd.Series([None] * len(out), index=out.index, dtype=object)
     out["Evidence Summary"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Sources"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Flagged As Anomaly"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     for group_id, group_df in out.groupby("Group Number", sort=False):
         result = results_by_group.get(str(group_id))
         if not result:
             continue
+        flagged_record_id = str(result.get("flagged_record_id") or "")
         for idx in group_df.index:
             out.at[idx, "Decision"] = result["decision"]
             out.at[idx, "Archetype"] = result["archetype"]
             out.at[idx, "Confidence"] = result["confidence"]
             out.at[idx, "Evidence Summary"] = result["evidence_summary"]
             out.at[idx, "Sources"] = "; ".join(result.get("sources", []))
+            if flagged_record_id and str(out.at[idx, "RecordID"]) == flagged_record_id:
+                out.at[idx, "Flagged As Anomaly"] = "Yes"
     return out
 
 
