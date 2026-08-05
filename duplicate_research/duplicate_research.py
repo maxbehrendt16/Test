@@ -208,6 +208,15 @@ variants of each other (e.g. "Pelican Cove" vs. "Pelican Cove Condominium", or t
 "Association, Inc."); that kind of naming-convention difference is not a mislabel, and if the two records' \
 addresses turn out to be two different buildings/addresses within the same complex, the correct archetype \
 is "Separate Buildings" under Duplicate Archetypes below, not this one.
+   **Hard consistency check, because this has been gotten wrong before:** if your own evidence_summary \
+says something like "Record A's address does not correspond to any independently identifiable property" \
+and "both records describe the same physical property," your Decision MUST be "Duplicate" with Archetype \
+"Same Building" — not "Not Duplicate" with Archetype "Mislabeled Property." Writing that reasoning and then \
+labeling it Not Duplicate/Mislabeled Property is a direct self-contradiction: you have just described the \
+"Same Building" scenario (one real property, one address is a data-entry error) in your own words, and then \
+mislabeled it as the opposite scenario (two real properties, one misnamed). Before finalizing, reread your \
+own evidence_summary and check which scenario it actually describes; make the Decision and Archetype match \
+what you wrote, not just whatever label the surface pattern reminds you of.
 6. **Multi-Use Building** — a single building has multiple properties with different managers, possibly \
 different property types (e.g. residential tower over separately-owned commercial/retail). Check: \
 identical/near-identical address; different ownership type or drastically different unit counts at the \
@@ -379,6 +388,18 @@ that source's address actually corresponds to the specific record's address you 
 relevant source you can find describes a different address, a subset of the complex, or an unclear scope \
 relative to the two paired addresses, do not force a Duplicate or Not Duplicate conclusion from it — that \
 mismatch is itself a reason to prefer Not Enough Info over a guess.
+- **A Master_Ownership Type mismatch between the two input records (e.g. one is HOA, the other COA) is a \
+real red flag against Duplicate, not a detail to note in passing.** It's exactly the kind of signal \
+"Separate Property Types Within a Master Association" exists to check for — it means the two records may \
+describe legally distinct entities, even if they're geographically close. When you see this mismatch, hold \
+Duplicate to a higher bar than usual: you need independent confirmation that the record with the \
+differing ownership type is specifically, officially part of the SAME development/association as the \
+other record — not just that it's nearby. Shared parcel data, a shared block/lot number, or general \
+proximity does NOT clear this bar by itself: adjacent or even overlapping parcels can legally belong to \
+distinct associations, especially in dense developments, so "same parcel" is suggestive, not dispositive, \
+when ownership types disagree. If you can't find that specific confirmation, prefer Not Enough Info (or \
+Mislabeled Property, if you separately confirm the differing-ownership record is a genuinely distinct, \
+real association) over concluding Duplicate on proximity alone.
 - When in doubt between two decisions, prefer the more conservative one (the one less likely to result \
 in a real property being wrongly removed from the database).
 - Do not fabricate or guess at sources — if a claim can't be tied to something actually found online, \
@@ -455,8 +476,20 @@ SUBMIT_SCHEMA = {
                 "Children Within One Complex', where neither record is more anomalous than the other."
             ),
         },
+        "cited_total_units": {
+            "type": "string",
+            "description": (
+                "If your reasoning for 'Separate Buildings' or 'Separate Children Within One "
+                "Complex' relies on an authoritative third-party TOTAL unit count for the whole "
+                "complex, write that exact number here as a plain string (e.g. '768'). This is "
+                "cross-checked in code against both records' own unit counts, so it must be the "
+                "literal number you found and used -- not a rounded or paraphrased figure. Leave "
+                "as an empty string if no such total was used in your reasoning."
+            ),
+        },
     },
-    "required": ["decision", "archetype", "confidence", "evidence_summary", "sources", "flagged_record_id"],
+    "required": ["decision", "archetype", "confidence", "evidence_summary", "sources", "flagged_record_id",
+                 "cited_total_units"],
     "additionalProperties": False,
 }
 
@@ -755,6 +788,48 @@ def append_checkpoint(path: Path, record: dict, lock: threading.Lock):
             f.write(json.dumps(record) + "\n")
 
 
+TOTAL_ARITHMETIC_ARCHETYPES = {"Separate Buildings", "Separate Children Within One Complex"}
+TOTAL_ARITHMETIC_MISMATCH_THRESHOLD = 0.25
+
+
+def _verify_cited_total_arithmetic(record_a: dict, record_b: dict, result: dict) -> dict:
+    """Deterministic safety net for a recurring failure: the model citing a "total" unit count
+    in support of Separate Buildings / Separate Children Within One Complex that, on the actual
+    arithmetic, doesn't correspond to either record individually OR to their sum (e.g. records of
+    74 and 120 units "supported" by a cited total of 277 -- 27%, 43%, and 70% off respectively).
+    Prose instructions alone haven't reliably stopped this, so it's now checked in code: if the
+    cited total is off by more than the threshold from ALL THREE reference points, the conclusion
+    is overridden to Not Enough Info rather than trusting a confident-sounding but unsupported claim.
+    """
+    archetype = result.get("archetype", "")
+    if archetype not in TOTAL_ARITHMETIC_ARCHETYPES:
+        return result
+    total = _parse_number(result.get("cited_total_units"))
+    if not total:
+        return result
+    unit_a = _parse_number(record_a.get("Master_Units_50+"))
+    unit_b = _parse_number(record_b.get("Master_Units_50+"))
+    if unit_a is None or unit_b is None:
+        return result
+    ratios = [abs(total - ref) / total for ref in (unit_a, unit_b, unit_a + unit_b)]
+    if min(ratios) <= TOTAL_ARITHMETIC_MISMATCH_THRESHOLD:
+        return result  # at least one reference point is a reasonable match -- let it stand
+
+    result = dict(result)
+    result["decision"] = "Not Enough Info"
+    result["archetype"] = "Cited total does not match either record or their sum"
+    result["confidence"] = min(int(result.get("confidence", 1)), 3)
+    original_evidence = result.get("evidence_summary", "")
+    result["evidence_summary"] = (
+        f"Automatically overridden: the model concluded '{archetype}' citing a total of "
+        f"{total:g} units, but this is not close to Record A's count ({unit_a:g}), Record B's "
+        f"count ({unit_b:g}), or their sum ({unit_a + unit_b:g}) -- off by "
+        f"{min(ratios) * 100:.0f}% at best. This number likely doesn't reliably describe this "
+        f"pair. Original evidence: {original_evidence}"
+    )
+    return result
+
+
 def process_group(provider, client, model, group_id, rows, error, url_cache):
     if error:
         return {
@@ -776,6 +851,8 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
         decision = result.get("decision")
         if decision not in DECISION_LABELS:
             raise ValueError(f"Model returned invalid decision label: {decision!r}")
+        result = _verify_cited_total_arithmetic(record_a, record_b, result)
+        decision = result["decision"]
         record_ids = [record_a.get("RecordID"), record_b.get("RecordID")]
         flagged_record_id = str(result.get("flagged_record_id") or "").strip()
         if flagged_record_id and flagged_record_id not in {str(rid) for rid in record_ids}:
