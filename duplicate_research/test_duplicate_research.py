@@ -9,6 +9,41 @@ import pandas as pd
 import duplicate_research as dr
 
 
+class SanitizeForExcelTests(unittest.TestCase):
+    def test_strips_illegal_control_characters(self):
+        poisoned = "Thus, this is a \x02Separate Buildings\x03 duplicate."
+        cleaned = dr.sanitize_for_excel(poisoned)
+        self.assertEqual(cleaned, "Thus, this is a Separate Buildings duplicate.")
+
+    def test_keeps_tab_newline_and_carriage_return(self):
+        text = "line one\nline two\ttabbed\rcarriage"
+        self.assertEqual(dr.sanitize_for_excel(text), text)
+
+    def test_non_string_values_pass_through(self):
+        self.assertEqual(dr.sanitize_for_excel(8), 8)
+        self.assertIsNone(dr.sanitize_for_excel(None))
+
+    def test_write_output_does_not_crash_on_poisoned_evidence(self):
+        # This reproduces the actual production crash: a control character in the LLM's
+        # evidence text made openpyxl's writer raise IllegalCharacterError after all 10
+        # pairs had already been (expensively) researched.
+        df = pd.DataFrame([
+            {"Group Number": "10", "RecordID": "1", "Address": "1 Metzger Dr"},
+            {"Group Number": "10", "RecordID": "2", "Address": "2 Keimel Ct"},
+        ])
+        results = {"10": {"group": "10", "decision": "Duplicate", "archetype": "Separate Buildings",
+                           "confidence": 8, "sources": [],
+                           "evidence_summary": "Thus, this is a \x02Separate Buildings\x03 duplicate.",
+                           "is_error": False}}
+        out_df = dr.build_output_df(df, results)
+        summary = dr.compute_summary(results)
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = str(Path(tmp) / "results.xlsx")
+            dr.write_output(out_df, summary, output_path)  # must not raise
+            written = pd.read_excel(output_path, sheet_name="Results")
+            self.assertIn("Separate Buildings duplicate.", written["Evidence Summary"].iloc[0])
+
+
 class FormatRecordFieldExclusionTests(unittest.TestCase):
     def test_master_units_20_plus_is_never_shown(self):
         row = {"RecordID": "1", "Master_Units_50+": "355", "Master_Units_20+": "402"}
