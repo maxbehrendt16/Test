@@ -82,9 +82,11 @@ closely matches only ONE of the two records, while the other record's count is s
 is NOT evidence that the two records are the same property.
 3. Determine if there is one governing entity or two. Search for the legal HOA/condo association \
 name(s) tied to each address.
-4. Check geographic plausibility using the provided DISTANCE_MILES field (already computed — do not \
-recalculate it). A large distance combined with different cities/states is a red flag pointing toward \
-a coincidental match or data error, not a real duplicate.
+4. Check geographic plausibility. When DISTANCE_MILES is provided (already computed — do not recalculate \
+it), a large distance combined with different cities/states is a red flag pointing toward a coincidental \
+match or data error, not a real duplicate. Some datasets don't include DISTANCE_MILES at all — when it's \
+missing, judge geographic plausibility from Lat/Lon or the addresses themselves instead; its absence is \
+never by itself a reason to conclude Not Enough Info.
 
 Prefer a small number of well-targeted searches over exhaustively crawling many pages — 2-4 searches \
 per record is usually enough if well chosen (property name + city, address alone, "[name] homeowners \
@@ -343,7 +345,7 @@ def format_record(row: dict, label: str, url_cache: dict) -> str:
     return "\n".join(lines)
 
 
-def build_user_message(record_a: dict, record_b: dict, distance: str, url_cache: dict) -> str:
+def build_user_message(record_a: dict, record_b: dict, distance, url_cache: dict) -> str:
     parts = [
         "Research the following candidate duplicate pair and determine whether the two records "
         "describe the same real property.",
@@ -352,8 +354,17 @@ def build_user_message(record_a: dict, record_b: dict, distance: str, url_cache:
         "",
         format_record(record_b, "Record B", url_cache),
         "",
-        f"DISTANCE_MILES between the two records (already computed, do not recalculate): {distance}",
     ]
+    has_distance = distance is not None and not pd.isna(distance) and str(distance).strip() != ""
+    if has_distance:
+        parts.append(f"DISTANCE_MILES between the two records (already computed, do not recalculate): {distance}")
+    else:
+        parts.append(
+            "DISTANCE_MILES was not provided for this pair (this dataset doesn't include that column). "
+            "If Lat/Lon fields are present above, use those instead to judge geographic plausibility. "
+            "The absence of DISTANCE_MILES specifically is never on its own a reason to conclude Not "
+            "Enough Info."
+        )
     return "\n".join(parts)
 
 

@@ -9,6 +9,25 @@ import pandas as pd
 import duplicate_research as dr
 
 
+class BuildUserMessageDistanceTests(unittest.TestCase):
+    def test_distance_present_is_included_verbatim(self):
+        msg = dr.build_user_message({"RecordID": "1"}, {"RecordID": "2"}, "0.08", {})
+        self.assertIn("DISTANCE_MILES between the two records", msg)
+        self.assertIn("0.08", msg)
+        self.assertNotIn("was not provided", msg)
+
+    def test_distance_missing_column_does_not_claim_data_is_missing(self):
+        # Real production files sometimes have no DISTANCE_MILES column at all (dict.get()
+        # returns "" via process_group's default) -- this must not read as a blocking gap.
+        msg = dr.build_user_message({"RecordID": "1"}, {"RecordID": "2"}, "", {})
+        self.assertIn("was not provided", msg)
+        self.assertIn("never on its own a reason to conclude Not Enough Info", msg)
+
+    def test_distance_nan_treated_same_as_missing(self):
+        msg = dr.build_user_message({"RecordID": "1"}, {"RecordID": "2"}, float("nan"), {})
+        self.assertIn("was not provided", msg)
+
+
 class GroupPairsTests(unittest.TestCase):
     def test_valid_pair(self):
         df = pd.DataFrame([
