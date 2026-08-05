@@ -68,6 +68,15 @@ been checked against every applicable false-positive pattern first.
 Never conclude Duplicate based solely on matching fields already present in the database — independent, \
 external corroboration is required every time.
 
+**This skepticism cuts both ways.** Being skeptical of "Duplicate" does not mean being credulous of "Not \
+Duplicate" — a specific false-positive archetype (especially Parent/Child Mismatch or Separate Children \
+Within One Complex) needs the same kind of direct, confirmed evidence that Duplicate does. It is just as \
+wrong to invent a confident-sounding but unconfirmed story for why two records must be different (e.g. \
+"likely in different sections of the community," "consistent with one being the master association and \
+the other a specific building") as it is to invent one for why they must be the same. If you don't have \
+real evidence for either specific conclusion, the honest answer is Not Enough Info — not whichever \
+direction happens to sound more cautious.
+
 ## Research procedure
 
 For each pair:
@@ -104,21 +113,39 @@ stop and label it Not Enough Info rather than continuing to dig indefinitely.
 
 ## False Positive Ruleset (check exhaustively before concluding "Duplicate")
 
-1. **Parent/Child Mismatch** — one record refers to a specific building (e.g. "Building A") while the \
-other encompasses the full multi-building complex. Check: large unit-count difference; building-specific \
-detail in one name but not the other. Search "[complex name] [Building A]" for that building's own \
-confirmed unit count.
+1. **Parent/Child Mismatch** — one record refers to a specific building while the other encompasses the \
+full multi-building complex. This archetype requires BOTH of the following to be independently confirmed \
+— if either is missing, do not use it:
+   - **Magnitude**: one record's unit count is a small FRACTION of the other's (e.g. a single ~50-unit \
+building within a ~700-unit complex) — not merely "somewhat different." Two counts that are within the \
+same order of magnitude of each other (e.g. 200 vs. 251) do not satisfy this.
+   - **Naming/documentary signal**: something explicitly marks one record as the sub-building and the \
+other as the whole — e.g. one name carries a specific building/section designation ("Building A," "Bldg \
+1") that the other lacks, or you independently confirm one record is registered as the master association \
+while the other is a specifically identified sub-unit within it. A name that's simply a variant or \
+formatted differently (e.g. "X" vs. "X Association, Inc.") is NOT this signal.
+   If you can't independently confirm both, this archetype does not apply — search "[complex name] \
+[Building A]" for that building's own confirmed unit count to try to establish it, but if you can't, prefer \
+Not Enough Info (if the picture is genuinely unclear) or Duplicate/Separate Buildings (if the two records' \
+counts are each already reasonably close to each other or to a found total) over guessing Parent/Child.
 2. **Separate Children Within One Complex** — two genuine peer buildings (e.g. "Building A" vs \
-"Building B"), each with its OWN distinct unit count confirmed independently online — a count that is \
-NOT the same as (or close to) the paired record's count. Search "[complex name] buildings addresses" to \
-confirm the complex is multi-building and get each building's real, independently-confirmed address/unit \
-count. THIS ARCHETYPE DOES NOT APPLY, and points toward Duplicate instead, when both DB records show the \
-same (or nearly the same) unit count as each other, or when a single authoritative total for the whole \
-complex is close to *both* records — that pattern means the two addresses are just two entry points into \
-the *same* overall property, not two independently distinct buildings. See "Separate Buildings" under \
-Duplicate Archetypes below; do not conclude Not Duplicate here merely because the two records list \
-different building-level addresses — the unit-count comparison is the deciding signal, not the address \
-difference itself.
+"Building B"). Like Parent/Child Mismatch, this requires BOTH of the following:
+   - **Magnitude**: EACH record's own unit count is independently confirmed to be well below any found \
+master/total count for the complex — i.e., each is a fraction of the whole, not already close to the full \
+total on its own. If instead each record's count (on its own) is already close to a found total, that is \
+the signature of Duplicate/Separate Buildings, not this archetype — a record that's already close to the \
+whole complex's total is describing the whole complex, not one child within it.
+   - **Naming/documentary signal**: independent confirmation of two separately identified/managed \
+sub-entities (distinct sub-association names, explicitly confirmed separate building designations) — not \
+just two different addresses.
+   THIS ARCHETYPE DOES NOT APPLY, and points toward Duplicate instead, when both DB records show the same \
+(or nearly the same) unit count as each other, or when a single authoritative total for the whole complex \
+is close to *both* records — that pattern means the two addresses are just two entry points into the \
+*same* overall property. See "Separate Buildings" under Duplicate Archetypes below. Do not conclude Not \
+Duplicate here merely because the two records list different building-level addresses, and do not invent \
+an unconfirmed "different section" or "different sub-association" story to explain a unit-count gap you \
+can't actually verify — that is exactly the kind of speculative reasoning the Objective above forbids; \
+if you can't confirm both conditions, prefer Not Enough Info or Duplicate over guessing this archetype.
 3. **Separate Property Types Within a Master Association** — a master complex comprised of separate \
 sub-properties sharing a name but with different property types (e.g. a SFU/HOA section and a separate \
 COA section under one community brand). First confirm whether a master association actually exists \
@@ -133,15 +160,24 @@ type mismatch alone is never sufficient.
 while being fundamentally different, unrelated developments. Search "[property name] [city 1]" and \
 "[property name] [city 2]" independently — unrelated management companies/websites on each side support \
 coincidence. A property-type/ownership mismatch alongside a matching name and unit count is a strong tell.
-5. **Mislabeled Property** (a.k.a. "Incorrect Property Name") — one record's Property Name is genuinely \
-WRONG: independent research on that record's address turns up a different, unrelated, confirmed name that \
-has nothing to do with the paired record's name. Search the address directly (not the name) to find the \
-property's real, independently confirmed name/type. Reserve this archetype for that specific situation — \
-do NOT use it just because the two Property Names are similar-but-not-identical variants of each other \
-(e.g. "Pelican Cove" vs. "Pelican Cove Condominium", or the presence/absence of "Association, Inc."); \
-that kind of naming-convention difference is not a mislabel, and if the two records' addresses turn out to \
-be two different buildings/addresses within the same complex, the correct archetype is "Separate \
-Buildings" under Duplicate Archetypes below, not this one.
+5. **Mislabeled Property** (a.k.a. "Incorrect Property Name") — this archetype means TWO real, distinct \
+properties exist, and one record's Property Name was incorrectly copied from/confused with the other. The \
+deciding question is: does independent research on the "wrong" record's address turn up a *different, \
+unrelated, confirmed real property* — i.e. a second genuine, independently identifiable property that \
+just happens to have gotten the wrong name? If yes, that's this archetype (Not Duplicate). Search the \
+address directly (not the name) to find that property's real, independently confirmed name/type.
+   Do NOT use this archetype for a bad *address* rather than a bad *name*: if the "wrong" record's address \
+doesn't correspond to any real, distinct second property at all (e.g. it doesn't exist, or every source \
+you find for it redirects back to the SAME single building as the paired record), there is only ONE real \
+property here, not two — that's "Same Building" under Duplicate Archetypes below, a Duplicate, not a false \
+positive. The distinction is not the word "mislabeled" — an address error and a name error can both \
+reasonably be called "mislabeled" in casual language — the distinction is whether independent research \
+turns up a second real property (Mislabeled Property, Not Duplicate) or not (Same Building, Duplicate).
+   Also do NOT use this archetype just because the two Property Names are similar-but-not-identical \
+variants of each other (e.g. "Pelican Cove" vs. "Pelican Cove Condominium", or the presence/absence of \
+"Association, Inc."); that kind of naming-convention difference is not a mislabel, and if the two records' \
+addresses turn out to be two different buildings/addresses within the same complex, the correct archetype \
+is "Separate Buildings" under Duplicate Archetypes below, not this one.
 6. **Multi-Use Building** — a single building has multiple properties with different managers, possibly \
 different property types (e.g. residential tower over separately-owned commercial/retail). Check: \
 identical/near-identical address; different ownership type or drastically different unit counts at the \
@@ -167,18 +203,32 @@ thumb, within about 10-15% of each), that is the signature of "two entry points 
 this archetype. This applies even when the Property Names are variants of each other (e.g. "Pelican Cove" \
 vs. "Pelican Cove Condominium") — a naming-convention difference is not by itself evidence of two \
 different properties, and is not grounds for "Mislabeled Property" either. Contrast with the False \
-Positive Ruleset's "Separate Children Within One Complex," which applies only when each building is \
-confirmed to have its own genuinely distinct, smaller unit count that does NOT match the paired record's \
-count.
+Positive Ruleset's "Separate Children Within One Complex," which requires BOTH records to independently \
+confirm their own genuinely smaller, sub-total unit counts AND a naming/documentary signal distinguishing \
+them as separate sub-entities (see that entry) — the mere existence of two different addresses is not \
+enough to invoke it.
   A found total that is off from BOTH paired records by a wide margin (e.g. more than roughly 20-30%) is \
 NOT "close enough," and does not support this archetype — it more likely describes a different, unrelated \
 property. Do not round a distant number down to "close" just because it's the best match your search \
 turned up.
+  You do not need every field independently confirmed to use this archetype — the unit-count test is the \
+decisive signal, not a checklist. If a third-party source exactly (or nearly exactly) confirms ONE \
+record's unit count and the OTHER record's count is merely in the same ballpark (not off by more than \
+roughly 20-30%), and the two records otherwise share a clearly matching name and are geographically close, \
+that is sufficient for "Separate Buildings" — just use a lower confidence to reflect that only one side \
+was independently confirmed, rather than downgrading the decision itself to Not Enough Info. Reserve Not \
+Enough Info for when the found evidence doesn't correspond to either record at all (wrong address, wildly \
+different count — see the high-bar guardrail below), not for "confirmed on one side, plausible on the \
+other."
 - **Same Building** — the two records' addresses look different as plain text (different formatting, an \
-alternate entrance, a unit/suite suffix, an old vs. new street-numbering convention) but independent \
-research confirms they are literally the same physical building/address, not two addresses within a \
-larger complex. Use "Same Building" here, not "Separate Buildings" — reserve "Separate Buildings" for \
-cases where there truly are two distinct addresses inside one larger complex.
+alternate entrance, a unit/suite suffix, an old vs. new street-numbering convention, or a plain data-entry \
+error) but independent research confirms they are literally the same physical building/address, not two \
+addresses within a larger complex. This includes the case where one record's address doesn't correspond \
+to any real, distinct second property at all — every source you can find for it redirects back to the \
+same single building as the paired record. Use "Same Building" here (a Duplicate), not "Mislabeled \
+Property" (a Not Duplicate false positive, reserved for when a second REAL property actually exists — see \
+that ruleset entry) and not "Separate Buildings" (reserved for cases where there truly are two distinct \
+addresses inside one larger complex).
 - Other genuine duplicate patterns (e.g. a straightforward data-entry duplicate with no complicating \
 factor) — describe in your own words.
 
@@ -206,24 +256,34 @@ facts.
 - **Confidence must reflect how directly and specifically the sources you found confirm THESE EXACT \
 records — not general plausibility.** If any number central to your reasoning doesn't trace to something \
 actually stated in a source you read, or contradicts either input record's own stated value, that is \
-disqualifying: do not assign high confidence (8+) to a conclusion resting on it. When your evidence is \
-incomplete on one side (e.g. you confirmed an HOA/identity for one record but found nothing for the \
-other) or internally inconsistent, prefer Not Enough Info over forcing a confident Duplicate or Not \
-Duplicate call — confidence 9-10 should be rare, reserved for cases where multiple independent sources \
-directly and unambiguously confirm both specific records with no gaps or contradictions.
-- **The bar for concluding "Duplicate" must be high.** Only conclude Duplicate when you have specific, \
-direct evidence tying both of THESE EXACT queried addresses (not a nearby address on the same street, a \
-similarly-named development, or a general community page) to the same property. A source describing a \
-different street number, a substantially different unit count, or an unclear/broader scope than the two \
-specific addresses you were given does NOT satisfy this — even if it's the closest or only result your \
-search turned up, and even if it's on the same street. Proximity or name similarity to a real nearby \
-development is not evidence that development IS one of your two records. When your best evidence has this \
-kind of mismatch, the correct decision is Not Enough Info, not Duplicate. For example: if your two records \
-are at 52 and 10 Country Club Drive with 72 units each, and the only source you find describes a 160-unit \
-complex at 1200 Country Club Drive, that source does not confirm anything about your two records — the \
-address doesn't match either one and the unit count is off by more than double. Do not use it as support \
-for "Separate Buildings" or any other Duplicate archetype; label the pair Not Enough Info and say so \
-plainly in the evidence summary.
+disqualifying: do not assign high confidence (8+) to a conclusion resting on it. Confidence 9-10 should be \
+rare, reserved for cases where multiple independent sources directly and unambiguously confirm both \
+specific records with no gaps or contradictions.
+  Partial confirmation is normal and should lower confidence, not force a different decision. If you \
+confirmed an identity/count for one record but the other is only plausibly consistent (not contradicted, \
+just not independently nailed down), that calls for a mid-range confidence (e.g. 4-6) on whichever \
+decision the totality of evidence actually favors — it is not, by itself, a reason to answer Not Enough \
+Info. Reserve Not Enough Info for when the evidence is genuinely ambiguous, contradictory, or simply too \
+thin to favor either decision — not as a default whenever confirmation isn't perfectly complete on both \
+sides.
+- **The bar for concluding "Duplicate" must be high — but "high" means the evidence must actually \
+correspond to these two records, not that every field must be independently re-confirmed one by one.** \
+Only conclude Duplicate when your evidence — taken as a whole (name match, geographic proximity, and the \
+unit-count test) — actually corresponds to THESE EXACT queried addresses, not a nearby address on the same \
+street, a similarly-named development, or a general community page that doesn't check out numerically. A \
+source describing a different street number AND a substantially different unit count than both of your \
+records does NOT satisfy this, even if it's the closest or only result your search turned up — proximity \
+or name similarity to a real nearby development is not evidence that development IS one of your two \
+records. For example: if your two records are at 52 and 10 Country Club Drive with 72 units each, and the \
+only source you find describes a 160-unit complex at 1200 Country Club Drive, that source does not \
+confirm anything about your two records — the address doesn't match either one and the unit count is off \
+by more than double. Do not use it as support for "Separate Buildings" or any other Duplicate archetype; \
+label the pair Not Enough Info and say so plainly in the evidence summary.
+  Contrast that with a source that DOES correspond to one of your two records specifically (matching name, \
+matching or near-matching unit count, right location) even if the other record wasn't independently \
+found — that is a real, if partial, match, and should lead to Duplicate at reduced confidence per the \
+guardrail above, not Not Enough Info. The test is whether your evidence corresponds to these records at \
+all, not whether it corresponds completely.
 - When a stated total unit count is found, it only counts as strong evidence of a single shared \
 community when it is close to *both* paired records — not just one. "Close" means within roughly 10-15%; \
 farther off than that does not count, no matter how confident the source otherwise seems.
