@@ -87,6 +87,15 @@ it), a large distance combined with different cities/states is a red flag pointi
 match or data error, not a real duplicate. Some datasets don't include DISTANCE_MILES at all — when it's \
 missing, judge geographic plausibility from Lat/Lon or the addresses themselves instead; its absence is \
 never by itself a reason to conclude Not Enough Info.
+5. **Before writing your final evidence summary, cross-check every number in it.** For any unit count or \
+total you're about to cite as support, confirm two things: (a) the source you're citing actually states \
+that number in its own text — never restate a record's own input field back as if an independent source \
+had separately confirmed it, and never invent a number that doesn't trace to something you actually read; \
+(b) if that number is meant to represent a shared total, check it against BOTH input records' own stated \
+unit counts as given to you — if it doesn't correspond to either one, it does not confirm anything about \
+this pair, and you should say so rather than using it as evidence. A source-derived number that contradicts \
+both input records is a sign you're looking at the wrong source or misremembering it, not evidence of \
+anything about this pair.
 
 Prefer a small number of well-targeted searches over exhaustively crawling many pages — 2-4 searches \
 per record is usually enough if well chosen (property name + city, address alone, "[name] homeowners \
@@ -173,8 +182,35 @@ cases where there truly are two distinct addresses inside one larger complex.
 - Other genuine duplicate patterns (e.g. a straightforward data-entry duplicate with no complicating \
 factor) — describe in your own words.
 
+## Archetype Labels (use these exact strings)
+
+Archetypes exist so results can be filtered and counted across thousands of pairs — that only works if \
+the same underlying pattern gets the exact same label every time. When a pair matches one of the patterns \
+below, use the label EXACTLY as written here — not a paraphrase, and not a version with extra qualifiers, \
+parentheticals, or pair-specific details tacked on (e.g. write "Separate Buildings," never "Separate \
+Buildings within same complex" or "Mislabeled Copies of Same Property – incomplete unit counts"; write \
+"Same Building," never "Same Building (Mislabeled Property)"):
+
+- If Decision is "Not Duplicate": Parent/Child Mismatch, Separate Children Within One Complex, Separate \
+Property Types Within a Master Association, Coincidental Name Match, Mislabeled Property, or Multi-Use \
+Building.
+- If Decision is "Duplicate": Separate Buildings or Same Building.
+
+Only write a new, free-text archetype when a pair genuinely fits none of the above (for either decision) \
+— and even then, phrase it as a short, reusable description of the *pattern* (so a later pair with the \
+same underlying situation would get the identical label), not a description of this one pair's specific \
+facts.
+
 ## Guardrails
 
+- **Confidence must reflect how directly and specifically the sources you found confirm THESE EXACT \
+records — not general plausibility.** If any number central to your reasoning doesn't trace to something \
+actually stated in a source you read, or contradicts either input record's own stated value, that is \
+disqualifying: do not assign high confidence (8+) to a conclusion resting on it. When your evidence is \
+incomplete on one side (e.g. you confirmed an HOA/identity for one record but found nothing for the \
+other) or internally inconsistent, prefer Not Enough Info over forcing a confident Duplicate or Not \
+Duplicate call — confidence 9-10 should be rare, reserved for cases where multiple independent sources \
+directly and unambiguously confirm both specific records with no gaps or contradictions.
 - **The bar for concluding "Duplicate" must be high.** Only conclude Duplicate when you have specific, \
 direct evidence tying both of THESE EXACT queried addresses (not a nearby address on the same street, a \
 similarly-named development, or a general community page) to the same property. A source describing a \
@@ -231,14 +267,17 @@ SUBMIT_SCHEMA = {
         "archetype": {
             "type": "string",
             "description": (
-                "Short free-text label for how the decision was reached. For 'Not Duplicate', "
-                "generally one of the six false-positive ruleset categories (or a new one, noted "
-                "as new, if none fit). For 'Duplicate', generally one of the Duplicate Archetypes "
-                "listed in the system prompt ('Separate Buildings', 'Same Building', or a new one "
-                "described in your own words if none fit) — do not default to 'Mislabeled Property' "
-                "just because the two Property Names differ; reserve that one for a genuinely "
-                "different, independently confirmed name. For 'Not Enough Info', briefly describe "
-                "what's missing."
+                "One of the exact canonical strings from the system prompt's 'Archetype Labels' "
+                "section whenever the pair matches that pattern -- never a paraphrase or a version "
+                "with extra qualifiers/parentheticals appended. For 'Not Duplicate': 'Parent/Child "
+                "Mismatch', 'Separate Children Within One Complex', 'Separate Property Types Within "
+                "a Master Association', 'Coincidental Name Match', 'Mislabeled Property', or "
+                "'Multi-Use Building'. For 'Duplicate': 'Separate Buildings' or 'Same Building'. Do "
+                "not default to 'Mislabeled Property' just because the two Property Names differ; "
+                "reserve that one for a genuinely different, independently confirmed name. Only use "
+                "a new free-text label (for either decision) when the pair genuinely fits none of "
+                "the above, and keep it as a short, reusable pattern description rather than "
+                "pair-specific detail. For 'Not Enough Info', briefly describe what's missing."
             ),
         },
         "confidence": {
