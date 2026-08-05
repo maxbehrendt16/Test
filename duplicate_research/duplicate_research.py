@@ -98,10 +98,16 @@ other encompasses the full multi-building complex. Check: large unit-count diffe
 detail in one name but not the other. Search "[complex name] [Building A]" for that building's own \
 confirmed unit count.
 2. **Separate Children Within One Complex** — two genuine peer buildings (e.g. "Building A" vs \
-"Building B"), not a parent/child pair. Search "[complex name] buildings addresses" to confirm the \
-complex is multi-building and get each building's real address/unit count. If both DB unit counts equal \
-the exact same total, that's a stronger signal they represent the whole complex rather than two \
-individually distinct buildings.
+"Building B"), each with its OWN distinct unit count confirmed independently online — a count that is \
+NOT the same as (or close to) the paired record's count. Search "[complex name] buildings addresses" to \
+confirm the complex is multi-building and get each building's real, independently-confirmed address/unit \
+count. THIS ARCHETYPE DOES NOT APPLY, and points toward Duplicate instead, when both DB records show the \
+same (or nearly the same) unit count as each other, or when a single authoritative total for the whole \
+complex is close to *both* records — that pattern means the two addresses are just two entry points into \
+the *same* overall property, not two independently distinct buildings. See "Separate Buildings" under \
+Duplicate Archetypes below; do not conclude Not Duplicate here merely because the two records list \
+different building-level addresses — the unit-count comparison is the deciding signal, not the address \
+difference itself.
 3. **Separate Property Types Within a Master Association** — a master complex comprised of separate \
 sub-properties sharing a name but with different property types (e.g. a SFU/HOA section and a separate \
 COA section under one community brand). First confirm whether a master association actually exists \
@@ -116,10 +122,15 @@ type mismatch alone is never sufficient.
 while being fundamentally different, unrelated developments. Search "[property name] [city 1]" and \
 "[property name] [city 2]" independently — unrelated management companies/websites on each side support \
 coincidence. A property-type/ownership mismatch alongside a matching name and unit count is a strong tell.
-5. **Mislabeled Property** — two properties share a name, but one record's Property Name or type was \
-copied from, or confused with, the other. Search the address directly (not the name) to find the \
-property's real, independently confirmed name/type. If a single authoritative total is close to *both* \
-paired records, that supports treating this as one real property duplicated with a mislabel, not two.
+5. **Mislabeled Property** (a.k.a. "Incorrect Property Name") — one record's Property Name is genuinely \
+WRONG: independent research on that record's address turns up a different, unrelated, confirmed name that \
+has nothing to do with the paired record's name. Search the address directly (not the name) to find the \
+property's real, independently confirmed name/type. Reserve this archetype for that specific situation — \
+do NOT use it just because the two Property Names are similar-but-not-identical variants of each other \
+(e.g. "Pelican Cove" vs. "Pelican Cove Condominium", or the presence/absence of "Association, Inc."); \
+that kind of naming-convention difference is not a mislabel, and if the two records' addresses turn out to \
+be two different buildings/addresses within the same complex, the correct archetype is "Separate \
+Buildings" under Duplicate Archetypes below, not this one.
 6. **Multi-Use Building** — a single building has multiple properties with different managers, possibly \
 different property types (e.g. residential tower over separately-owned commercial/retail). Check: \
 identical/near-identical address; different ownership type or drastically different unit counts at the \
@@ -130,10 +141,40 @@ This list is not exhaustive — if a pair doesn't fit any of these but you find 
 a match, describe the reasoning in your own words as a new archetype rather than forcing it into one of \
 the categories above (note that it's a new archetype).
 
+## Duplicate Archetypes (recognizing genuine matches, not just false positives)
+
+Just as the ruleset above describes patterns that only *look* like a duplicate, genuine duplicates also \
+tend to fall into a few recurring patterns. When the Decision is "Duplicate," use one of these (or your \
+own accurate label if none fit):
+
+- **Separate Buildings** — the two records list different addresses/buildings within a single \
+multi-building complex, but they represent the same overall property, not two distinct entities. The \
+deciding test is the unit-count comparison, not how different the two addresses or building names look: \
+if both paired records already show the same (or nearly the same) unit count as each other, or an \
+authoritative source states a total for the whole complex that is close to *both* records, that is the \
+signature of "two entry points into one property" — use this archetype. This applies even when the \
+Property Names are variants of each other (e.g. "Pelican Cove" vs. "Pelican Cove Condominium") — a \
+naming-convention difference is not by itself evidence of two different properties, and is not grounds \
+for "Mislabeled Property" either. Contrast with the False Positive Ruleset's "Separate Children Within \
+One Complex," which applies only when each building is confirmed to have its own genuinely distinct, \
+smaller unit count that does NOT match the paired record's count.
+- **Same Building** — the two records' addresses look different as plain text (different formatting, an \
+alternate entrance, a unit/suite suffix, an old vs. new street-numbering convention) but independent \
+research confirms they are literally the same physical building/address, not two addresses within a \
+larger complex. Use "Same Building" here, not "Separate Buildings" — reserve "Separate Buildings" for \
+cases where there truly are two distinct addresses inside one larger complex.
+- Other genuine duplicate patterns (e.g. a straightforward data-entry duplicate with no complicating \
+factor) — describe in your own words.
+
 ## Guardrails
 
 - When a stated total unit count is found, it only counts as strong evidence of a single shared \
 community when it is close to *both* paired records — not just one.
+- Before using any found source (a stated unit count, a confirmed name, a total) as evidence, confirm \
+that source's address actually corresponds to the specific record's address you searched for. If the most \
+relevant source you can find describes a different address, a subset of the complex, or an unclear scope \
+relative to the two paired addresses, do not force a Duplicate or Not Duplicate conclusion from it — that \
+mismatch is itself a reason to prefer Not Enough Info over a guess.
 - When in doubt between two decisions, prefer the more conservative one (the one less likely to result \
 in a real property being wrongly removed from the database).
 - Do not fabricate or guess at sources — if a claim can't be tied to something actually found online, \
@@ -171,8 +212,12 @@ SUBMIT_SCHEMA = {
             "description": (
                 "Short free-text label for how the decision was reached. For 'Not Duplicate', "
                 "generally one of the six false-positive ruleset categories (or a new one, noted "
-                "as new, if none fit). For 'Duplicate', describe the nature of the match in your "
-                "own words. For 'Not Enough Info', briefly describe what's missing."
+                "as new, if none fit). For 'Duplicate', generally one of the Duplicate Archetypes "
+                "listed in the system prompt ('Separate Buildings', 'Same Building', or a new one "
+                "described in your own words if none fit) — do not default to 'Mislabeled Property' "
+                "just because the two Property Names differ; reserve that one for a genuinely "
+                "different, independently confirmed name. For 'Not Enough Info', briefly describe "
+                "what's missing."
             ),
         },
         "confidence": {
