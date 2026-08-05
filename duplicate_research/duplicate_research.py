@@ -87,15 +87,23 @@ database's name is correct). Look for: the property's own official website or HO
 site; county property/tax records; real estate listing platforms (Zillow, Redfin, Realtor.com, Compass, \
 Apartments.com, Homes.com); HOA/condo association directories; local news or developer press coverage.
 2. **Always specifically try to find an independent, third-party source stating a unit count** for the \
-property/complex (an HOA/condo site, a registry, a real estate listing, local news) — this is one of your \
-standard searches for every pair, not something you only look for opportunistically. If you find one, \
-compare it against BOTH records, not just one: the test is whether that total is reasonably close to \
-*both* paired records' unit counts. A total that closely matches only ONE of the two records, while the \
-other record's count is substantially different, is NOT evidence that the two records are the same \
-property. If, after a genuine attempt, you cannot find any independent unit-count source at all, say so \
-explicitly in the evidence summary — that absence should modestly lower your confidence even when other \
-signals (name, address, HOA identity) point clearly in one direction, since the unit-count cross-check is \
-the ruleset's most decisive signal and you weren't able to run it.
+property/complex — this is one of your standard searches for every pair, not something you only look for \
+opportunistically, and it deserves real effort before you give up on it. Try multiple angles if the first \
+search doesn't turn one up: "[name] total units," "[name] how many units," the HOA/condo association's own \
+site or registry filing, county property appraiser or tax assessor records (which often state a unit count \
+for the parcel), and local news or developer coverage of the original construction. This is the single most \
+decisive test in the whole ruleset, so treat "I didn't find one" as a last resort, not a first guess.
+   If you find one, compare it against BOTH records, not just one: the test is whether that total is \
+reasonably close to *both* paired records' unit counts. A total that closely matches only ONE of the two \
+records, while the other record's count is substantially different, is NOT evidence that the two records \
+are the same property. If, after a genuine multi-angle attempt, you still cannot find any independent \
+unit-count source at all, say so explicitly and concisely in the evidence summary — that absence should \
+meaningfully lower your confidence (see the Guardrails below), especially when the two records' own unit \
+counts don't already closely agree with each other. Two records with substantially different unit counts \
+and no independent total to reconcile them is weak evidence for Duplicate, not something to wave past with \
+an unverified generalization (e.g. "this type of property often varies by phase/section") — if anything, a \
+real possibility that the two addresses represent different phases or sections is a reason to suspect they \
+may be distinct entities, not a reason to conclude they're the same one.
 3. Determine if there is one governing entity or two. Search for the legal HOA/condo association \
 name(s) tied to each address.
 4. Check geographic plausibility. When DISTANCE_MILES is provided (already computed — do not recalculate \
@@ -119,6 +127,17 @@ association", "[name] units"). If a pair cannot be resolved with confidence afte
 stop and label it Not Enough Info rather than continuing to dig indefinitely.
 
 ## False Positive Ruleset (check exhaustively before concluding "Duplicate")
+
+Before invoking any of the three multi-building archetypes below (Parent/Child Mismatch, Separate Children \
+Within One Complex, Multi-Use Building) — all of which assume the complex actually consists of more than one \
+physical building — check the input records' own Building Count field(s) if present (e.g. \
+Master_Building Count_50+). If either record's own Building Count is 1, the database itself is telling you \
+that record's property is a single building, which directly undercuts a multi-building story — don't ignore \
+an already-provided data point in favor of external search results that don't explicitly reconcile with it. \
+Treat a Building Count of 1 as real evidence against these three archetypes specifically, pushing toward \
+Duplicate (Separate Buildings/Same Building) or Not Enough Info instead. (This was missed in a past run: a \
+record was labeled "Separate Children Within One Complex" — implying at least two buildings — while its \
+own paired record's Building Count field read 1.)
 
 1. **Parent/Child Mismatch** — one record refers to a specific building while the other encompasses the \
 full multi-building complex. This archetype requires BOTH of the following to be independently confirmed \
@@ -361,7 +380,12 @@ address, HOA identity, property type) lines up cleanly and points to a clear dec
 comparison is the ruleset's single most decisive test; a conclusion reached without ever running it — \
 however clean the rest of the picture looks — is missing its most important check and should not score as \
 if it weren't. This is different from the found-total scenarios above, where the test WAS run and produced \
-a real (if imperfect) result.
+a real (if imperfect) result. This penalty compounds when the two records' own unit counts don't already \
+closely agree with each other: no independent total AND a real gap between the two records' own counts is \
+weak evidence for a unit-count-based Duplicate conclusion (Separate Buildings) or a unit-count-based false \
+positive (Separate Children), and should push confidence well below 7, not just "not quite as high." Note \
+that this specific combination — no cited total, and a real gap between the records — is also checked and \
+capped automatically after you submit, so there's no benefit to rating it higher than the evidence supports.
 - **The bar for concluding "Duplicate" must be high — but "high" means the evidence must actually \
 correspond to these two records, not that every field must be independently re-confirmed one by one.** \
 Only conclude Duplicate when your evidence — taken as a whole (name match, geographic proximity, and the \
@@ -456,7 +480,13 @@ SUBMIT_SCHEMA = {
         },
         "evidence_summary": {
             "type": "string",
-            "description": "2-4 sentences explaining the finding in plain language, citing specific facts found.",
+            "description": (
+                "STRICT LIMIT: 2-4 sentences, no more -- this is a summary, not a research writeup. "
+                "Plain prose only: no markdown links, no inline citations or footnotes, no multiple "
+                "paragraphs or line breaks. Source URLs belong in the separate `sources` field, not "
+                "inline here. State the specific facts found and how they support the conclusion; if "
+                "you're tempted to go past 4 sentences, cut detail rather than add a paragraph break."
+            ),
         },
         "sources": {
             "type": "array",
@@ -830,6 +860,49 @@ def _verify_cited_total_arithmetic(record_a: dict, record_b: dict, result: dict)
     return result
 
 
+NO_TOTAL_CONFIDENCE_CAP = 5
+NO_TOTAL_MISMATCH_THRESHOLD = 0.15
+
+
+def _cap_confidence_when_total_missing(record_a: dict, record_b: dict, result: dict) -> dict:
+    """Deterministic safety net for the complementary failure: no third-party total was found at
+    all (cited_total_units is empty), the two records' own unit counts don't closely agree with
+    each other, and the model still scores confidence high anyway -- e.g. Crestview Park's 74 vs
+    120 units (a 38% gap) explained away with an unverified "townhouse complexes vary by phase"
+    generalization, at confidence 8. Caps confidence rather than changing the decision, since the
+    archetype/decision call may still be reasonable -- it's specifically the confidence that's
+    unsupported when the ruleset's most decisive test was never actually run.
+    """
+    archetype = result.get("archetype", "")
+    if archetype not in TOTAL_ARITHMETIC_ARCHETYPES:
+        return result
+    if _parse_number(result.get("cited_total_units")):
+        return result  # a total was cited -- handled by _verify_cited_total_arithmetic instead
+    unit_a = _parse_number(record_a.get("Master_Units_50+"))
+    unit_b = _parse_number(record_b.get("Master_Units_50+"))
+    if unit_a is None or unit_b is None:
+        return result
+    larger = max(unit_a, unit_b)
+    if larger == 0:
+        return result
+    relative_diff = abs(unit_a - unit_b) / larger
+    if relative_diff <= NO_TOTAL_MISMATCH_THRESHOLD:
+        return result  # the two records already agree closely -- no total needed to confirm that
+    current_confidence = int(result.get("confidence", 1))
+    if current_confidence <= NO_TOTAL_CONFIDENCE_CAP:
+        return result
+
+    result = dict(result)
+    result["confidence"] = NO_TOTAL_CONFIDENCE_CAP
+    result["evidence_summary"] = (
+        f"{result.get('evidence_summary', '')} [Confidence capped at {NO_TOTAL_CONFIDENCE_CAP}: no "
+        f"independent third-party unit-count total was found, and the two records' own counts "
+        f"({unit_a:g} vs {unit_b:g}) differ by {relative_diff * 100:.0f}%, too large a gap to treat "
+        f"as confirmed without one.]"
+    )
+    return result
+
+
 def process_group(provider, client, model, group_id, rows, error, url_cache):
     if error:
         return {
@@ -852,6 +925,7 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
         if decision not in DECISION_LABELS:
             raise ValueError(f"Model returned invalid decision label: {decision!r}")
         result = _verify_cited_total_arithmetic(record_a, record_b, result)
+        result = _cap_confidence_when_total_missing(record_a, record_b, result)
         decision = result["decision"]
         record_ids = [record_a.get("RecordID"), record_b.get("RecordID")]
         flagged_record_id = str(result.get("flagged_record_id") or "").strip()
