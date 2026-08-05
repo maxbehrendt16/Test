@@ -161,6 +161,14 @@ addresses, and do not invent an unconfirmed "different section" or "different su
 explain a unit-count gap (or a unit-count match) you can't actually verify — that is exactly the kind of \
 speculative reasoning the Objective above forbids. If you can't confirm the naming/documentary signal, \
 prefer Not Enough Info or Duplicate over guessing this archetype.
+   Watch for this exact trap: both records share the IDENTICAL property name (no "Tower 1"/"Tower 2" or \
+"Building A"/"Building B" distinction at all), and the only thing you found is that a "total" for the \
+complex doesn't match either record individually — e.g. records of 74 and 120 units, with a found "total" \
+of 277 that doesn't match either one AND doesn't match their sum (194) either. Do not reach for this \
+archetype here: there is no naming signal (both records are named identically), and the numbers don't even \
+cohere internally, which means the "277" you found probably doesn't reliably describe this specific pair at \
+all. That combination — no naming signal, non-additive/incoherent numbers — is a Not Enough Info situation, \
+not a confident Separate Children (or confident anything) call.
 3. **Separate Property Types Within a Master Association** — a master complex comprised of separate \
 sub-properties sharing a name but with different property types (e.g. a SFU/HOA section and a separate \
 COA section under one community brand). First confirm whether a master association actually exists \
@@ -285,18 +293,38 @@ actually stated in a source you read, or contradicts either input record's own s
 disqualifying: do not assign high confidence (8+) to a conclusion resting on it. Confidence 9-10 should be \
 rare, reserved for cases where multiple independent sources directly and unambiguously confirm both \
 specific records with no gaps or contradictions.
-  Partial confirmation is normal and should lower confidence, not force a different decision. If you \
-confirmed an identity/count for one record but the other is only plausibly consistent (not contradicted, \
-just not independently nailed down), that calls for a mid-range confidence (e.g. 4-6) on whichever \
-decision the totality of evidence actually favors — it is not, by itself, a reason to answer Not Enough \
-Info. Reserve Not Enough Info for when the evidence is genuinely ambiguous, contradictory, or simply too \
-thin to favor either decision — not as a default whenever confirmation isn't perfectly complete on both \
-sides.
-  Not finding any independent third-party unit-count source at all is its own, separate reason to keep \
-confidence out of the high range (below roughly 7), even when every other signal (name match, address, \
-HOA identity, property type) lines up cleanly and points to a clear decision. The unit-count comparison is \
-the ruleset's single most decisive test; a conclusion reached without ever running it — however clean the \
-rest of the picture looks — is missing its most important check and should not score as if it weren't.
+  Distinguish two different kinds of "not fully confirmed" evidence — they deserve very different \
+confidence levels, and conflating them is a common mistake:
+  - **One side has zero independent corroboration.** A source confirms one record's address/count \
+exactly, but the other record's address was never found in any source at all — you're relying on \
+name/proximity plausibility alone for that side. This is genuinely partial: mid-range confidence (4-6) on \
+whichever decision the totality of evidence favors. This is NOT, by itself, a reason to answer Not Enough \
+Info — reserve that for evidence that's genuinely ambiguous, contradictory, or too thin to favor either \
+decision.
+  - **A found total already covers both records, just not identically to each.** E.g. an authoritative \
+total of 768 confirmed units, where one paired record matches it exactly and the other is within ~4%. \
+This is NOT partial confirmation — a single total that's reasonably close to both paired records' own \
+counts is doing exactly the job the unit-count test exists for, for both records at once. This deserves \
+confidence toward the high end (7-9, scaling with how tight the match is), not a mid-range score. Do not \
+describe a close-but-inexact match to a shared total as "partial" the way you would a record with zero \
+corroboration at all — a ~4% gap under one found total is a good match, not a weak one.
+  When the numeric match to a found total is looser (say, 15-25% off) but other independent signals are \
+strong and consistent — the same governing HOA/condo association independently confirmed for both \
+addresses, and no naming/documentary signal suggesting the two addresses are genuinely separate \
+sub-buildings — treat that combination as solid support too, in the upper-middle range (6-8), not as thin \
+evidence to be capped in the middle just because the unit-count fit isn't exact.
+  On the other hand, when the numbers don't make internal sense at all — e.g. a "total" that corresponds \
+to neither individual record NOR to combining them — that's a sign the evidence itself is unreliable or \
+describes something other than this specific pair. That should push confidence low regardless of which \
+decision you lean toward (and often toward Not Enough Info), not toward a confident score on whichever \
+archetype the surface pattern superficially resembles.
+  Separately: not finding any independent third-party unit-count source at all is its own, separate reason \
+to keep confidence out of the high range (below roughly 7), even when every other signal (name match, \
+address, HOA identity, property type) lines up cleanly and points to a clear decision. The unit-count \
+comparison is the ruleset's single most decisive test; a conclusion reached without ever running it — \
+however clean the rest of the picture looks — is missing its most important check and should not score as \
+if it weren't. This is different from the found-total scenarios above, where the test WAS run and produced \
+a real (if imperfect) result.
 - **The bar for concluding "Duplicate" must be high — but "high" means the evidence must actually \
 correspond to these two records, not that every field must be independently re-confirmed one by one.** \
 Only conclude Duplicate when your evidence — taken as a whole (name match, geographic proximity, and the \
