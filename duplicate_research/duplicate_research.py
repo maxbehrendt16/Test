@@ -164,11 +164,16 @@ prefer Not Enough Info or Duplicate over guessing this archetype.
    Watch for this exact trap: both records share the IDENTICAL property name (no "Tower 1"/"Tower 2" or \
 "Building A"/"Building B" distinction at all), and the only thing you found is that a "total" for the \
 complex doesn't match either record individually — e.g. records of 74 and 120 units, with a found "total" \
-of 277 that doesn't match either one AND doesn't match their sum (194) either. Do not reach for this \
-archetype here: there is no naming signal (both records are named identically), and the numbers don't even \
-cohere internally, which means the "277" you found probably doesn't reliably describe this specific pair at \
-all. That combination — no naming signal, non-additive/incoherent numbers — is a Not Enough Info situation, \
-not a confident Separate Children (or confident anything) call.
+of 277 that doesn't match either one AND doesn't match their sum (194) either. Do the actual arithmetic \
+before writing anything about this: 74 is ~27% of 277, 120 is ~43% of 277, and 74+120=194 is ~70% of 277 — \
+none of that is "fitting as fractions of the total" in any meaningful sense, it's just three numbers that \
+don't relate to each other. Do not reach for this archetype here: there is no naming signal (both records \
+are named identically), and the numbers don't even cohere internally, which means the "277" you found \
+probably doesn't reliably describe this specific pair at all. That combination — no naming signal, \
+non-additive/incoherent numbers — is a Not Enough Info situation, not a confident Separate Children (or \
+confident anything) call. If you catch yourself writing a phrase like "fits as a fraction of the total" or \
+"aligns with the total," stop and check: does the actual percentage support that phrase, or are you writing \
+a conclusion-shaped sentence without having verified it? Only the former is acceptable.
 3. **Separate Property Types Within a Master Association** — a master complex comprised of separate \
 sub-properties sharing a name but with different property types (e.g. a SFU/HOA section and a separate \
 COA section under one community brand). First confirm whether a master association actually exists \
@@ -287,6 +292,29 @@ facts.
 
 ## Guardrails
 
+- **Confidence scale — use the whole range, not just the top of it.** Across a batch of many pairs, \
+confidence should vary widely based on how clean the evidence actually is. If most or all pairs in a batch \
+land at 7 or above, that is a red flag that confidence is being inflated, not a sign the evidence was \
+unusually strong across the board — real-world research is rarely that clean. Use this as your anchor:
+  - 1-3: little to no real corroboration behind the decision; close to a guess.
+  - 4-6: real, relevant evidence was found and does lean toward the decision, but with a genuine gap, an \
+unverified assumption, or a loose end somewhere. **This is the normal, expected range for most pairs** — \
+not a consolation score you settle for when you wanted higher.
+  - 7-8: reserved for evidence with no remaining gap on the decisive test (the unit-count comparison and/or \
+the naming/documentary signal), even if some peripheral detail is still unconfirmed.
+  - 9-10: rare. Multiple independent sources directly and unambiguously confirm both specific records with \
+no gaps or contradictions anywhere.
+  Before settling on 7 or higher, explicitly check: is there any loose end, contradiction, or unverified \
+assumption left anywhere in this evidence? If yes, that alone should pull you down into the 4-6 range — do \
+not round up just because the overall story feels plausible or coheres into a satisfying narrative. \
+Plausibility is not confirmation. When genuinely torn between two adjacent confidence values, take the \
+lower one — the cost of overstating confidence in a tool like this is higher than the cost of understating \
+it.
+  Whenever your evidence summary cites a "total" or other aggregate number in support of a conclusion, \
+show the actual arithmetic (the specific numbers or percentages compared), not just a qualitative claim \
+like "fits as a fraction" or "aligns with the total." If you can't honestly write out numbers that support \
+the qualitative claim, don't make the claim — and don't let a confident-sounding sentence substitute for \
+having actually checked the math.
 - **Confidence must reflect how directly and specifically the sources you found confirm THESE EXACT \
 records — not general plausibility.** If any number central to your reasoning doesn't trace to something \
 actually stated in a source you read, or contradicts either input record's own stated value, that is \
