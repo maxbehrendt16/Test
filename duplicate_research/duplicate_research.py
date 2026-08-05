@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import random
+import re
 import threading
 import time
 from pathlib import Path
@@ -808,7 +809,29 @@ def print_summary(summary: dict):
         print(f"  {count:>4}  {archetype}")
 
 
+# Characters illegal in XML 1.0 (and therefore in .xlsx cell values) -- LLM output can
+# occasionally include stray control characters (e.g. from an unusual token or a copied
+# source snippet) that crash openpyxl's writer if left in. Tab/newline/carriage-return are
+# valid XML and kept; everything else in the C0 control range is stripped.
+ILLEGAL_XLSX_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+
+
+def sanitize_for_excel(value):
+    if isinstance(value, str):
+        return ILLEGAL_XLSX_CHARS_RE.sub("", value)
+    return value
+
+
+def sanitize_df_for_excel(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].map(sanitize_for_excel)
+    return df
+
+
 def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
+    out_df = sanitize_df_for_excel(out_df)
     if output_path.lower().endswith((".xlsx", ".xls")):
         summary_rows = [{"Metric": "Total pairs processed", "Value": summary["total_pairs"]}]
         for label, count in summary["by_decision"].items():
@@ -817,7 +840,7 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
         summary_rows.append({"Metric": "Errors", "Value": summary["errors"]})
         for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
             summary_rows.append({"Metric": f"Archetype: {archetype}", "Value": count})
-        summary_df = pd.DataFrame(summary_rows)
+        summary_df = sanitize_df_for_excel(pd.DataFrame(summary_rows))
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             summary_df.to_excel(writer, sheet_name="Summary", index=False)
             out_df.to_excel(writer, sheet_name="Results", index=False)
