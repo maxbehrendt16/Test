@@ -153,13 +153,18 @@ own accurate label if none fit):
 multi-building complex, but they represent the same overall property, not two distinct entities. The \
 deciding test is the unit-count comparison, not how different the two addresses or building names look: \
 if both paired records already show the same (or nearly the same) unit count as each other, or an \
-authoritative source states a total for the whole complex that is close to *both* records, that is the \
-signature of "two entry points into one property" — use this archetype. This applies even when the \
-Property Names are variants of each other (e.g. "Pelican Cove" vs. "Pelican Cove Condominium") — a \
-naming-convention difference is not by itself evidence of two different properties, and is not grounds \
-for "Mislabeled Property" either. Contrast with the False Positive Ruleset's "Separate Children Within \
-One Complex," which applies only when each building is confirmed to have its own genuinely distinct, \
-smaller unit count that does NOT match the paired record's count.
+authoritative source states a total for the whole complex that is close to *both* records (as a rule of \
+thumb, within about 10-15% of each), that is the signature of "two entry points into one property" — use \
+this archetype. This applies even when the Property Names are variants of each other (e.g. "Pelican Cove" \
+vs. "Pelican Cove Condominium") — a naming-convention difference is not by itself evidence of two \
+different properties, and is not grounds for "Mislabeled Property" either. Contrast with the False \
+Positive Ruleset's "Separate Children Within One Complex," which applies only when each building is \
+confirmed to have its own genuinely distinct, smaller unit count that does NOT match the paired record's \
+count.
+  A found total that is off from BOTH paired records by a wide margin (e.g. more than roughly 20-30%) is \
+NOT "close enough," and does not support this archetype — it more likely describes a different, unrelated \
+property. Do not round a distant number down to "close" just because it's the best match your search \
+turned up.
 - **Same Building** — the two records' addresses look different as plain text (different formatting, an \
 alternate entrance, a unit/suite suffix, an old vs. new street-numbering convention) but independent \
 research confirms they are literally the same physical building/address, not two addresses within a \
@@ -170,8 +175,22 @@ factor) — describe in your own words.
 
 ## Guardrails
 
+- **The bar for concluding "Duplicate" must be high.** Only conclude Duplicate when you have specific, \
+direct evidence tying both of THESE EXACT queried addresses (not a nearby address on the same street, a \
+similarly-named development, or a general community page) to the same property. A source describing a \
+different street number, a substantially different unit count, or an unclear/broader scope than the two \
+specific addresses you were given does NOT satisfy this — even if it's the closest or only result your \
+search turned up, and even if it's on the same street. Proximity or name similarity to a real nearby \
+development is not evidence that development IS one of your two records. When your best evidence has this \
+kind of mismatch, the correct decision is Not Enough Info, not Duplicate. For example: if your two records \
+are at 52 and 10 Country Club Drive with 72 units each, and the only source you find describes a 160-unit \
+complex at 1200 Country Club Drive, that source does not confirm anything about your two records — the \
+address doesn't match either one and the unit count is off by more than double. Do not use it as support \
+for "Separate Buildings" or any other Duplicate archetype; label the pair Not Enough Info and say so \
+plainly in the evidence summary.
 - When a stated total unit count is found, it only counts as strong evidence of a single shared \
-community when it is close to *both* paired records — not just one.
+community when it is close to *both* paired records — not just one. "Close" means within roughly 10-15%; \
+farther off than that does not count, no matter how confident the source otherwise seems.
 - Before using any found source (a stated unit count, a confirmed name, a total) as evidence, confirm \
 that source's address actually corresponds to the specific record's address you searched for. If the most \
 relevant source you can find describes a different address, a subset of the complex, or an unclear scope \
