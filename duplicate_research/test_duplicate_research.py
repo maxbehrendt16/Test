@@ -198,6 +198,64 @@ class VerifyCitedTotalArithmeticTests(unittest.TestCase):
         self.assertLessEqual(result["confidence"], 3)
 
 
+class CapConfidenceWhenTotalMissingTests(unittest.TestCase):
+    def _record(self, units):
+        return {"Master_Units_50+": units}
+
+    def test_caps_crestview_style_no_total_and_big_gap(self):
+        # 74 vs 120 (38% gap), no cited total, confidence 8 -- should be capped.
+        result = {"decision": "Duplicate", "archetype": "Separate Buildings", "confidence": 8,
+                  "evidence_summary": "orig", "cited_total_units": ""}
+        out = dr._cap_confidence_when_total_missing(self._record("74"), self._record("120"), result)
+        self.assertEqual(out["confidence"], dr.NO_TOTAL_CONFIDENCE_CAP)
+        self.assertIn("orig", out["evidence_summary"])
+        self.assertIn("Confidence capped", out["evidence_summary"])
+
+    def test_no_cap_when_records_already_close(self):
+        # 355 vs 356 -- effectively identical, no total needed to trust that.
+        result = {"decision": "Duplicate", "archetype": "Separate Buildings", "confidence": 8,
+                  "evidence_summary": "orig", "cited_total_units": ""}
+        out = dr._cap_confidence_when_total_missing(self._record("355"), self._record("356"), result)
+        self.assertEqual(out["confidence"], 8)
+
+    def test_no_cap_when_total_was_cited(self):
+        # Handled by _verify_cited_total_arithmetic instead -- this function should defer.
+        result = {"decision": "Duplicate", "archetype": "Separate Buildings", "confidence": 8,
+                  "evidence_summary": "orig", "cited_total_units": "768"}
+        out = dr._cap_confidence_when_total_missing(self._record("74"), self._record("120"), result)
+        self.assertEqual(out["confidence"], 8)
+
+    def test_no_cap_for_archetypes_not_covered(self):
+        result = {"decision": "Duplicate", "archetype": "Same Building", "confidence": 8,
+                  "evidence_summary": "orig", "cited_total_units": ""}
+        out = dr._cap_confidence_when_total_missing(self._record("74"), self._record("120"), result)
+        self.assertEqual(out["confidence"], 8)
+
+    def test_does_not_raise_confidence_already_below_cap(self):
+        result = {"decision": "Not Enough Info", "archetype": "Separate Buildings", "confidence": 3,
+                  "evidence_summary": "orig", "cited_total_units": ""}
+        out = dr._cap_confidence_when_total_missing(self._record("74"), self._record("120"), result)
+        self.assertEqual(out["confidence"], 3)
+
+    def test_process_group_applies_cap_end_to_end(self):
+        rows = [{"RecordID": "5657202", "Address": "11 Lilly Ln", "Master_Units_50+": "74"},
+                {"RecordID": "16416", "Address": "1 Azalea Ln", "Master_Units_50+": "120"}]
+
+        def fake_research_pair(provider, client, record_a, record_b, distance, url_cache, model):
+            return {"decision": "Duplicate", "archetype": "Separate Buildings", "confidence": 8,
+                    "evidence_summary": "townhouse complexes often vary by phase",
+                    "sources": [], "flagged_record_id": "", "cited_total_units": ""}
+
+        original = dr.research_pair
+        dr.research_pair = fake_research_pair
+        try:
+            result = dr.process_group("anthropic", object(), "m", "7", rows, None, {})
+        finally:
+            dr.research_pair = original
+        self.assertEqual(result["confidence"], dr.NO_TOTAL_CONFIDENCE_CAP)
+        self.assertEqual(result["decision"], "Duplicate")  # decision untouched, only confidence capped
+
+
 class ProcessGroupErrorTests(unittest.TestCase):
     def test_malformed_group_short_circuits_without_client(self):
         rows = [{"RecordID": "1", "Address": "1 Main St"}]
