@@ -837,6 +837,22 @@ def _master_source(row: dict) -> str:
     return "Other"
 
 
+def _values_differ(a, b) -> str:
+    """'Yes'/'No', or '' when either side is missing so a difference can't be determined."""
+    match = _values_match(a, b)
+    if match == "":
+        return ""
+    return "No" if match == "Yes" else "Yes"
+
+
+def _same_master_source(source_a: str, source_b: str) -> str:
+    """'Yes' only when both records' Master Source match AND that shared value isn't 'Other' --
+    two unmatched "Other" records don't share a real source, so that case is 'No', not 'Yes'."""
+    if source_a == "Other" or source_b == "Other":
+        return "No"
+    return "Yes" if source_a == source_b else "No"
+
+
 def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
     out = df.copy()
     out["Decision"] = pd.Series([""] * len(out), index=out.index, dtype=object)
@@ -848,8 +864,10 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
     out["Address Match"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Name Match"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Unit Counts Within 10"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Different Ownership Type"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     for flag_col in DATABASE_FLAG_FIELDS:
         out[flag_col] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Same Master Source"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Master Source"] = pd.Series([""] * len(out), index=out.index, dtype=object)
 
     for group_id, group_df in out.groupby("Group Number", sort=False):
@@ -877,6 +895,11 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
         address_match = _values_match(row_a.get("Address"), row_b.get("Address"))
         name_match = _values_match(row_a.get("Master_Property Name"), row_b.get("Master_Property Name"))
         units_close = _units_within_threshold(row_a.get("Master_Units_50+"), row_b.get("Master_Units_50+"))
+        ownership_differs = _values_differ(row_a.get("Master_Ownership Type"), row_b.get("Master_Ownership Type"))
+        idx_a, idx_b = group_df.index[0], group_df.index[1]
+        same_master_source = _same_master_source(
+            out.at[idx_a, "Master Source"], out.at[idx_b, "Master Source"]
+        )
         flag_values = {
             flag_col: _both_flag_true(row_a.get(source_col), row_b.get(source_col))
             for flag_col, source_col in DATABASE_FLAG_FIELDS.items()
@@ -885,6 +908,8 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
             out.at[idx, "Address Match"] = address_match
             out.at[idx, "Name Match"] = name_match
             out.at[idx, "Unit Counts Within 10"] = units_close
+            out.at[idx, "Different Ownership Type"] = ownership_differs
+            out.at[idx, "Same Master Source"] = same_master_source
             for flag_col, value in flag_values.items():
                 out.at[idx, flag_col] = value
     return out

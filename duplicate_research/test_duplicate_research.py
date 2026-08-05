@@ -224,10 +224,11 @@ class BuildOutputAndSummaryTests(unittest.TestCase):
 
 
 class DuplicateFlagsTests(unittest.TestCase):
-    def _row(self, group, record_id, address, name, units, hw, costar, fa):
+    def _row(self, group, record_id, address, name, units, hw, costar, fa, ownership=""):
         return {"Group Number": group, "RecordID": record_id, "Address": address,
                 "Master_Property Name": name, "Master_Units_50+": units,
-                "In HW": hw, "In Costar": costar, "In FA": fa}
+                "In HW": hw, "In Costar": costar, "In FA": fa,
+                "Master_Ownership Type": ownership}
 
     def test_all_flags_true_for_clean_duplicate(self):
         df = pd.DataFrame([
@@ -305,6 +306,67 @@ class DuplicateFlagsTests(unittest.TestCase):
         out = dr.build_output_df(df, results)
         self.assertEqual(out[out["RecordID"] == "a"].iloc[0]["Master Source"], "First American")
         self.assertEqual(out[out["RecordID"] == "b"].iloc[0]["Master Source"], "Other")
+
+    def test_different_ownership_type_flag(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "1", "1", ownership="HOA"),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "1", "1", ownership="COA"),
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Separate Buildings",
+                         "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Different Ownership Type"] == "Yes").all())
+
+    def test_same_ownership_type_flag(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "1", "1", ownership="HOA"),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "1", "1", ownership="HOA"),
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Different Ownership Type"] == "No").all())
+
+    def test_ownership_type_blank_when_missing(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "1", "1", ownership=""),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "1", "1", ownership="HOA"),
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Different Ownership Type"] == "").all())
+
+    def test_same_master_source_true_when_matching_and_not_other(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "0", "0"),  # Hotwire
+            self._row("1", "b", "1 Main St", "X", "100", "1", "0", "0"),  # Hotwire
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Same Master Source"] == "Yes").all())
+
+    def test_same_master_source_false_when_both_other(self):
+        # Both fall back to "Other" -- matching, but explicitly excluded per spec.
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("1", "b", "1 Main St", "X", "100", "0", "0", "0"),
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Same Master Source"] == "No").all())
+
+    def test_same_master_source_false_when_sources_differ(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "0", "0"),  # Hotwire
+            self._row("1", "b", "1 Main St", "X", "100", "0", "1", "0"),  # CoStar
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Same Master Source"] == "No").all())
 
 
 class FlaggedRecordIdTests(unittest.TestCase):
