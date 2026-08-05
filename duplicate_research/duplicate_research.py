@@ -137,24 +137,29 @@ counts are each already reasonably close to each other or to a found total) over
    When you do conclude this archetype, set `flagged_record_id` to whichever record's RecordID is the \
 child/specific-building one (not the parent/master-association one) — the two records aren't peers here, \
 so say which is which rather than leaving it to be inferred from prose.
-2. **Separate Children Within One Complex** — two genuine peer buildings (e.g. "Building A" vs \
-"Building B"). Like Parent/Child Mismatch, this requires BOTH of the following:
-   - **Magnitude**: EACH record's own unit count is independently confirmed to be well below any found \
-master/total count for the complex — i.e., each is a fraction of the whole, not already close to the full \
-total on its own. If instead each record's count (on its own) is already close to a found total, that is \
-the signature of Duplicate/Separate Buildings, not this archetype — a record that's already close to the \
-whole complex's total is describing the whole complex, not one child within it.
-   - **Naming/documentary signal**: independent confirmation of two separately identified/managed \
-sub-entities (distinct sub-association names, explicitly confirmed separate building designations) — not \
-just two different addresses.
-   THIS ARCHETYPE DOES NOT APPLY, and points toward Duplicate instead, when both DB records show the same \
-(or nearly the same) unit count as each other, or when a single authoritative total for the whole complex \
-is close to *both* records — that pattern means the two addresses are just two entry points into the \
-*same* overall property. See "Separate Buildings" under Duplicate Archetypes below. Do not conclude Not \
-Duplicate here merely because the two records list different building-level addresses, and do not invent \
-an unconfirmed "different section" or "different sub-association" story to explain a unit-count gap you \
-can't actually verify — that is exactly the kind of speculative reasoning the Objective above forbids; \
-if you can't confirm both conditions, prefer Not Enough Info or Duplicate over guessing this archetype.
+2. **Separate Children Within One Complex** — two genuine peer buildings (e.g. "Tower 1" vs "Tower 2," \
+"Building A" vs "Building B"). Like Parent/Child Mismatch, this requires BOTH of the following:
+   - **Naming/documentary signal**: independent confirmation that two separately identified, physically \
+distinct buildings actually exist — e.g. explicit "Tower 1"/"Tower 2" or "Building A"/"Building B" \
+designations confirmed via a site plan, HOA/condo registry, or news coverage, not just inferred from the \
+two DB records' own addresses.
+   - **Magnitude relative to a found TOTAL for the whole complex** (not relative to each other): when an \
+authoritative total is found, each record's own count should be a plausible fraction of that total — not \
+already close to the full total on its own. A record whose count is already close to the confirmed total \
+for the ENTIRE complex is describing the whole property by itself, not one child within it — that's \
+Duplicate/Separate Buildings instead (see below).
+   **Important:** the two records' unit counts matching (or nearly matching) EACH OTHER is NOT disqualifying \
+by itself, and is not the test — do not treat it as automatic evidence of Duplicate. Sibling buildings built \
+to the same or a similar design commonly have the same or similar unit counts as one another; a confirmed \
+"Tower 1"/"Tower 2" pair with matching counts is still perfectly consistent with two genuine siblings. What \
+actually distinguishes the two situations is the naming/documentary signal above, plus whether a found total \
+for the complex corresponds to a SINGLE record (Duplicate) or is roughly consistent with combining both \
+records rather than either one alone (genuine siblings).
+   Do not conclude Not Duplicate here merely because the two records list different building-level \
+addresses, and do not invent an unconfirmed "different section" or "different sub-association" story to \
+explain a unit-count gap (or a unit-count match) you can't actually verify — that is exactly the kind of \
+speculative reasoning the Objective above forbids. If you can't confirm the naming/documentary signal, \
+prefer Not Enough Info or Duplicate over guessing this archetype.
 3. **Separate Property Types Within a Master Association** — a master complex comprised of separate \
 sub-properties sharing a name but with different property types (e.g. a SFU/HOA section and a separate \
 COA section under one community brand). First confirm whether a master association actually exists \
@@ -206,18 +211,23 @@ tend to fall into a few recurring patterns. When the Decision is "Duplicate," us
 own accurate label if none fit):
 
 - **Separate Buildings** — the two records list different addresses/buildings within a single \
-multi-building complex, but they represent the same overall property, not two distinct entities. The \
-deciding test is the unit-count comparison, not how different the two addresses or building names look: \
-if both paired records already show the same (or nearly the same) unit count as each other, or an \
-authoritative source states a total for the whole complex that is close to *both* records (as a rule of \
-thumb, within about 10-15% of each), that is the signature of "two entry points into one property" — use \
-this archetype. This applies even when the Property Names are variants of each other (e.g. "Pelican Cove" \
-vs. "Pelican Cove Condominium") — a naming-convention difference is not by itself evidence of two \
-different properties, and is not grounds for "Mislabeled Property" either. Contrast with the False \
-Positive Ruleset's "Separate Children Within One Complex," which requires BOTH records to independently \
-confirm their own genuinely smaller, sub-total unit counts AND a naming/documentary signal distinguishing \
-them as separate sub-entities (see that entry) — the mere existence of two different addresses is not \
-enough to invoke it.
+multi-building complex, but they represent the same overall property, not two distinct entities. The core \
+test is whether an authoritative source states a total for the whole complex that is close to *both* \
+records (as a rule of thumb, within about 10-15% of each) — that is the signature of "two entry points \
+into one property." This applies even when the Property Names are variants of each other (e.g. "Pelican \
+Cove" vs. "Pelican Cove Condominium") — a naming-convention difference is not by itself evidence of two \
+different properties, and is not grounds for "Mislabeled Property" either.
+  Both paired records showing the same (or nearly the same) unit count as each other, with NO confirmed \
+naming/documentary signal of distinct siblings (see "Separate Children Within One Complex" below), is also \
+a signature of this archetype — absent such a signal, there's no other reason two "different" records \
+would coincidentally match, so matching counts point to one property counted twice. But when there IS a \
+confirmed naming signal for genuine siblings (e.g. independently verified "Tower 1"/"Tower 2" designations), \
+matching or near-identical counts between the two records does NOT by itself indicate Duplicate — siblings \
+built to the same design commonly share the same unit count. In that situation, look instead at whether a \
+found total for the whole complex corresponds to a SINGLE record on its own (Duplicate/Separate Buildings) \
+or is roughly consistent with combining both records rather than matching either alone (genuine siblings — \
+see "Separate Children Within One Complex," which requires that naming signal plus each record being a \
+plausible fraction of any found total, not the two records simply differing or matching each other).
   A found total that is off from BOTH paired records by a wide margin (e.g. more than roughly 20-30%) is \
 NOT "close enough," and does not support this archetype — it more likely describes a different, unrelated \
 property. Do not round a distant number down to "close" just because it's the best match your search \
