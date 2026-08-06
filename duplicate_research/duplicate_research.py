@@ -221,6 +221,14 @@ non-additive/incoherent numbers — is a Not Enough Info situation, not a confid
 confident anything) call. If you catch yourself writing a phrase like "fits as a fraction of the total" or \
 "aligns with the total," stop and check: does the actual percentage support that phrase, or are you writing \
 a conclusion-shaped sentence without having verified it? Only the former is acceptable.
+   **Set `naming_signal_confirmed` honestly for both this archetype and Parent/Child Mismatch above.** The \
+property names should indicate a parent/child or sibling relationship (a building/tower/section designation, \
+or confirmed separate registration) before you reach for either archetype — that signal is the requirement, \
+not the unit-count arithmetic alone. If you conclude one of these two archetypes without that signal (e.g. \
+two identically-named records, each showing 88 units, against a found total of 205 for the whole \
+association — plausible-looking math, but nothing in the names suggests phases or separate buildings), set \
+`naming_signal_confirmed` to "no"; confidence will be capped automatically in that case, so don't inflate it \
+to compensate.
 3. **Separate Property Types Within a Master Association** — a master complex comprised of separate \
 sub-properties sharing a name but with different property types (e.g. a SFU/HOA section and a separate \
 COA section under one community brand). First confirm whether a master association actually exists \
@@ -562,9 +570,22 @@ SUBMIT_SCHEMA = {
                 "as an empty string if no such total was used in your reasoning."
             ),
         },
+        "naming_signal_confirmed": {
+            "type": "string",
+            "enum": ["yes", "no", "not_applicable"],
+            "description": (
+                "For 'Parent/Child Mismatch' or 'Separate Children Within One Complex' only: "
+                "'yes' if you independently confirmed an actual naming/documentary signal "
+                "distinguishing the two records as parent/child or siblings (e.g. confirmed "
+                "'Tower 1'/'Tower 2', 'Building A'/'Building B', or separately registered "
+                "sub-associations) -- not just inferred because the numbers seemed to fit. 'no' "
+                "if you concluded one of these two archetypes without that confirmation. "
+                "'not_applicable' for every other archetype/decision."
+            ),
+        },
     },
     "required": ["decision", "archetype", "confidence", "evidence_summary", "sources", "flagged_record_id",
-                 "cited_total_units"],
+                 "cited_total_units", "naming_signal_confirmed"],
     "additionalProperties": False,
 }
 
@@ -991,6 +1012,34 @@ def _correct_child_archetype_when_total_supports_duplicate(record_a: dict, recor
     return result
 
 
+NAMING_SIGNAL_CONFIDENCE_CAP = 6
+
+
+def _cap_confidence_without_naming_signal(result: dict) -> dict:
+    """Parent/Child Mismatch and Separate Children Within One Complex both require an
+    independently confirmed naming/documentary signal (see the ruleset), not just plausible-looking
+    unit-count arithmetic. When the model reports it didn't confirm that signal (or doesn't say)
+    but still reached for one of these archetypes, cap confidence rather than trusting a number
+    that isn't backed by the thing that actually distinguishes these archetypes from Duplicate.
+    """
+    archetype = result.get("archetype", "")
+    if archetype not in CHILD_ARCHETYPES:
+        return result
+    if str(result.get("naming_signal_confirmed", "")).strip().lower() == "yes":
+        return result
+    if int(result.get("confidence", 1)) <= NAMING_SIGNAL_CONFIDENCE_CAP:
+        return result
+
+    result = dict(result)
+    result["confidence"] = NAMING_SIGNAL_CONFIDENCE_CAP
+    result["evidence_summary"] = (
+        f"{result.get('evidence_summary', '')} [Confidence capped at {NAMING_SIGNAL_CONFIDENCE_CAP}: "
+        f"'{archetype}' requires an independently confirmed naming/documentary signal distinguishing "
+        f"parent/child or sibling buildings, and none was confirmed here.]"
+    )
+    return result
+
+
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((?:https?://|www\.)[^)]+\)")
 MAX_EVIDENCE_SUMMARY_CHARS = 700
 
@@ -1040,6 +1089,7 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
         result["evidence_summary"] = _clean_evidence_summary(result.get("evidence_summary", ""))
         result = _verify_cited_total_arithmetic(record_a, record_b, result)
         result = _correct_child_archetype_when_total_supports_duplicate(record_a, record_b, result)
+        result = _cap_confidence_without_naming_signal(result)
         result = _cap_confidence_when_total_missing(record_a, record_b, result)
         decision = result["decision"]
         record_ids = [record_a.get("RecordID"), record_b.get("RecordID")]

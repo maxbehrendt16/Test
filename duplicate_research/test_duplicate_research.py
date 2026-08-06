@@ -304,6 +304,62 @@ class CorrectChildArchetypeTests(unittest.TestCase):
         self.assertEqual(out["archetype"], "Same Building")
 
 
+class CapConfidenceWithoutNamingSignalTests(unittest.TestCase):
+    def test_caps_when_naming_signal_not_confirmed(self):
+        # The exact reported case: two identically-named records, 88 units each, total 205 --
+        # plausible-looking math but no naming signal distinguishing them as siblings.
+        result = {"decision": "Not Duplicate", "archetype": "Separate Children Within One Complex",
+                  "confidence": 8, "evidence_summary": "orig", "naming_signal_confirmed": "no"}
+        out = dr._cap_confidence_without_naming_signal(result)
+        self.assertEqual(out["confidence"], dr.NAMING_SIGNAL_CONFIDENCE_CAP)
+        self.assertIn("orig", out["evidence_summary"])
+        self.assertIn("naming/documentary signal", out["evidence_summary"])
+
+    def test_caps_when_field_omitted_entirely(self):
+        # Missing the field should be treated the same as "no", not as an implicit "yes".
+        result = {"decision": "Not Duplicate", "archetype": "Parent/Child Mismatch", "confidence": 9,
+                  "evidence_summary": "orig"}
+        out = dr._cap_confidence_without_naming_signal(result)
+        self.assertEqual(out["confidence"], dr.NAMING_SIGNAL_CONFIDENCE_CAP)
+
+    def test_no_cap_when_signal_confirmed(self):
+        result = {"decision": "Not Duplicate", "archetype": "Separate Children Within One Complex",
+                  "confidence": 9, "evidence_summary": "orig", "naming_signal_confirmed": "yes"}
+        out = dr._cap_confidence_without_naming_signal(result)
+        self.assertEqual(out["confidence"], 9)
+
+    def test_no_cap_for_other_archetypes(self):
+        result = {"decision": "Duplicate", "archetype": "Same Building", "confidence": 9,
+                  "evidence_summary": "orig", "naming_signal_confirmed": "no"}
+        out = dr._cap_confidence_without_naming_signal(result)
+        self.assertEqual(out["confidence"], 9)
+
+    def test_does_not_raise_confidence_already_below_cap(self):
+        result = {"decision": "Not Duplicate", "archetype": "Parent/Child Mismatch", "confidence": 4,
+                  "evidence_summary": "orig", "naming_signal_confirmed": "no"}
+        out = dr._cap_confidence_without_naming_signal(result)
+        self.assertEqual(out["confidence"], 4)
+
+    def test_process_group_applies_cap_end_to_end(self):
+        rows = [{"RecordID": "1", "Address": "1 Main St", "Master_Units_50+": "88"},
+                {"RecordID": "2", "Address": "2 Main St", "Master_Units_50+": "88"}]
+
+        def fake_research_pair(provider, client, record_a, record_b, distance, url_cache, model):
+            return {"decision": "Not Duplicate", "archetype": "Separate Children Within One Complex",
+                    "confidence": 8, "evidence_summary": "both show 88 units against a 205 total",
+                    "sources": [], "flagged_record_id": "", "cited_total_units": "205",
+                    "naming_signal_confirmed": "no"}
+
+        original = dr.research_pair
+        dr.research_pair = fake_research_pair
+        try:
+            result = dr.process_group("anthropic", object(), "m", "1", rows, None, {})
+        finally:
+            dr.research_pair = original
+        self.assertEqual(result["confidence"], dr.NAMING_SIGNAL_CONFIDENCE_CAP)
+        self.assertEqual(result["archetype"], "Separate Children Within One Complex")
+
+
 class CleanEvidenceSummaryTests(unittest.TestCase):
     def test_strips_markdown_links_to_label_text(self):
         text = "Confirmed via the HOA site ([costadelsolassociation.com](https://www.costadelsolassociation.com/about))."
