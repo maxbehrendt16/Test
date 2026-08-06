@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -616,6 +618,87 @@ class DuplicateFlagSummaryTests(unittest.TestCase):
         out = dr.build_output_df(df, results)
         summary = dr.compute_duplicate_flag_summary(out)
         self.assertEqual(summary["total_duplicate_pairs"], 0)
+
+    def test_both_master_source_other_counts_pairs_not_records(self):
+        df = pd.DataFrame([
+            # Pair 1: both Hotwire -- not "both Other"
+            self._row("1", "a", "1 Main St", "X", "100", "1", "0", "0"),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "0", "0"),
+            # Pair 2: both no DB flags set -- both fall back to "Other"
+            self._row("2", "c", "1 Main St", "X", "50", "0", "0", "0"),
+            self._row("2", "d", "2 Other Ave", "Y", "500", "0", "0", "0"),
+            # Pair 3: one Other, one Hotwire -- must not count as "both Other"
+            self._row("3", "e", "9 Ninth St", "Z", "10", "0", "0", "0"),
+            self._row("3", "f", "9 Ninth St", "Z", "10", "1", "0", "0"),
+        ])
+        results = {gid: {"group": gid, "decision": "Duplicate", "archetype": "Separate Buildings",
+                         "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False}
+                   for gid in ("1", "2", "3")}
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertEqual(summary["total_duplicate_pairs"], 3)
+        self.assertEqual(summary["both_master_source_other"], 1)
+
+
+class PctHelperTests(unittest.TestCase):
+    def test_formats_percentage_with_fraction(self):
+        self.assertEqual(dr._pct(8, 10), "80% (8/10)")
+
+    def test_rounds_to_nearest_whole_percent(self):
+        self.assertEqual(dr._pct(1, 3), "33% (1/3)")
+
+    def test_zero_total_does_not_divide_by_zero(self):
+        self.assertEqual(dr._pct(0, 0), "0% (0/0)")
+
+    def test_zero_count(self):
+        self.assertEqual(dr._pct(0, 5), "0% (0/5)")
+
+    def test_full_count(self):
+        self.assertEqual(dr._pct(5, 5), "100% (5/5)")
+
+
+class SummaryRenderingTests(unittest.TestCase):
+    def test_print_summary_shows_family_archetypes_not_full_breakdown(self):
+        summary = {
+            "total_pairs": 4,
+            "by_decision": {"Duplicate": 2, "Not Duplicate": 2, "Not Enough Info": 0},
+            "average_confidence": 6.5,
+            "archetype_counts": {
+                "Parent/Child Mismatch": 1,
+                "Separate Children Within One Complex": 1,
+                "Coincidental Name Match": 2,  # should NOT appear in the printed summary
+            },
+            "errors": 0,
+        }
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            dr.print_summary(summary)
+        output = buf.getvalue()
+        self.assertIn("Parent/Child Mismatch: 25% (1/4)", output)
+        self.assertIn("Separate Children Within One Complex: 25% (1/4)", output)
+        self.assertNotIn("Coincidental Name Match", output)
+        self.assertIn("Duplicate: 50% (2/4)", output)
+
+    def test_write_output_xlsx_summary_sheet_uses_percentages(self):
+        df = pd.DataFrame([
+            {"Group Number": "1", "RecordID": "a", "Address": "1 Main St",
+             "Master_Property Name": "X", "Master_Units_50+": "100"},
+            {"Group Number": "1", "RecordID": "b", "Address": "1 Main St",
+             "Master_Property Name": "X", "Master_Units_50+": "100"},
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_summary(results)
+        summary["duplicate_flags"] = dr.compute_duplicate_flag_summary(out)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "results.xlsx")
+            dr.write_output(out, summary, path)
+            summary_df = pd.read_excel(path, sheet_name="Summary")
+        metrics = dict(zip(summary_df["Metric"], summary_df["Value"]))
+        self.assertEqual(metrics["Decision: Duplicate"], "100% (1/1)")
+        self.assertIn("Both Master Source = Other", metrics)
+        self.assertNotIn("Archetype: Same Building", metrics)  # no per-archetype rows anymore
 
     def test_print_and_write_output_do_not_crash_without_flag_summary(self):
         # Older call sites (or tests) that never set summary["duplicate_flags"] must still work.

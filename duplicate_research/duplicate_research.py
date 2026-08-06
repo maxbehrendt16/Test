@@ -1242,13 +1242,28 @@ DUPLICATE_FLAG_COLUMNS = [
     "Same Master Source",
 ]
 
+# The only two archetypes worth surfacing in the summary -- identifying broader family
+# relationships (which properties are siblings/parents of which) is a separate workstream.
+FAMILY_RELATIONSHIP_ARCHETYPES = ["Parent/Child Mismatch", "Separate Children Within One Complex"]
+
+
+def _pct(count: int, total: int) -> str:
+    """'80% (8/10)' -- the shared display format for every percentage in the summary."""
+    if not total:
+        return f"0% ({count}/{total})"
+    return f"{round(count / total * 100)}% ({count}/{total})"
+
 
 def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
     """Yes/No/Unknown breakdown of the Duplicate-only cross-check flags, one count per pair
     (not per row) -- shows how confirmed duplicates in this batch break out across those checks."""
-    dup_df = out_df[out_df.get("Decision", "") == "Duplicate"]
-    if "Group Number" in dup_df.columns:
-        dup_df = dup_df.drop_duplicates(subset="Group Number")
+    dup_df_all = out_df[out_df.get("Decision", "") == "Duplicate"]
+    both_other_master_source = 0
+    if "Group Number" in dup_df_all.columns and "Master Source" in dup_df_all.columns:
+        for _, group_df in dup_df_all.groupby("Group Number", sort=False):
+            if len(group_df) and (group_df["Master Source"] == "Other").all():
+                both_other_master_source += 1
+    dup_df = dup_df_all.drop_duplicates(subset="Group Number") if "Group Number" in dup_df_all.columns else dup_df_all
     flags = {}
     for col in DUPLICATE_FLAG_COLUMNS:
         if col not in dup_df.columns:
@@ -1259,27 +1274,32 @@ def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
             "No": int(counts.get("No", 0)),
             "Unknown": int(counts.get("", 0)),
         }
-    return {"total_duplicate_pairs": len(dup_df), "flags": flags}
+    return {
+        "total_duplicate_pairs": len(dup_df),
+        "flags": flags,
+        "both_master_source_other": both_other_master_source,
+    }
 
 
 def print_summary(summary: dict):
+    total = summary["total_pairs"]
     print("\n=== Run Summary ===")
-    print(f"Total pairs processed: {summary['total_pairs']}")
+    print(f"Total pairs processed: {total}")
     for label, count in summary["by_decision"].items():
-        print(f"  {label}: {count}")
+        print(f"  {label}: {_pct(count, total)}")
     print(f"Average confidence: {summary['average_confidence']}")
-    print(f"Errors: {summary['errors']}")
-    print("Archetype breakdown:")
-    for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
-        print(f"  {count:>4}  {archetype}")
+    print(f"Errors: {_pct(summary['errors'], total)}")
+    print("Family-relationship archetypes:")
+    for archetype in FAMILY_RELATIONSHIP_ARCHETYPES:
+        count = summary["archetype_counts"].get(archetype, 0)
+        print(f"  {archetype}: {_pct(count, total)}")
     flag_summary = summary.get("duplicate_flags")
     if flag_summary and flag_summary["total_duplicate_pairs"]:
-        print(f"\nDuplicate pair flag breakdown (of {flag_summary['total_duplicate_pairs']} duplicate pair(s)):")
+        dup_total = flag_summary["total_duplicate_pairs"]
+        print(f"\nDuplicate pair flag breakdown (of {dup_total} duplicate pair(s)):")
         for col, counts in flag_summary["flags"].items():
-            line = f"  {col}: Yes={counts['Yes']}  No={counts['No']}"
-            if counts["Unknown"]:
-                line += f"  Unknown={counts['Unknown']}"
-            print(line)
+            print(f"  {col}: {_pct(counts['Yes'], dup_total)}")
+        print(f"  Both Master Source = Other: {_pct(flag_summary['both_master_source_other'], dup_total)}")
 
 
 # Characters illegal in XML 1.0 (and therefore in .xlsx cell values) -- LLM output can
@@ -1305,25 +1325,26 @@ def sanitize_df_for_excel(df: pd.DataFrame) -> pd.DataFrame:
 
 def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
     out_df = sanitize_df_for_excel(out_df)
+    total = summary["total_pairs"]
     flag_summary = summary.get("duplicate_flags")
     if output_path.lower().endswith((".xlsx", ".xls")):
-        summary_rows = [{"Metric": "Total pairs processed", "Value": summary["total_pairs"]}]
+        summary_rows = [{"Metric": "Total pairs processed", "Value": total}]
         for label, count in summary["by_decision"].items():
-            summary_rows.append({"Metric": f"Decision: {label}", "Value": count})
+            summary_rows.append({"Metric": f"Decision: {label}", "Value": _pct(count, total)})
         summary_rows.append({"Metric": "Average confidence", "Value": summary["average_confidence"]})
-        summary_rows.append({"Metric": "Errors", "Value": summary["errors"]})
-        for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
-            summary_rows.append({"Metric": f"Archetype: {archetype}", "Value": count})
+        summary_rows.append({"Metric": "Errors", "Value": _pct(summary["errors"], total)})
+        for archetype in FAMILY_RELATIONSHIP_ARCHETYPES:
+            count = summary["archetype_counts"].get(archetype, 0)
+            summary_rows.append({"Metric": archetype, "Value": _pct(count, total)})
         if flag_summary and flag_summary["total_duplicate_pairs"]:
-            summary_rows.append({
-                "Metric": "Duplicate pairs (flag breakdown below)",
-                "Value": flag_summary["total_duplicate_pairs"],
-            })
+            dup_total = flag_summary["total_duplicate_pairs"]
+            summary_rows.append({"Metric": "Duplicate pairs (flag breakdown below)", "Value": dup_total})
             for col, counts in flag_summary["flags"].items():
-                summary_rows.append({"Metric": f"{col}: Yes", "Value": counts["Yes"]})
-                summary_rows.append({"Metric": f"{col}: No", "Value": counts["No"]})
-                if counts["Unknown"]:
-                    summary_rows.append({"Metric": f"{col}: Unknown", "Value": counts["Unknown"]})
+                summary_rows.append({"Metric": col, "Value": _pct(counts["Yes"], dup_total)})
+            summary_rows.append({
+                "Metric": "Both Master Source = Other",
+                "Value": _pct(flag_summary["both_master_source_other"], dup_total),
+            })
         summary_df = sanitize_df_for_excel(pd.DataFrame(summary_rows))
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             summary_df.to_excel(writer, sheet_name="Summary", index=False)
@@ -1332,22 +1353,22 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
         out_df.to_csv(output_path, index=False)
         summary_path = str(Path(output_path).with_suffix("")) + "_summary.txt"
         with open(summary_path, "w", encoding="utf-8") as f:
-            f.write(f"Total pairs processed: {summary['total_pairs']}\n")
+            f.write(f"Total pairs processed: {total}\n")
             for label, count in summary["by_decision"].items():
-                f.write(f"  {label}: {count}\n")
+                f.write(f"  {label}: {_pct(count, total)}\n")
             f.write(f"Average confidence: {summary['average_confidence']}\n")
-            f.write(f"Errors: {summary['errors']}\n")
-            f.write("Archetype breakdown:\n")
-            for archetype, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
-                f.write(f"  {count:>4}  {archetype}\n")
+            f.write(f"Errors: {_pct(summary['errors'], total)}\n")
+            f.write("Family-relationship archetypes:\n")
+            for archetype in FAMILY_RELATIONSHIP_ARCHETYPES:
+                count = summary["archetype_counts"].get(archetype, 0)
+                f.write(f"  {archetype}: {_pct(count, total)}\n")
             if flag_summary and flag_summary["total_duplicate_pairs"]:
-                f.write(f"\nDuplicate pair flag breakdown (of {flag_summary['total_duplicate_pairs']} "
-                        f"duplicate pair(s)):\n")
+                dup_total = flag_summary["total_duplicate_pairs"]
+                f.write(f"\nDuplicate pair flag breakdown (of {dup_total} duplicate pair(s)):\n")
                 for col, counts in flag_summary["flags"].items():
-                    line = f"  {col}: Yes={counts['Yes']}  No={counts['No']}"
-                    if counts["Unknown"]:
-                        line += f"  Unknown={counts['Unknown']}"
-                    f.write(line + "\n")
+                    f.write(f"  {col}: {_pct(counts['Yes'], dup_total)}\n")
+                f.write(f"  Both Master Source = Other: "
+                        f"{_pct(flag_summary['both_master_source_other'], dup_total)}\n")
         print(f"Summary also written to {summary_path}")
 
 
