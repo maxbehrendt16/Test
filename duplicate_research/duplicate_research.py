@@ -1150,6 +1150,52 @@ def _values_match(a, b) -> str:
     return "Yes" if na == nb else "No"
 
 
+# Words that indicate the entity TYPE (HOA vs COA) rather than being part of the actual name --
+# both stripped from the "core name" comparison, but also checked separately: if BOTH names
+# mention a type and the types disagree (e.g. "HOA" vs "COA"), that's a real mismatch even if the
+# rest of the name is identical.
+NAME_TYPE_SYNONYMS = {
+    "hoa": "HOA", "homeowners": "HOA", "homeowner": "HOA",
+    "coa": "COA", "condominium": "COA", "condominiums": "COA", "condo": "COA", "condos": "COA",
+}
+# Generic corporate/association filler words that don't distinguish one property from another.
+NAME_FILLER_WORDS = {
+    "association", "associations", "assoc", "inc", "llc", "corp", "corporation",
+    "the", "at", "of", "and", "properties", "property",
+}
+NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _name_core_and_type(name: str):
+    tokens = NAME_TOKEN_RE.findall(str(name).lower())
+    detected_type = None
+    core_tokens = []
+    for tok in tokens:
+        if tok in NAME_TYPE_SYNONYMS:
+            detected_type = NAME_TYPE_SYNONYMS[tok]
+        elif tok not in NAME_FILLER_WORDS:
+            core_tokens.append(tok)
+    return " ".join(core_tokens), detected_type
+
+
+def _names_match(a, b) -> str:
+    """'Yes'/'No', or '' when either side is missing. Two names "match" if they're the same core
+    name once corporate filler words are stripped (e.g. "Jollywood" ~ "Jollywood HOA" ~ "Jollywood
+    Homeowners Association" -- these all describe the same property, just with a suffix added or
+    the association spelled out) -- UNLESS both names mention a specific entity type and those
+    types disagree (e.g. "Jollywood HOA" vs "Jollywood COA" is a real mismatch: same community
+    name, but a different legal entity type). A name with no detected type never conflicts with
+    one that does; only two explicit, disagreeing types count against a match.
+    """
+    if not _normalize_text(a) or not _normalize_text(b):
+        return ""
+    core_a, type_a = _name_core_and_type(a)
+    core_b, type_b = _name_core_and_type(b)
+    if type_a and type_b and type_a != type_b:
+        return "No"
+    return "Yes" if core_a == core_b else "No"
+
+
 def _parse_number(value):
     try:
         if value is None or (isinstance(value, float) and pd.isna(value)) or str(value).strip() == "":
@@ -1237,7 +1283,7 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
             continue
         row_a, row_b = group_df.iloc[0], group_df.iloc[1]
         address_match = _values_match(row_a.get("Address"), row_b.get("Address"))
-        name_match = _values_match(row_a.get("Master_Property Name"), row_b.get("Master_Property Name"))
+        name_match = _names_match(row_a.get("Master_Property Name"), row_b.get("Master_Property Name"))
         units_close = _units_within_threshold(row_a.get("Master_Units_50+"), row_b.get("Master_Units_50+"))
         ownership_differs = _values_differ(row_a.get("Master_Ownership Type"), row_b.get("Master_Ownership Type"))
         idx_a, idx_b = group_df.index[0], group_df.index[1]
@@ -1297,6 +1343,33 @@ DUPLICATE_FLAG_COLUMNS = [
 FAMILY_RELATIONSHIP_ARCHETYPES = ["Parent/Child Mismatch", "Separate Children Within One Complex"]
 
 
+# For these three flags, the summary shows the complementary ("what's different") framing
+# instead of the "what matches" framing the per-row Results column uses -- e.g. the Results
+# sheet's "Address Match" column is unchanged, but the summary reports "Address Mismatch"
+# using that same column's "No" count. The other flags (ownership type, database-membership,
+# master source) are already framed in the direction that's wanted, so they're left alone.
+INVERTED_FLAG_LABELS = {
+    "Address Match": "Address Mismatch",
+    "Name Match": "Name Mismatch",
+    "Unit Counts Within 10": "Unit Count Diff > 10",
+}
+
+DISTANCE_BUCKET_ORDER = ["<0.05mi", "0.05-0.2mi", "0.2-0.5mi", "0.5mi+", "Unknown"]
+
+
+def _distance_bucket(distance) -> str:
+    d = _parse_number(distance)
+    if d is None:
+        return "Unknown"
+    if d < 0.05:
+        return "<0.05mi"
+    if d < 0.2:
+        return "0.05-0.2mi"
+    if d < 0.5:
+        return "0.2-0.5mi"
+    return "0.5mi+"
+
+
 def _pct(count: int, total: int) -> str:
     """'80% (8/10)' -- the shared display format for every percentage in the summary."""
     if not total:
@@ -1324,10 +1397,18 @@ def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
             "No": int(counts.get("No", 0)),
             "Unknown": int(counts.get("", 0)),
         }
+    archetype_breakdown = dup_df["Archetype"].value_counts().to_dict() if "Archetype" in dup_df.columns else {}
+    distance_buckets = None
+    if "DISTANCE_MILES" in dup_df.columns:
+        distance_buckets = {label: 0 for label in DISTANCE_BUCKET_ORDER}
+        for value in dup_df["DISTANCE_MILES"]:
+            distance_buckets[_distance_bucket(value)] += 1
     return {
         "total_duplicate_pairs": len(dup_df),
         "flags": flags,
         "both_master_source_other": both_other_master_source,
+        "archetype_breakdown": archetype_breakdown,
+        "distance_buckets": distance_buckets,
     }
 
 
@@ -1348,8 +1429,21 @@ def print_summary(summary: dict):
         dup_total = flag_summary["total_duplicate_pairs"]
         print(f"\nDuplicate pair flag breakdown (of {dup_total} duplicate pair(s)):")
         for col, counts in flag_summary["flags"].items():
-            print(f"  {col}: {_pct(counts['Yes'], dup_total)}")
+            if col in INVERTED_FLAG_LABELS:
+                print(f"  {INVERTED_FLAG_LABELS[col]}: {_pct(counts['No'], dup_total)}")
+            else:
+                print(f"  {col}: {_pct(counts['Yes'], dup_total)}")
         print(f"  Both Master Source = Other: {_pct(flag_summary['both_master_source_other'], dup_total)}")
+        print("  Archetype breakdown (Duplicates only):")
+        for archetype, count in sorted(flag_summary["archetype_breakdown"].items(), key=lambda kv: -kv[1]):
+            print(f"    {archetype}: {_pct(count, dup_total)}")
+        if flag_summary.get("distance_buckets") is not None:
+            print("  Distance between paired records:")
+            for label in DISTANCE_BUCKET_ORDER:
+                count = flag_summary["distance_buckets"].get(label, 0)
+                if label == "Unknown" and count == 0:
+                    continue
+                print(f"    {label}: {_pct(count, dup_total)}")
 
 
 # Characters illegal in XML 1.0 (and therefore in .xlsx cell values) -- LLM output can
@@ -1390,11 +1484,22 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
             dup_total = flag_summary["total_duplicate_pairs"]
             summary_rows.append({"Metric": "Duplicate pairs (flag breakdown below)", "Value": dup_total})
             for col, counts in flag_summary["flags"].items():
-                summary_rows.append({"Metric": col, "Value": _pct(counts["Yes"], dup_total)})
+                if col in INVERTED_FLAG_LABELS:
+                    summary_rows.append({"Metric": INVERTED_FLAG_LABELS[col], "Value": _pct(counts["No"], dup_total)})
+                else:
+                    summary_rows.append({"Metric": col, "Value": _pct(counts["Yes"], dup_total)})
             summary_rows.append({
                 "Metric": "Both Master Source = Other",
                 "Value": _pct(flag_summary["both_master_source_other"], dup_total),
             })
+            for archetype, count in sorted(flag_summary["archetype_breakdown"].items(), key=lambda kv: -kv[1]):
+                summary_rows.append({"Metric": f"Archetype (Duplicates only): {archetype}", "Value": _pct(count, dup_total)})
+            if flag_summary.get("distance_buckets") is not None:
+                for label in DISTANCE_BUCKET_ORDER:
+                    count = flag_summary["distance_buckets"].get(label, 0)
+                    if label == "Unknown" and count == 0:
+                        continue
+                    summary_rows.append({"Metric": f"Distance: {label}", "Value": _pct(count, dup_total)})
         summary_df = sanitize_df_for_excel(pd.DataFrame(summary_rows))
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             summary_df.to_excel(writer, sheet_name="Summary", index=False)
@@ -1416,9 +1521,22 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
                 dup_total = flag_summary["total_duplicate_pairs"]
                 f.write(f"\nDuplicate pair flag breakdown (of {dup_total} duplicate pair(s)):\n")
                 for col, counts in flag_summary["flags"].items():
-                    f.write(f"  {col}: {_pct(counts['Yes'], dup_total)}\n")
+                    if col in INVERTED_FLAG_LABELS:
+                        f.write(f"  {INVERTED_FLAG_LABELS[col]}: {_pct(counts['No'], dup_total)}\n")
+                    else:
+                        f.write(f"  {col}: {_pct(counts['Yes'], dup_total)}\n")
                 f.write(f"  Both Master Source = Other: "
                         f"{_pct(flag_summary['both_master_source_other'], dup_total)}\n")
+                f.write("  Archetype breakdown (Duplicates only):\n")
+                for archetype, count in sorted(flag_summary["archetype_breakdown"].items(), key=lambda kv: -kv[1]):
+                    f.write(f"    {archetype}: {_pct(count, dup_total)}\n")
+                if flag_summary.get("distance_buckets") is not None:
+                    f.write("  Distance between paired records:\n")
+                    for label in DISTANCE_BUCKET_ORDER:
+                        count = flag_summary["distance_buckets"].get(label, 0)
+                        if label == "Unknown" and count == 0:
+                            continue
+                        f.write(f"    {label}: {_pct(count, dup_total)}\n")
         print(f"Summary also written to {summary_path}")
 
 

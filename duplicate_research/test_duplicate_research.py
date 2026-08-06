@@ -483,6 +483,42 @@ class BuildOutputAndSummaryTests(unittest.TestCase):
         self.assertTrue((out["Flagged As Anomaly"] == "").all())
 
 
+class NamesMatchTests(unittest.TestCase):
+    def test_type_spelled_out_vs_abbreviated_matches(self):
+        self.assertEqual(dr._names_match("Jollywood HOA", "Jollywood Homeowners Association"), "Yes")
+
+    def test_bare_name_vs_name_with_suffix_matches(self):
+        self.assertEqual(dr._names_match("Jollywood", "Jollywood HOA"), "Yes")
+
+    def test_conflicting_entity_types_is_a_mismatch(self):
+        self.assertEqual(dr._names_match("Jollywood HOA", "Jollywood COA"), "No")
+
+    def test_genuinely_different_names_is_a_mismatch(self):
+        self.assertEqual(dr._names_match("Hollywood", "Jollywood"), "No")
+
+    def test_association_inc_suffix_ignored(self):
+        self.assertEqual(dr._names_match("Le Baron Condominium Association, Inc.", "The Le Baron"), "Yes")
+
+    def test_blank_when_either_side_missing(self):
+        self.assertEqual(dr._names_match("", "Jollywood"), "")
+        self.assertEqual(dr._names_match(None, "Jollywood"), "")
+
+
+class DistanceBucketTests(unittest.TestCase):
+    def test_buckets_boundaries(self):
+        self.assertEqual(dr._distance_bucket("0.049"), "<0.05mi")
+        self.assertEqual(dr._distance_bucket("0.05"), "0.05-0.2mi")
+        self.assertEqual(dr._distance_bucket("0.19"), "0.05-0.2mi")
+        self.assertEqual(dr._distance_bucket("0.2"), "0.2-0.5mi")
+        self.assertEqual(dr._distance_bucket("0.49"), "0.2-0.5mi")
+        self.assertEqual(dr._distance_bucket("0.5"), "0.5mi+")
+        self.assertEqual(dr._distance_bucket("12"), "0.5mi+")
+
+    def test_missing_value_is_unknown(self):
+        self.assertEqual(dr._distance_bucket(""), "Unknown")
+        self.assertEqual(dr._distance_bucket(None), "Unknown")
+
+
 class DuplicateFlagsTests(unittest.TestCase):
     def _row(self, group, record_id, address, name, units, hw, costar, fa, ownership=""):
         return {"Group Number": group, "RecordID": record_id, "Address": address,
@@ -508,7 +544,7 @@ class DuplicateFlagsTests(unittest.TestCase):
     def test_mismatches_and_one_sided_db_membership(self):
         df = pd.DataFrame([
             self._row("1", "a", "1 Main St", "Vizcaya", "96", "1", "0", "1"),
-            self._row("1", "b", "2 Other Ave", "Vizcaya Condo", "127", "0", "0", "0"),
+            self._row("1", "b", "2 Other Ave", "Meridian Place", "127", "0", "0", "0"),
         ])
         results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Separate Buildings",
                          "confidence": 6, "evidence_summary": "es", "sources": [], "is_error": False}}
@@ -695,6 +731,54 @@ class DuplicateFlagSummaryTests(unittest.TestCase):
         self.assertEqual(summary["total_duplicate_pairs"], 3)
         self.assertEqual(summary["both_master_source_other"], 1)
 
+    def test_archetype_breakdown_scoped_to_duplicates_only(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("1", "b", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("2", "c", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("2", "d", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("3", "e", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("3", "f", "1 Main St", "X", "100", "0", "0", "0"),
+        ])
+        results = {
+            "1": {"group": "1", "decision": "Duplicate", "archetype": "Separate Buildings",
+                  "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False},
+            "2": {"group": "2", "decision": "Duplicate", "archetype": "Same Building",
+                  "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False},
+            "3": {"group": "3", "decision": "Not Duplicate", "archetype": "Parent/Child Mismatch",
+                  "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False},
+        }
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertEqual(summary["archetype_breakdown"], {"Separate Buildings": 1, "Same Building": 1})
+
+    def test_distance_buckets_computed_from_distance_miles_column(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("1", "b", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("2", "c", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("2", "d", "1 Main St", "X", "100", "0", "0", "0"),
+        ])
+        df["DISTANCE_MILES"] = ["0.03", "0.03", "1.2", "1.2"]
+        results = {gid: {"group": gid, "decision": "Duplicate", "archetype": "Separate Buildings",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}
+                   for gid in ("1", "2")}
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertEqual(summary["distance_buckets"]["<0.05mi"], 1)
+        self.assertEqual(summary["distance_buckets"]["0.5mi+"], 1)
+
+    def test_distance_buckets_none_when_column_absent(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("1", "b", "1 Main St", "X", "100", "0", "0", "0"),
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Separate Buildings",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertIsNone(summary["distance_buckets"])
+
 
 class PctHelperTests(unittest.TestCase):
     def test_formats_percentage_with_fraction(self):
@@ -755,6 +839,40 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertEqual(metrics["Decision: Duplicate"], "100% (1/1)")
         self.assertIn("Both Master Source = Other", metrics)
         self.assertNotIn("Archetype: Same Building", metrics)  # no per-archetype rows anymore
+
+    def test_summary_shows_inverted_flag_labels_and_new_sections(self):
+        df = pd.DataFrame([
+            {"Group Number": "1", "RecordID": "a", "Address": "1 Main St",
+             "Master_Property Name": "X", "Master_Units_50+": "100", "DISTANCE_MILES": "0.03"},
+            {"Group Number": "1", "RecordID": "b", "Address": "2 Other Ave",
+             "Master_Property Name": "Y", "Master_Units_50+": "50", "DISTANCE_MILES": "0.03"},
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_summary(results)
+        summary["duplicate_flags"] = dr.compute_duplicate_flag_summary(out)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            dr.print_summary(summary)
+        printed = buf.getvalue()
+        self.assertIn("Address Mismatch: 100% (1/1)", printed)
+        self.assertIn("Name Mismatch: 100% (1/1)", printed)
+        self.assertIn("Unit Count Diff > 10: 100% (1/1)", printed)
+        self.assertNotIn("Address Match:", printed)
+        self.assertNotIn("Name Match:", printed)
+        self.assertIn("Same Building: 100% (1/1)", printed)
+        self.assertIn("<0.05mi: 100% (1/1)", printed)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "results.xlsx")
+            dr.write_output(out, summary, path)
+            summary_df = pd.read_excel(path, sheet_name="Summary")
+        metrics = dict(zip(summary_df["Metric"], summary_df["Value"]))
+        self.assertEqual(metrics["Address Mismatch"], "100% (1/1)")
+        self.assertEqual(metrics["Archetype (Duplicates only): Same Building"], "100% (1/1)")
+        self.assertEqual(metrics["Distance: <0.05mi"], "100% (1/1)")
 
     def test_print_and_write_output_do_not_crash_without_flag_summary(self):
         # Older call sites (or tests) that never set summary["duplicate_flags"] must still work.
