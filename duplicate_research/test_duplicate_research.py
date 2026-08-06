@@ -256,6 +256,82 @@ class CapConfidenceWhenTotalMissingTests(unittest.TestCase):
         self.assertEqual(result["decision"], "Duplicate")  # decision untouched, only confidence capped
 
 
+class CorrectChildArchetypeTests(unittest.TestCase):
+    def _record(self, units):
+        return {"Master_Units_50+": units}
+
+    def test_corrects_costa_del_sol_style_parent_child_mislabel(self):
+        # 768 exact, 739 within ~4% -- both close to the cited 768 total.
+        result = {"decision": "Not Duplicate", "archetype": "Parent/Child Mismatch", "confidence": 7,
+                  "evidence_summary": "orig", "cited_total_units": "768"}
+        out = dr._correct_child_archetype_when_total_supports_duplicate(
+            self._record("768"), self._record("739"), result)
+        self.assertEqual(out["decision"], "Duplicate")
+        self.assertEqual(out["archetype"], "Separate Buildings")
+        self.assertLessEqual(out["confidence"], 6)
+        self.assertIn("orig", out["evidence_summary"])
+
+    def test_corrects_separate_children_the_same_way(self):
+        result = {"decision": "Not Duplicate", "archetype": "Separate Children Within One Complex",
+                  "confidence": 8, "evidence_summary": "orig", "cited_total_units": "768"}
+        out = dr._correct_child_archetype_when_total_supports_duplicate(
+            self._record("768"), self._record("739"), result)
+        self.assertEqual(out["decision"], "Duplicate")
+
+    def test_leaves_genuine_parent_child_alone(self):
+        # A true parent/child case: child is a small fraction (50), total (700) is close to
+        # neither the child's own count nor a coincidentally-large sibling.
+        result = {"decision": "Not Duplicate", "archetype": "Parent/Child Mismatch", "confidence": 8,
+                  "evidence_summary": "orig", "cited_total_units": "700"}
+        out = dr._correct_child_archetype_when_total_supports_duplicate(
+            self._record("50"), self._record("700"), result)
+        self.assertEqual(out["decision"], "Not Duplicate")  # only Record B is close -- not both
+
+    def test_passthrough_when_no_total_cited(self):
+        result = {"decision": "Not Duplicate", "archetype": "Parent/Child Mismatch", "confidence": 8,
+                  "evidence_summary": "orig", "cited_total_units": ""}
+        out = dr._correct_child_archetype_when_total_supports_duplicate(
+            self._record("50"), self._record("700"), result)
+        self.assertEqual(out["decision"], "Not Duplicate")
+
+    def test_passthrough_for_archetypes_not_covered(self):
+        result = {"decision": "Duplicate", "archetype": "Same Building", "confidence": 8,
+                  "evidence_summary": "orig", "cited_total_units": "768"}
+        out = dr._correct_child_archetype_when_total_supports_duplicate(
+            self._record("768"), self._record("739"), result)
+        self.assertEqual(out["archetype"], "Same Building")
+
+
+class CleanEvidenceSummaryTests(unittest.TestCase):
+    def test_strips_markdown_links_to_label_text(self):
+        text = "Confirmed via the HOA site ([costadelsolassociation.com](https://www.costadelsolassociation.com/about))."
+        cleaned = dr._clean_evidence_summary(text)
+        self.assertNotIn("http", cleaned)
+        self.assertIn("costadelsolassociation.com", cleaned)
+
+    def test_collapses_paragraph_breaks(self):
+        text = "First sentence.\n\nSecond paragraph.\n\nThird paragraph."
+        cleaned = dr._clean_evidence_summary(text)
+        self.assertNotIn("\n", cleaned)
+        self.assertIn("First sentence.", cleaned)
+        self.assertIn("Third paragraph.", cleaned)
+
+    def test_truncates_overly_long_text_at_sentence_boundary(self):
+        sentence = "This is a filler sentence used to pad out the evidence summary well past the limit. "
+        text = sentence * 20
+        cleaned = dr._clean_evidence_summary(text)
+        self.assertLessEqual(len(cleaned), dr.MAX_EVIDENCE_SUMMARY_CHARS + len(" [truncated for length]") + 5)
+        self.assertIn("[truncated for length]", cleaned)
+        self.assertTrue(cleaned.replace(" [truncated for length]", "").strip().endswith("."))
+
+    def test_short_text_untouched(self):
+        text = "A short, normal evidence summary."
+        self.assertEqual(dr._clean_evidence_summary(text), text)
+
+    def test_empty_text_passthrough(self):
+        self.assertEqual(dr._clean_evidence_summary(""), "")
+
+
 class ProcessGroupErrorTests(unittest.TestCase):
     def test_malformed_group_short_circuits_without_client(self):
         rows = [{"RecordID": "1", "Address": "1 Main St"}]

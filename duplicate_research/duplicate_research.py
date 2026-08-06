@@ -93,6 +93,18 @@ search doesn't turn one up: "[name] total units," "[name] how many units," the H
 site or registry filing, county property appraiser or tax assessor records (which often state a unit count \
 for the parcel), and local news or developer coverage of the original construction. This is the single most \
 decisive test in the whole ruleset, so treat "I didn't find one" as a last resort, not a first guess.
+   **The source matters as much as the number.** A number is only a real "total for the complex/HOA" if it \
+comes from something describing the SPECIFIC GOVERNING ENTITY the records belong to — the HOA/condo \
+association's own site, its registry filing, a declaration/plat document, or news coverage of that specific \
+association. General real estate marketing or neighborhood-overview pages (e.g. "homes for sale in \
+[neighborhood]" on a realty site, a builder's marketing page for a broader master-planned community) are \
+NOT reliable for this, even when they use the same name — they often describe a larger area than the \
+specific HOA/association in your two records (e.g. an entire multi-phase development built by one builder, \
+of which your specific HOA is only one section). If the only source you find is this kind of page, that is \
+functionally the same as not having found a total at all — do not treat its number as if it were an \
+authoritative total. (This is why a search once turned up "790 units" for Grand Creek from a realty listings \
+page about homes in the Grand Creek neighborhood, when the actual records were for the ~260-268 unit Grand \
+Creek Property Owners Association specifically — a different, smaller scope entirely.)
    If you find one, compare it against BOTH records, not just one: the test is whether that total is \
 reasonably close to *both* paired records' unit counts. A total that closely matches only ONE of the two \
 records, while the other record's count is substantially different, is NOT evidence that the two records \
@@ -130,14 +142,19 @@ stop and label it Not Enough Info rather than continuing to dig indefinitely.
 
 Before invoking any of the three multi-building archetypes below (Parent/Child Mismatch, Separate Children \
 Within One Complex, Multi-Use Building) — all of which assume the complex actually consists of more than one \
-physical building — check the input records' own Building Count field(s) if present (e.g. \
-Master_Building Count_50+). If either record's own Building Count is 1, the database itself is telling you \
-that record's property is a single building, which directly undercuts a multi-building story — don't ignore \
-an already-provided data point in favor of external search results that don't explicitly reconcile with it. \
-Treat a Building Count of 1 as real evidence against these three archetypes specifically, pushing toward \
-Duplicate (Separate Buildings/Same Building) or Not Enough Info instead. (This was missed in a past run: a \
-record was labeled "Separate Children Within One Complex" — implying at least two buildings — while its \
-own paired record's Building Count field read 1.)
+physical building — check whether the complex is actually multi-building. The database's own Building Count \
+field(s) (e.g. Master_Building Count_50+), if present, are a useful starting signal and cross-check worth \
+looking at, but they are not the decisive evidence and a value of 1 does not by itself rule out these \
+archetypes: a record's own Building Count describes that ONE record's building, and in a genuine "Tower \
+1"/"Tower 2" pair each individual record could reasonably show a Building Count of 1 (each tower IS one \
+building) while the pair still correctly represents two separate buildings in one complex. The decisive \
+evidence should be independent, online research confirming how many physical buildings the complex actually \
+has — not the DB field read in isolation, and not external search results accepted uncritically either. If \
+you find an online source (not a DB field) that specifically confirms the property is a single building, \
+that is strong evidence against these three archetypes; treat that as more decisive than the DB's own \
+Building Count field, which is only a prompt to go verify, not a substitute for verifying.
+
+1. **Parent/Child Mismatch** — one record refers to a specific building while the other encompasses the \
 
 1. **Parent/Child Mismatch** — one record refers to a specific building while the other encompasses the \
 full multi-building complex. This archetype requires BOTH of the following to be independently confirmed \
@@ -157,6 +174,17 @@ counts are each already reasonably close to each other or to a found total) over
    When you do conclude this archetype, set `flagged_record_id` to whichever record's RecordID is the \
 child/specific-building one (not the parent/master-association one) — the two records aren't peers here, \
 so say which is which rather than leaving it to be inferred from prose.
+   **A record's Address being one specific point (a house, lot, or street number) within a larger HOA/\
+community's boundaries is NOT a naming/documentary signal, and does NOT mean that record "represents a \
+subset" or "a specific sub-block" of the community.** For a single-family-home HOA especially, the address \
+on file for a whole-community record is very often just one representative location within the \
+association's boundaries (an entrance, an office, or simply one of the member lots) — not evidence of a \
+smaller scope. Do not write reasoning like "Record B's address aligns with a specific sub-block, indicating \
+it represents a subset of the total units" — that inference does not follow from an address alone, and \
+asserting it does not create the naming/documentary signal this archetype actually requires. If a cited \
+total unit count is close to BOTH records individually (not just one), that is the "Separate Buildings" \
+signature (see Duplicate Archetypes below), not Parent/Child Mismatch, regardless of how different the two \
+addresses look — do not let an address-based story override arithmetic that says otherwise.
 2. **Separate Children Within One Complex** — two genuine peer buildings (e.g. "Tower 1" vs "Tower 2," \
 "Building A" vs "Building B"). Like Parent/Child Mismatch, this requires BOTH of the following:
    - **Naming/documentary signal**: independent confirmation that two separately identified, physically \
@@ -296,6 +324,13 @@ same single building as the paired record. Use "Same Building" here (a Duplicate
 Property" (a Not Duplicate false positive, reserved for when a second REAL property actually exists — see \
 that ruleset entry) and not "Separate Buildings" (reserved for cases where there truly are two distinct \
 addresses inside one larger complex).
+  Do NOT treat a lack of independent confirmation for the erroneous address as a reason for Not Enough \
+Info here — that absence is exactly what this archetype predicts, not a gap that undermines it. A \
+data-entry-error address won't correspond to anything real by definition, so failing to find a source for \
+it is expected, not concerning. What actually matters is whether the CORRECT record (name, HOA, unit \
+count, fee) is well-confirmed as one real building — if so, that supports Same Building at a reasonable \
+confidence (per the confidence guardrails below), not a downgrade to Not Enough Info just because the \
+wrong address predictably came up empty.
 - Other genuine duplicate patterns (e.g. a straightforward data-entry duplicate with no complicating \
 factor) — describe in your own words.
 
@@ -320,6 +355,16 @@ facts.
 
 ## Guardrails
 
+- **Do not weigh differing Master_Monthly Association Fees or Master_Build Year between the two paired \
+records as evidence against Duplicate.** HOA/condo fees change over time and different data sources capture \
+them at different points, so two records showing different fee figures tells you nothing about whether \
+they're the same property — it's normal database noise, not a signal. Build years are similarly unreliable \
+as a false-positive signal: they commonly vary across buildings within the same multi-building HOA/complex \
+(phased construction, additions, renovations), so a build-year mismatch is expected noise for a many-building \
+community, not evidence the two records describe different entities. Neither field should be cited as a \
+reason for Not Duplicate or Not Enough Info by itself, and citing "differing fees" or "differing build \
+years" as your primary evidence for either of those decisions is a sign you're missing the actual point of \
+comparison (name, address, unit count, ownership type, governing entity) and should keep looking instead.
 - **Confidence scale — use the whole range, not just the top of it.** Across a batch of many pairs, \
 confidence should vary widely based on how clean the evidence actually is. If most or all pairs in a batch \
 land at 7 or above, that is a red flag that confidence is being inflated, not a sign the evidence was \
@@ -903,6 +948,73 @@ def _cap_confidence_when_total_missing(record_a: dict, record_b: dict, result: d
     return result
 
 
+CHILD_ARCHETYPES = {"Parent/Child Mismatch", "Separate Children Within One Complex"}
+CHILD_VS_TOTAL_CLOSE_THRESHOLD = 0.15
+
+
+def _correct_child_archetype_when_total_supports_duplicate(record_a: dict, record_b: dict, result: dict) -> dict:
+    """Deterministic correction for a recurring failure: the model concludes Parent/Child Mismatch
+    or Separate Children Within One Complex, but its own cited total is close to BOTH records
+    individually (e.g. Costa del Sol: a confirmed 768-unit total, matching Record A's 768 exactly
+    and Record B's 739 within ~4%) -- that pattern is the definition of Separate Buildings/Duplicate
+    (each record independently describes the whole property), not a child being a smaller fraction
+    of the whole. A cited total close to only ONE record (or neither) is left alone here -- that's
+    genuinely ambiguous or supports the child archetype, not something to override.
+    """
+    archetype = result.get("archetype", "")
+    if archetype not in CHILD_ARCHETYPES:
+        return result
+    total = _parse_number(result.get("cited_total_units"))
+    if not total:
+        return result
+    unit_a = _parse_number(record_a.get("Master_Units_50+"))
+    unit_b = _parse_number(record_b.get("Master_Units_50+"))
+    if unit_a is None or unit_b is None:
+        return result
+    close_to_a = abs(total - unit_a) / total <= CHILD_VS_TOTAL_CLOSE_THRESHOLD
+    close_to_b = abs(total - unit_b) / total <= CHILD_VS_TOTAL_CLOSE_THRESHOLD
+    if not (close_to_a and close_to_b):
+        return result
+
+    result = dict(result)
+    result["decision"] = "Duplicate"
+    result["archetype"] = "Separate Buildings"
+    original_evidence = result.get("evidence_summary", "")
+    result["confidence"] = min(int(result.get("confidence", 1)), 6)
+    result["evidence_summary"] = (
+        f"Automatically corrected: the model labeled this '{archetype}', but its own cited total "
+        f"({total:g}) is close to BOTH Record A's count ({unit_a:g}) and Record B's count "
+        f"({unit_b:g}) -- that's the signature of both records independently describing the whole "
+        f"property, not one being a smaller fraction/child of the other. Original evidence: "
+        f"{original_evidence}"
+    )
+    return result
+
+
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((?:https?://|www\.)[^)]+\)")
+MAX_EVIDENCE_SUMMARY_CHARS = 700
+
+
+def _clean_evidence_summary(text: str) -> str:
+    """Deterministic cleanup for a recurring complaint: evidence summaries running to multiple
+    paragraphs with inline markdown citations despite the schema asking for 2-4 plain sentences.
+    Strips markdown links down to their label text (URLs belong in the separate `sources` field),
+    collapses paragraph breaks into a single line, and hard-caps length at a sentence boundary as
+    a last resort when the model still runs long.
+    """
+    if not text:
+        return text
+    text = MARKDOWN_LINK_RE.sub(r"\1", text)
+    text = " ".join(text.split())
+    if len(text) <= MAX_EVIDENCE_SUMMARY_CHARS:
+        return text
+    truncated = text[:MAX_EVIDENCE_SUMMARY_CHARS]
+    cutoff = max(truncated.rfind(". "), truncated.rfind(".—"))
+    if cutoff > MAX_EVIDENCE_SUMMARY_CHARS // 2:
+        truncated = truncated[: cutoff + 1]
+    return truncated.rstrip() + " [truncated for length]"
+
+
 def process_group(provider, client, model, group_id, rows, error, url_cache):
     if error:
         return {
@@ -924,7 +1036,10 @@ def process_group(provider, client, model, group_id, rows, error, url_cache):
         decision = result.get("decision")
         if decision not in DECISION_LABELS:
             raise ValueError(f"Model returned invalid decision label: {decision!r}")
+        result = dict(result)
+        result["evidence_summary"] = _clean_evidence_summary(result.get("evidence_summary", ""))
         result = _verify_cited_total_arithmetic(record_a, record_b, result)
+        result = _correct_child_archetype_when_total_supports_duplicate(record_a, record_b, result)
         result = _cap_confidence_when_total_missing(record_a, record_b, result)
         decision = result["decision"]
         record_ids = [record_a.get("RecordID"), record_b.get("RecordID")]
