@@ -504,6 +504,25 @@ class NamesMatchTests(unittest.TestCase):
         self.assertEqual(dr._names_match(None, "Jollywood"), "")
 
 
+class NameMatchForPairTests(unittest.TestCase):
+    def test_uses_cart_property_name_clean_directly_when_present(self):
+        # A batch with CART_PROPERTY_NAME_CLEAN should compare that field directly (no fuzzy
+        # HOA/COA-synonym or filler-word logic) rather than falling back to Master_Property Name.
+        row_a = pd.Series({"CART_PROPERTY_NAME_CLEAN": "RIVERVIEW", "Master_Property Name": "Riverview HOA"})
+        row_b = pd.Series({"CART_PROPERTY_NAME_CLEAN": "RIVERVIEW", "Master_Property Name": "Totally Different"})
+        self.assertEqual(dr._name_match_for_pair(row_a, row_b), "Yes")
+
+    def test_cart_property_name_clean_mismatch(self):
+        row_a = pd.Series({"CART_PROPERTY_NAME_CLEAN": "RIVERVIEW", "Master_Property Name": "Riverview HOA"})
+        row_b = pd.Series({"CART_PROPERTY_NAME_CLEAN": "VILLAGE KAUFMAN", "Master_Property Name": "Riverview HOA"})
+        self.assertEqual(dr._name_match_for_pair(row_a, row_b), "No")
+
+    def test_falls_back_to_fuzzy_names_match_when_column_absent(self):
+        row_a = pd.Series({"Master_Property Name": "Jollywood"})
+        row_b = pd.Series({"Master_Property Name": "Jollywood HOA"})
+        self.assertEqual(dr._name_match_for_pair(row_a, row_b), "Yes")
+
+
 class DistanceBucketTests(unittest.TestCase):
     def test_buckets_boundaries(self):
         self.assertEqual(dr._distance_bucket("0.049"), "<0.05mi")
@@ -633,6 +652,30 @@ class DuplicateFlagsTests(unittest.TestCase):
         out = dr.build_output_df(df, results)
         self.assertTrue((out["Different Ownership Type"] == "").all())
 
+    def test_name_match_uses_cart_property_name_clean_when_present(self):
+        # Master_Property Name looks like a mismatch, but CART_PROPERTY_NAME_CLEAN (the
+        # upstream-cleaned field) matches exactly -- the cleaned field should win.
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "Riverview Homeowners Assoc", "100", "1", "1", "1"),
+            self._row("1", "b", "1 Main St", "Totally Different Name", "100", "1", "1", "1"),
+        ])
+        df["CART_PROPERTY_NAME_CLEAN"] = ["RIVERVIEW", "RIVERVIEW"]
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Name Match"] == "Yes").all())
+
+    def test_name_match_cart_property_name_clean_mismatch(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "Riverview", "100", "1", "1", "1"),
+            self._row("1", "b", "1 Main St", "Riverview", "100", "1", "1", "1"),
+        ])
+        df["CART_PROPERTY_NAME_CLEAN"] = ["RIVERVIEW", "VILLAGE KAUFMAN"]
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Name Match"] == "No").all())
+
     def test_same_master_source_true_when_matching_and_not_other(self):
         df = pd.DataFrame([
             self._row("1", "a", "1 Main St", "X", "100", "1", "0", "0"),  # Hotwire
@@ -729,6 +772,33 @@ class DuplicateFlagSummaryTests(unittest.TestCase):
         out = dr.build_output_df(df, results)
         summary = dr.compute_duplicate_flag_summary(out)
         self.assertEqual(summary["total_duplicate_pairs"], 3)
+        self.assertEqual(summary["both_master_source_other"], 1)
+
+    def test_same_master_source_by_value_breaks_out_each_source(self):
+        df = pd.DataFrame([
+            # Pair 1: both Hotwire
+            self._row("1", "a", "1 Main St", "X", "100", "1", "0", "0"),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "0", "0"),
+            # Pair 2: both CoStar
+            self._row("2", "c", "1 Main St", "X", "100", "0", "1", "0"),
+            self._row("2", "d", "1 Main St", "X", "100", "0", "1", "0"),
+            # Pair 3: both First American
+            self._row("3", "e", "1 Main St", "X", "100", "0", "0", "1"),
+            self._row("3", "f", "1 Main St", "X", "100", "0", "0", "1"),
+            # Pair 4: both Other -- must not count toward any specific source
+            self._row("4", "g", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("4", "h", "1 Main St", "X", "100", "0", "0", "0"),
+            # Pair 5: sources differ -- must not count toward any specific source
+            self._row("5", "i", "1 Main St", "X", "100", "1", "0", "0"),
+            self._row("5", "j", "1 Main St", "X", "100", "0", "1", "0"),
+        ])
+        results = {gid: {"group": gid, "decision": "Duplicate", "archetype": "Separate Buildings",
+                         "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False}
+                   for gid in ("1", "2", "3", "4", "5")}
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertEqual(summary["same_master_source_by_value"],
+                          {"Hotwire": 1, "CoStar": 1, "First American": 1})
         self.assertEqual(summary["both_master_source_other"], 1)
 
     def test_archetype_breakdown_scoped_to_duplicates_only(self):
@@ -838,7 +908,41 @@ class SummaryRenderingTests(unittest.TestCase):
         metrics = dict(zip(summary_df["Metric"], summary_df["Value"]))
         self.assertEqual(metrics["Decision: Duplicate"], "100% (1/1)")
         self.assertIn("Both Master Source = Other", metrics)
+        self.assertIn("Same Master Source = Hotwire", metrics)
+        self.assertIn("Same Master Source = CoStar", metrics)
+        self.assertIn("Same Master Source = First American", metrics)
+        self.assertNotIn("Both In Hotwire", metrics)
+        self.assertNotIn("Both In CoStar", metrics)
+        self.assertNotIn("Both In First American", metrics)
         self.assertNotIn("Archetype: Same Building", metrics)  # no per-archetype rows anymore
+
+    def test_same_master_source_by_value_rendered_in_print_and_write_output(self):
+        df = pd.DataFrame([
+            {"Group Number": "1", "RecordID": "a", "Address": "1 Main St",
+             "Master_Property Name": "X", "Master_Units_50+": "100", "In HW": "1"},
+            {"Group Number": "1", "RecordID": "b", "Address": "1 Main St",
+             "Master_Property Name": "X", "Master_Units_50+": "100", "In HW": "1"},
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_summary(results)
+        summary["duplicate_flags"] = dr.compute_duplicate_flag_summary(out)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            dr.print_summary(summary)
+        printed = buf.getvalue()
+        self.assertIn("Same Master Source = Hotwire: 100% (1/1)", printed)
+        self.assertIn("Same Master Source = CoStar: 0% (0/1)", printed)
+        self.assertNotIn("Both In Hotwire", printed)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "results.xlsx")
+            dr.write_output(out, summary, path)
+            summary_df = pd.read_excel(path, sheet_name="Summary")
+        metrics = dict(zip(summary_df["Metric"], summary_df["Value"]))
+        self.assertEqual(metrics["Same Master Source = Hotwire"], "100% (1/1)")
 
     def test_summary_shows_inverted_flag_labels_and_new_sections(self):
         df = pd.DataFrame([
