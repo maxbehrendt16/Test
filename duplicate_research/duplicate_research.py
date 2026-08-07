@@ -1196,6 +1196,15 @@ def _names_match(a, b) -> str:
     return "Yes" if core_a == core_b else "No"
 
 
+def _name_match_for_pair(row_a, row_b) -> str:
+    """Prefers the upstream-cleaned CART_PROPERTY_NAME_CLEAN field (a direct value comparison,
+    since the cleaning/normalization already happened upstream) when the batch provides it;
+    falls back to the fuzzy Master_Property Name comparison for batches that don't."""
+    if "CART_PROPERTY_NAME_CLEAN" in row_a.index and "CART_PROPERTY_NAME_CLEAN" in row_b.index:
+        return _values_match(row_a.get("CART_PROPERTY_NAME_CLEAN"), row_b.get("CART_PROPERTY_NAME_CLEAN"))
+    return _names_match(row_a.get("Master_Property Name"), row_b.get("Master_Property Name"))
+
+
 def _parse_number(value):
     try:
         if value is None or (isinstance(value, float) and pd.isna(value)) or str(value).strip() == "":
@@ -1283,7 +1292,7 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
             continue
         row_a, row_b = group_df.iloc[0], group_df.iloc[1]
         address_match = _values_match(row_a.get("Address"), row_b.get("Address"))
-        name_match = _names_match(row_a.get("Master_Property Name"), row_b.get("Master_Property Name"))
+        name_match = _name_match_for_pair(row_a, row_b)
         units_close = _units_within_threshold(row_a.get("Master_Units_50+"), row_b.get("Master_Units_50+"))
         ownership_differs = _values_differ(row_a.get("Master_Ownership Type"), row_b.get("Master_Ownership Type"))
         idx_a, idx_b = group_df.index[0], group_df.index[1]
@@ -1332,11 +1341,14 @@ DUPLICATE_FLAG_COLUMNS = [
     "Name Match",
     "Unit Counts Within 10",
     "Different Ownership Type",
-    "Both In Hotwire",
-    "Both In CoStar",
-    "Both In First American",
     "Same Master Source",
 ]
+
+# Values of the per-record "Master Source" field broken out individually in the summary --
+# in addition to the aggregate "Same Master Source" flag, this shows how many duplicate pairs
+# share each specific source (Hotwire, CoStar, First American), so e.g. "80 pairs both CoStar"
+# is visible alongside "80 pairs share a master source".
+SAME_MASTER_SOURCE_VALUES = [label for _, label in MASTER_SOURCE_PRIORITY]
 
 # The only two archetypes worth surfacing in the summary -- identifying broader family
 # relationships (which properties are siblings/parents of which) is a separate workstream.
@@ -1382,10 +1394,18 @@ def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
     (not per row) -- shows how confirmed duplicates in this batch break out across those checks."""
     dup_df_all = out_df[out_df.get("Decision", "") == "Duplicate"]
     both_other_master_source = 0
+    same_master_source_by_value = {label: 0 for label in SAME_MASTER_SOURCE_VALUES}
     if "Group Number" in dup_df_all.columns and "Master Source" in dup_df_all.columns:
         for _, group_df in dup_df_all.groupby("Group Number", sort=False):
-            if len(group_df) and (group_df["Master Source"] == "Other").all():
+            if not len(group_df):
+                continue
+            sources = group_df["Master Source"]
+            if (sources == "Other").all():
                 both_other_master_source += 1
+            else:
+                shared_value = sources.iloc[0]
+                if (sources == shared_value).all() and shared_value in same_master_source_by_value:
+                    same_master_source_by_value[shared_value] += 1
     dup_df = dup_df_all.drop_duplicates(subset="Group Number") if "Group Number" in dup_df_all.columns else dup_df_all
     flags = {}
     for col in DUPLICATE_FLAG_COLUMNS:
@@ -1407,6 +1427,7 @@ def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
         "total_duplicate_pairs": len(dup_df),
         "flags": flags,
         "both_master_source_other": both_other_master_source,
+        "same_master_source_by_value": same_master_source_by_value,
         "archetype_breakdown": archetype_breakdown,
         "distance_buckets": distance_buckets,
     }
@@ -1433,6 +1454,9 @@ def print_summary(summary: dict):
                 print(f"  {INVERTED_FLAG_LABELS[col]}: {_pct(counts['No'], dup_total)}")
             else:
                 print(f"  {col}: {_pct(counts['Yes'], dup_total)}")
+        for source_label in SAME_MASTER_SOURCE_VALUES:
+            count = flag_summary["same_master_source_by_value"].get(source_label, 0)
+            print(f"  Same Master Source = {source_label}: {_pct(count, dup_total)}")
         print(f"  Both Master Source = Other: {_pct(flag_summary['both_master_source_other'], dup_total)}")
         print("  Archetype breakdown (Duplicates only):")
         for archetype, count in sorted(flag_summary["archetype_breakdown"].items(), key=lambda kv: -kv[1]):
@@ -1488,6 +1512,9 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
                     summary_rows.append({"Metric": INVERTED_FLAG_LABELS[col], "Value": _pct(counts["No"], dup_total)})
                 else:
                     summary_rows.append({"Metric": col, "Value": _pct(counts["Yes"], dup_total)})
+            for source_label in SAME_MASTER_SOURCE_VALUES:
+                count = flag_summary["same_master_source_by_value"].get(source_label, 0)
+                summary_rows.append({"Metric": f"Same Master Source = {source_label}", "Value": _pct(count, dup_total)})
             summary_rows.append({
                 "Metric": "Both Master Source = Other",
                 "Value": _pct(flag_summary["both_master_source_other"], dup_total),
@@ -1525,6 +1552,9 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
                         f.write(f"  {INVERTED_FLAG_LABELS[col]}: {_pct(counts['No'], dup_total)}\n")
                     else:
                         f.write(f"  {col}: {_pct(counts['Yes'], dup_total)}\n")
+                for source_label in SAME_MASTER_SOURCE_VALUES:
+                    count = flag_summary["same_master_source_by_value"].get(source_label, 0)
+                    f.write(f"  Same Master Source = {source_label}: {_pct(count, dup_total)}\n")
                 f.write(f"  Both Master Source = Other: "
                         f"{_pct(flag_summary['both_master_source_other'], dup_total)}\n")
                 f.write("  Archetype breakdown (Duplicates only):\n")
