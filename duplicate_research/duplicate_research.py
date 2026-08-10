@@ -1405,6 +1405,9 @@ def _pct(count: int, total: int) -> str:
     return f"{round(count / total * 100)}% ({count}/{total})"
 
 
+CONFIDENCE_HIGH_THRESHOLD = 7
+
+
 def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
     """Yes/No/Unknown breakdown of the Duplicate-only cross-check flags, one count per pair
     (not per row) -- shows how confirmed duplicates in this batch break out across those checks."""
@@ -1434,6 +1437,11 @@ def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
             "Unknown": int(counts.get("", 0)),
         }
     archetype_breakdown = dup_df["Archetype"].value_counts().to_dict() if "Archetype" in dup_df.columns else {}
+    high_confidence_duplicates = 0
+    if "Confidence" in dup_df.columns:
+        high_confidence_duplicates = int(
+            (pd.to_numeric(dup_df["Confidence"], errors="coerce") >= CONFIDENCE_HIGH_THRESHOLD).sum()
+        )
     distance_buckets = None
     if "DISTANCE_MILES" in dup_df.columns:
         distance_buckets = {label: 0 for label in DISTANCE_BUCKET_ORDER}
@@ -1444,6 +1452,7 @@ def compute_duplicate_flag_summary(out_df: pd.DataFrame) -> dict:
         "flags": flags,
         "both_master_source_other": both_other_master_source,
         "same_master_source_by_value": same_master_source_by_value,
+        "high_confidence_duplicates": high_confidence_duplicates,
         "archetype_breakdown": archetype_breakdown,
         "distance_buckets": distance_buckets,
     }
@@ -1474,6 +1483,8 @@ def print_summary(summary: dict):
             count = flag_summary["same_master_source_by_value"].get(source_label, 0)
             print(f"  Same Master Source = {source_label}: {_pct(count, dup_total)}")
         print(f"  Both Master Source = Other: {_pct(flag_summary['both_master_source_other'], dup_total)}")
+        print(f"  Confidence >= {CONFIDENCE_HIGH_THRESHOLD}: "
+              f"{_pct(flag_summary['high_confidence_duplicates'], dup_total)}")
         print("  Archetype breakdown (Duplicates only):")
         for archetype, count in sorted(flag_summary["archetype_breakdown"].items(), key=lambda kv: -kv[1]):
             print(f"    {archetype}: {_pct(count, dup_total)}")
@@ -1535,6 +1546,10 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
                 "Metric": "Both Master Source = Other",
                 "Value": _pct(flag_summary["both_master_source_other"], dup_total),
             })
+            summary_rows.append({
+                "Metric": f"Confidence >= {CONFIDENCE_HIGH_THRESHOLD}",
+                "Value": _pct(flag_summary["high_confidence_duplicates"], dup_total),
+            })
             for archetype, count in sorted(flag_summary["archetype_breakdown"].items(), key=lambda kv: -kv[1]):
                 summary_rows.append({"Metric": f"Archetype (Duplicates only): {archetype}", "Value": _pct(count, dup_total)})
             if flag_summary.get("distance_buckets") is not None:
@@ -1573,6 +1588,8 @@ def write_output(out_df: pd.DataFrame, summary: dict, output_path: str):
                     f.write(f"  Same Master Source = {source_label}: {_pct(count, dup_total)}\n")
                 f.write(f"  Both Master Source = Other: "
                         f"{_pct(flag_summary['both_master_source_other'], dup_total)}\n")
+                f.write(f"  Confidence >= {CONFIDENCE_HIGH_THRESHOLD}: "
+                        f"{_pct(flag_summary['high_confidence_duplicates'], dup_total)}\n")
                 f.write("  Archetype breakdown (Duplicates only):\n")
                 for archetype, count in sorted(flag_summary["archetype_breakdown"].items(), key=lambda kv: -kv[1]):
                     f.write(f"    {archetype}: {_pct(count, dup_total)}\n")
