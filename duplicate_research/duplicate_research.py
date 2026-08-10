@@ -1214,11 +1214,17 @@ def _parse_number(value):
         return None
 
 
-def _units_within_threshold(a, b) -> str:
+def _units_diff_flags(a, b) -> tuple[str, str]:
+    """Two Yes/No flags (or '' for both when either side is missing): whether the unit-count
+    difference is a small one (1-10, i.e. > 0 and <= the threshold) vs. a larger one
+    (> the threshold). An exact match (diff == 0) trips neither flag."""
     na, nb = _parse_number(a), _parse_number(b)
     if na is None or nb is None:
-        return ""
-    return "Yes" if abs(na - nb) <= UNIT_COUNT_CLOSE_THRESHOLD else "No"
+        return "", ""
+    diff = abs(na - nb)
+    diff_1_to_10 = "Yes" if 0 < diff <= UNIT_COUNT_CLOSE_THRESHOLD else "No"
+    diff_over_10 = "Yes" if diff > UNIT_COUNT_CLOSE_THRESHOLD else "No"
+    return diff_1_to_10, diff_over_10
 
 
 def _is_flag_true(value) -> bool:
@@ -1262,7 +1268,8 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
     out["Flagged As Anomaly"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Address Match"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Name Match"] = pd.Series([""] * len(out), index=out.index, dtype=object)
-    out["Unit Counts Within 10"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Unit Count Diff 1-10"] = pd.Series([""] * len(out), index=out.index, dtype=object)
+    out["Unit Count Diff > 10"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     out["Different Ownership Type"] = pd.Series([""] * len(out), index=out.index, dtype=object)
     for flag_col in DATABASE_FLAG_FIELDS:
         out[flag_col] = pd.Series([""] * len(out), index=out.index, dtype=object)
@@ -1284,16 +1291,23 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
                 out.at[idx, "Flagged As Anomaly"] = "Yes"
 
         # Master Source is a per-record field: computed independently for each row,
-        # not mirrored across the pair like the other Duplicate-only fields below.
+        # not mirrored across the pair like the other cross-check fields below.
         for idx in group_df.index:
             out.at[idx, "Master Source"] = _master_source(out.loc[idx].to_dict())
 
-        if result["decision"] != "Duplicate" or len(group_df) != 2:
+        # These cross-check flags compare the two records in a pair directly (address, name,
+        # unit counts, ownership type, master source) and don't depend on the LLM's decision --
+        # so they're computed for every pair in the Results tab, not just confirmed Duplicates.
+        # (The Summary tab still scopes its aggregation to Duplicate pairs only, in
+        # compute_duplicate_flag_summary.)
+        if len(group_df) != 2:
             continue
         row_a, row_b = group_df.iloc[0], group_df.iloc[1]
         address_match = _values_match(row_a.get("Address"), row_b.get("Address"))
         name_match = _name_match_for_pair(row_a, row_b)
-        units_close = _units_within_threshold(row_a.get("Master_Units_50+"), row_b.get("Master_Units_50+"))
+        units_diff_1_to_10, units_diff_over_10 = _units_diff_flags(
+            row_a.get("Master_Units_50+"), row_b.get("Master_Units_50+")
+        )
         ownership_differs = _values_differ(row_a.get("Master_Ownership Type"), row_b.get("Master_Ownership Type"))
         idx_a, idx_b = group_df.index[0], group_df.index[1]
         same_master_source = _same_master_source(
@@ -1306,7 +1320,8 @@ def build_output_df(df: pd.DataFrame, results_by_group: dict) -> pd.DataFrame:
         for idx in group_df.index:
             out.at[idx, "Address Match"] = address_match
             out.at[idx, "Name Match"] = name_match
-            out.at[idx, "Unit Counts Within 10"] = units_close
+            out.at[idx, "Unit Count Diff 1-10"] = units_diff_1_to_10
+            out.at[idx, "Unit Count Diff > 10"] = units_diff_over_10
             out.at[idx, "Different Ownership Type"] = ownership_differs
             out.at[idx, "Same Master Source"] = same_master_source
             for flag_col, value in flag_values.items():
@@ -1339,7 +1354,8 @@ def compute_summary(results_by_group: dict) -> dict:
 DUPLICATE_FLAG_COLUMNS = [
     "Address Match",
     "Name Match",
-    "Unit Counts Within 10",
+    "Unit Count Diff 1-10",
+    "Unit Count Diff > 10",
     "Different Ownership Type",
     "Same Master Source",
 ]
@@ -1355,15 +1371,15 @@ SAME_MASTER_SOURCE_VALUES = [label for _, label in MASTER_SOURCE_PRIORITY]
 FAMILY_RELATIONSHIP_ARCHETYPES = ["Parent/Child Mismatch", "Separate Children Within One Complex"]
 
 
-# For these three flags, the summary shows the complementary ("what's different") framing
+# For these two flags, the summary shows the complementary ("what's different") framing
 # instead of the "what matches" framing the per-row Results column uses -- e.g. the Results
 # sheet's "Address Match" column is unchanged, but the summary reports "Address Mismatch"
-# using that same column's "No" count. The other flags (ownership type, database-membership,
-# master source) are already framed in the direction that's wanted, so they're left alone.
+# using that same column's "No" count. The other flags (unit-count diff buckets, ownership
+# type, database-membership, master source) already report the direction that's wanted
+# directly, so they're left alone.
 INVERTED_FLAG_LABELS = {
     "Address Match": "Address Mismatch",
     "Name Match": "Name Mismatch",
-    "Unit Counts Within 10": "Unit Count Diff > 10",
 }
 
 DISTANCE_BUCKET_ORDER = ["<0.05mi", "0.05-0.2mi", "0.2-0.5mi", "0.5mi+", "Unknown"]

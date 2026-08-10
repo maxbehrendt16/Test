@@ -555,7 +555,8 @@ class DuplicateFlagsTests(unittest.TestCase):
         out = dr.build_output_df(df, results)
         self.assertTrue((out["Address Match"] == "Yes").all())
         self.assertTrue((out["Name Match"] == "Yes").all())
-        self.assertTrue((out["Unit Counts Within 10"] == "Yes").all())
+        self.assertTrue((out["Unit Count Diff 1-10"] == "Yes").all())  # |100-105| = 5
+        self.assertTrue((out["Unit Count Diff > 10"] == "No").all())
         self.assertTrue((out["Both In Hotwire"] == "Yes").all())
         self.assertTrue((out["Both In CoStar"] == "Yes").all())
         self.assertTrue((out["Both In First American"] == "Yes").all())
@@ -570,12 +571,27 @@ class DuplicateFlagsTests(unittest.TestCase):
         out = dr.build_output_df(df, results)
         self.assertTrue((out["Address Match"] == "No").all())
         self.assertTrue((out["Name Match"] == "No").all())
-        self.assertTrue((out["Unit Counts Within 10"] == "No").all())  # |96-127| = 31 > 10
+        self.assertTrue((out["Unit Count Diff 1-10"] == "No").all())
+        self.assertTrue((out["Unit Count Diff > 10"] == "Yes").all())  # |96-127| = 31 > 10
         self.assertTrue((out["Both In Hotwire"] == "No").all())  # only one side is 1
         self.assertTrue((out["Both In CoStar"] == "No").all())   # neither side is 1
         self.assertTrue((out["Both In First American"] == "No").all())  # only one side is 1
 
-    def test_flags_blank_for_non_duplicate_decisions(self):
+    def test_unit_count_diff_flags_neither_true_on_exact_match(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "1", "1"),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "1", "1"),
+        ])
+        results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                         "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Unit Count Diff 1-10"] == "No").all())
+        self.assertTrue((out["Unit Count Diff > 10"] == "No").all())
+
+    def test_flags_populated_for_non_duplicate_decisions_too(self):
+        # Cross-check flags (address/name/units/ownership/db-membership/master source) compare
+        # the two records directly and don't depend on the LLM's decision, so they should now
+        # populate for every pair in the Results tab -- not just confirmed Duplicates.
         df = pd.DataFrame([
             self._row("1", "a", "1 Main St", "X", "100", "1", "1", "1"),
             self._row("1", "b", "1 Main St", "X", "100", "1", "1", "1"),
@@ -583,9 +599,12 @@ class DuplicateFlagsTests(unittest.TestCase):
         results = {"1": {"group": "1", "decision": "Not Duplicate", "archetype": "Coincidental Name Match",
                          "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False}}
         out = dr.build_output_df(df, results)
-        for col in ["Address Match", "Name Match", "Unit Counts Within 10",
-                    "Both In Hotwire", "Both In CoStar", "Both In First American"]:
-            self.assertTrue((out[col] == "").all(), f"{col} should be blank for a non-Duplicate decision")
+        for col in ["Address Match", "Name Match", "Unit Count Diff 1-10", "Unit Count Diff > 10",
+                    "Both In Hotwire", "Both In CoStar", "Both In First American", "Same Master Source"]:
+            self.assertTrue((out[col] != "").all(), f"{col} should be populated for a non-Duplicate decision")
+        self.assertTrue((out["Address Match"] == "Yes").all())
+        self.assertTrue((out["Unit Count Diff 1-10"] == "No").all())  # exact match, diff == 0
+        self.assertTrue((out["Unit Count Diff > 10"] == "No").all())
 
     def test_missing_source_columns_do_not_crash(self):
         # A dataset without In HW/In Costar/In FA/Master_Units_50+ at all (e.g. sample_pairs.csv).
@@ -596,7 +615,8 @@ class DuplicateFlagsTests(unittest.TestCase):
         results = {"1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
                          "confidence": 8, "evidence_summary": "es", "sources": [], "is_error": False}}
         out = dr.build_output_df(df, results)
-        self.assertTrue((out["Unit Counts Within 10"] == "").all())
+        self.assertTrue((out["Unit Count Diff 1-10"] == "").all())
+        self.assertTrue((out["Unit Count Diff > 10"] == "").all())
         self.assertTrue((out["Both In Hotwire"] == "No").all())
         self.assertTrue((out["Master Source"] == "Other").all())
 
@@ -740,8 +760,27 @@ class DuplicateFlagSummaryTests(unittest.TestCase):
         self.assertEqual(summary["total_duplicate_pairs"], 2)  # not 4 (rows) or 3 (all pairs)
         self.assertEqual(summary["flags"]["Address Match"], {"Yes": 1, "No": 1, "Unknown": 0})
         self.assertEqual(summary["flags"]["Name Match"], {"Yes": 1, "No": 1, "Unknown": 0})
-        self.assertEqual(summary["flags"]["Unit Counts Within 10"], {"Yes": 1, "No": 1, "Unknown": 0})
+        # Pair 1: units 100 vs 100 (exact match, diff == 0) trips neither bucket.
+        # Pair 2: units 50 vs 500 (diff == 450) trips only the > 10 bucket.
+        self.assertEqual(summary["flags"]["Unit Count Diff 1-10"], {"Yes": 0, "No": 2, "Unknown": 0})
+        self.assertEqual(summary["flags"]["Unit Count Diff > 10"], {"Yes": 1, "No": 1, "Unknown": 0})
         self.assertEqual(summary["flags"]["Different Ownership Type"], {"Yes": 1, "No": 1, "Unknown": 0})
+
+    def test_flag_breakdown_excludes_non_duplicate_pairs_even_though_flags_are_populated(self):
+        # build_output_df now populates the cross-check flags for every pair regardless of
+        # decision, but the Summary tab's aggregation must still be scoped to Duplicate pairs
+        # only -- this exercises a Not Duplicate pair whose per-row flags are non-blank.
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "1", "1", "1"),
+            self._row("1", "b", "1 Main St", "X", "100", "1", "1", "1"),
+        ])
+        results = {"1": {"group": "1", "decision": "Not Duplicate", "archetype": "Coincidental Name Match",
+                         "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False}}
+        out = dr.build_output_df(df, results)
+        self.assertTrue((out["Address Match"] == "Yes").all())  # per-row flag IS populated
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertEqual(summary["total_duplicate_pairs"], 0)
+        self.assertEqual(summary["flags"]["Address Match"], {"Yes": 0, "No": 0, "Unknown": 0})
 
     def test_no_duplicates_gives_empty_breakdown(self):
         df = pd.DataFrame([
@@ -964,6 +1003,7 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertIn("Address Mismatch: 100% (1/1)", printed)
         self.assertIn("Name Mismatch: 100% (1/1)", printed)
         self.assertIn("Unit Count Diff > 10: 100% (1/1)", printed)
+        self.assertIn("Unit Count Diff 1-10: 0% (0/1)", printed)
         self.assertNotIn("Address Match:", printed)
         self.assertNotIn("Name Match:", printed)
         self.assertIn("Same Building: 100% (1/1)", printed)
