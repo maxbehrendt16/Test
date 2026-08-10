@@ -861,6 +861,33 @@ class DuplicateFlagSummaryTests(unittest.TestCase):
         summary = dr.compute_duplicate_flag_summary(out)
         self.assertEqual(summary["archetype_breakdown"], {"Separate Buildings": 1, "Same Building": 1})
 
+    def test_high_confidence_duplicates_counts_pairs_at_or_above_threshold(self):
+        df = pd.DataFrame([
+            self._row("1", "a", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("1", "b", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("2", "c", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("2", "d", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("3", "e", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("3", "f", "1 Main St", "X", "100", "0", "0", "0"),
+            # Not Duplicate with high confidence -- must not count toward the duplicate-only metric.
+            self._row("4", "g", "1 Main St", "X", "100", "0", "0", "0"),
+            self._row("4", "h", "1 Main St", "X", "100", "0", "0", "0"),
+        ])
+        results = {
+            "1": {"group": "1", "decision": "Duplicate", "archetype": "Same Building",
+                  "confidence": 7, "evidence_summary": "es", "sources": [], "is_error": False},  # exactly at threshold
+            "2": {"group": "2", "decision": "Duplicate", "archetype": "Same Building",
+                  "confidence": 9, "evidence_summary": "es", "sources": [], "is_error": False},
+            "3": {"group": "3", "decision": "Duplicate", "archetype": "Same Building",
+                  "confidence": 6, "evidence_summary": "es", "sources": [], "is_error": False},  # below threshold
+            "4": {"group": "4", "decision": "Not Duplicate", "archetype": "Coincidental Name Match",
+                  "confidence": 9, "evidence_summary": "es", "sources": [], "is_error": False},
+        }
+        out = dr.build_output_df(df, results)
+        summary = dr.compute_duplicate_flag_summary(out)
+        self.assertEqual(summary["total_duplicate_pairs"], 3)
+        self.assertEqual(summary["high_confidence_duplicates"], 2)
+
     def test_distance_buckets_computed_from_distance_miles_column(self):
         df = pd.DataFrame([
             self._row("1", "a", "1 Main St", "X", "100", "0", "0", "0"),
@@ -1008,6 +1035,7 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertNotIn("Name Match:", printed)
         self.assertIn("Same Building: 100% (1/1)", printed)
         self.assertIn("<0.05mi: 100% (1/1)", printed)
+        self.assertIn("Confidence >= 7: 100% (1/1)", printed)  # this pair's confidence is 8
 
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "results.xlsx")
@@ -1015,6 +1043,7 @@ class SummaryRenderingTests(unittest.TestCase):
             summary_df = pd.read_excel(path, sheet_name="Summary")
         metrics = dict(zip(summary_df["Metric"], summary_df["Value"]))
         self.assertEqual(metrics["Address Mismatch"], "100% (1/1)")
+        self.assertEqual(metrics["Confidence >= 7"], "100% (1/1)")
         self.assertEqual(metrics["Archetype (Duplicates only): Same Building"], "100% (1/1)")
         self.assertEqual(metrics["Distance: <0.05mi"], "100% (1/1)")
 
