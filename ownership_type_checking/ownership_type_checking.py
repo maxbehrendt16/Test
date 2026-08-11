@@ -182,17 +182,29 @@ build-year data as an automatic fail here if the other evidence (36 years of zer
 etc.) already independently establishes the property is long-standing.
 4. **At least one internal DB field corroborates single ownership** -- e.g. a null `Master_Monthly \
 Association Fees` on a property old and large enough that a real HOA/COA of that size would almost \
-always have a fee on file. A concentrated `Owner`/`Cleaned Owner` value or a `Bulk Flag`/`% Bulk \
-Overall` near 100% can also satisfy this. **A null/blank fee field, by itself, is sufficient for \
-this condition** -- do not treat it as merely "weak" or hold out for a second internal field on top \
-of it; the point of this condition is that the DB's own data is consistent with no association \
-existing at all, and an absent fee on an old, sizeable property is exactly that.
+always have a fee on file. A concentrated `Owner`/`Cleaned Owner` value can also satisfy this. \
+**A null/blank fee field, by itself, is sufficient for this condition** -- do not treat it as merely \
+"weak" or hold out for a second internal field on top of it; the point of this condition is that the \
+DB's own data is consistent with no association existing at all, and an absent fee on an old, \
+sizeable property is exactly that. **This condition asks for ONE corroborating field, not unanimous \
+agreement across every internal field.** Once you have one, stop -- do not go hunting through other, \
+unrelated DB columns for something that might complicate or contradict it; that is looking for a \
+reason NOT to override, which is exactly backwards for a condition that's already satisfied.
 5. **No structural edge case explains the pattern instead** -- not a housing cooperative, \
 condo-hotel, senior/age-restricted community, or an investor bulk-owned COA/HOA (§4 above) where \
 individual parcels still legally exist even though one owner holds most of them. If any of those \
 plausibly fits at least as well, this exception does not apply -- and if it's a genuine structural \
 edge case rather than a masquerading APT, use the `structural_edge_case` field per failure mode 7 \
 below instead of the Tier-3 exception.
+
+**Your job on conditions 2 and 4 is to look FOR a single piece of qualifying evidence, not to audit \
+every available field for disqualifying ones.** Condition 4 in particular asks whether at least one \
+internal DB field corroborates single ownership -- once you've found one (a blank fee field is \
+usually enough on its own), you're done with that condition; do not then go looking through other, \
+unrelated DB columns to see if anything might complicate or contradict it. That is hunting for a \
+reason NOT to override, which defeats the purpose of a condition that already has sufficient \
+evidence. (Condition 2 is the deliberate exception to this framing -- there, you ARE checking for \
+contradicting evidence specifically, because that's what that condition is.)
 
 **Evaluate all five conditions independently.** They do not gate each other -- a strong answer on \
 one condition (e.g. 36 years of zero sales history clearly satisfying condition 3) does not need \
@@ -447,11 +459,12 @@ SUBMIT_SCHEMA = {
         "tier3_internal_db_corroboration": {
             "type": "string",
             "description": (
-                "Only meaningful when tier3_exception_invoked is 'yes': name the specific internal "
-                "DB field and value that corroborates single ownership (e.g. 'Master_Monthly "
-                "Association Fees is null despite 80 units and 36 years old' or 'Bulk Flag / % Bulk "
-                "Overall near 100%'). Must be truthful and specific -- this is cross-checked against "
-                "the property's own row data. Empty string if tier3_exception_invoked is 'no'."
+                "Only meaningful when tier3_exception_invoked is 'yes': name the ONE specific "
+                "internal DB field and value that corroborates single ownership (e.g. "
+                "'Master_Monthly Association Fees is null despite 80 units and 36 years old'). "
+                "One field is enough -- do not describe a search across multiple fields for "
+                "agreement. Must be truthful and specific -- this is cross-checked against the "
+                "property's own row data. Empty string if tier3_exception_invoked is 'no'."
             ),
         },
         "tier3_structural_edge_case_ruled_out": {
@@ -668,9 +681,12 @@ REASONING_FIELDS = [
     ("Master_Senior Flag", "Senior Flag"),
     ("Master_Student Flag", "Student Flag"),
     ("Master_Gated HOA Flag", "Gated HOA Flag"),
-    ("Bulk Flag", "Bulk Ownership Flag"),
-    ("Bulk Package Type", "Bulk Package Type"),
-    ("% Bulk Overall", "% Bulk Overall"),
+    # Bulk Flag / Bulk Package Type / % Bulk Overall are deliberately NOT shown here -- despite
+    # the name, this is a broadband-competition dataset and these fields describe a bulk
+    # internet/TV/phone service contract with an ISP, not real-estate ownership concentration.
+    # An earlier version of this tool showed them and the model hallucinated a false
+    # contradiction ("% Bulk Overall: 0.5" read as "only 50% single-owned") against an otherwise-
+    # satisfied §4.1 condition 4. See ownership_type_verification_spec.md §10.1.
     ("LLM_Property Name", "Prior verified research -- Property Name"),
     ("LLM_Property URL", "Prior verified research -- Property URL"),
     ("LLM_Address", "Prior verified research -- Address"),

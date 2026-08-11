@@ -196,10 +196,18 @@ change), per whichever normally applies.
    fee ever recorded anywhere in the DB is itself a signal that no association actually exists to
    charge one. **A null/blank fee field, by itself, is sufficient for this condition** — it does not
    need a second internal field on top of it, and it does not need condition 3 to be independently
-   airtight first; each condition stands on its own evidence. Other DB fields (e.g., a single
-   `Owner`/`Cleaned Owner` value with no per-unit variation, a populated `Bulk Flag`/`Bulk Package
-   Type` at or near 100%) can also satisfy this condition — the point is that the DB's own data, not
-   just external search results, independently points toward single ownership.
+   airtight first; each condition stands on its own evidence. A single `Owner`/`Cleaned Owner` value
+   with no per-unit variation can also satisfy this condition — the point is that the DB's own data,
+   not just external search results, independently points toward single ownership.
+   **This condition asks for ONE corroborating field, not an audit of every internal DB field for
+   agreement.** Once you have one (most commonly the blank fee field), the condition is met — stop
+   there. Do not go hunting through unrelated columns looking for something that might complicate or
+   contradict it. In particular, `Bulk Flag`, `Bulk Package Type`, and `% Bulk Overall` describe a
+   **bulk internet/TV/phone service contract with an ISP** (this is a broadband-competition dataset)
+   — they have nothing to do with real-estate ownership concentration and must never be read as "X%
+   bulk-owned" or used as evidence for or against single ownership. A property showing "50% bulk"
+   telecom service is not evidence of 50%-bulk real-estate ownership; it is simply not a real-estate
+   signal at all and should be ignored for this condition.
 5. **No structural edge case (§5.7) explains the pattern instead.** Rule this out explicitly before
    relying on the exception: a housing cooperative, a condo-hotel/timeshare, a senior/age-restricted
    or student community, or an investor/institutional *bulk-ownership* COA/HOA (§5.4 — where the
@@ -440,13 +448,19 @@ of columns mapped here.
 | Leasing company presence | `Leasing Company`, `Leasing Company Contact Name`, `Leasing Company Phone` — drives the Has Leasing Info trigger; treat per §5.1, never sufficient alone |
 | Owner / property manager / developer | `Owner`, `Cleaned Owner`, `Property Manager`, `Cleaned Property Manager`, `Developer Name`, `Cleaned Developer` — useful for identifying investor bulk ownership (§5.4) and distinguishing a true single-owner APT from a managed COA/HOA; also relevant to the §4.1 bounded-exception check |
 | Senior / student / gated flags | `Master_Senior Flag`, `Master_Student Flag`, `Master_Gated HOA Flag` — direct pointers to the structural edge cases in §5.7 |
-| Bulk ownership signal | `Bulk Flag`, `Bulk Package Type`, `% Bulk Overall` — relevant to investor bulk ownership (§5.4) and to the §4.1 bounded-exception check |
 | Prior verified research (trustworthy) | `LLM_Property Name`, `LLM_Property URL`, `LLM_Address`, `LLM_Property Contact #*`, `LLM_Monthly HOA/COA fees`, etc. — see §10.3 |
 | Amenities (secondary context) | `Consolidated Macro Amenities`, `Consolidated Luxury Amenities Count` |
 
 **Not used:** `Future Build` / `CoStar_Building Status` are not treated as a special case. Properties
 under construction or proposed should go through the same verification process as any other
-property — no shortcut or separate handling based on build status.
+property — no shortcut or separate handling based on build status. **`Bulk Flag`, `Bulk Package
+Type`, and `% Bulk Overall` are also not used** — despite the name, this CLP export is a broadband-
+competition dataset and these fields describe a bulk internet/TV/phone service contract with an ISP,
+not real-estate ownership concentration. An earlier version of this spec incorrectly treated them as
+a real-estate "bulk ownership" signal for §4.1's condition 4; that was wrong and caused the tool to
+hallucinate a false contradiction (e.g. reading "% Bulk Overall: 0.5" as "only 50% single-owned")
+against an otherwise-satisfied condition. Do not show these fields to the model or use them as
+evidence for or against ownership type at all.
 
 ### 10.2 Sample input (from the corrected 25-record sample)
 
