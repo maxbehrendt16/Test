@@ -9,6 +9,24 @@ import pandas as pd
 import ownership_type_checking as otc
 
 
+class FormatPropertyBulkFieldExclusionTests(unittest.TestCase):
+    def test_bulk_fields_never_shown_to_the_model(self):
+        # Real reported failure: the model read "% Bulk Overall: 0.5" (a bulk INTERNET/TV/phone
+        # service contract field in this broadband-competition dataset) as "only 50% single-
+        # owned" and used that to reject an otherwise-satisfied §4.1 override. These fields are
+        # irrelevant to ownership type and must never reach the model at all.
+        row = {
+            "RecordID": "446701",
+            "Master_Property Name": "Cross Creek Apartments",
+            "Bulk Flag": "Bulk",
+            "Bulk Package Type": "Bulk - Double Play",
+            "% Bulk Overall": "0.5",
+        }
+        text = otc.format_property(row, [], {})
+        self.assertNotIn("Bulk", text)
+        self.assertNotIn("0.5", text)
+
+
 class ComputeTriggersTests(unittest.TestCase):
     def test_apt_name_mismatch_on_real_keyword(self):
         row = {"Master_Ownership Type": "COA", "Master_Property Name": "Oakwood Apartment Corp."}
