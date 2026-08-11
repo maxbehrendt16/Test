@@ -301,6 +301,26 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         self.assertEqual(fixed["confidence"], "Medium")
         self.assertTrue(fixed["tier3_exception_used"])
 
+    def test_fewer_listed_sources_than_claimed_count_still_allows_override(self):
+        # Real reported failure: the model examined 3 independent sources and reported
+        # tier3_independent_source_count=3, but only listed 2 URLs in `sources` (normal LLM
+        # behavior -- it doesn't always enumerate every source it looked at). The guardrail
+        # must trust the self-reported count, not reject based on the shorter `sources` list.
+        row = self._old_large_row()
+        result = self._clean_override(sources=["https://crosscreekapts.com", "https://apartments.com/x"])
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertEqual(fixed["confidence"], "Medium")
+        self.assertTrue(fixed["tier3_exception_used"])
+
+    def test_zero_listed_sources_fails_even_with_a_claimed_count(self):
+        # The floor: a self-reported count with literally no sources cited at all is an
+        # unsupported claim and should still fail, even though the bar is much lower than 3.
+        row = self._old_large_row()
+        result = self._clean_override(sources=[])
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
     def test_exception_not_invoked_is_downgraded_even_with_strong_evidence(self):
         row = self._old_large_row()
         result = self._clean_override(tier3_exception_invoked="no")

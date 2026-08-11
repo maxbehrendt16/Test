@@ -96,6 +96,12 @@ STRUCTURAL_EDGE_CASE_LABELS = [
 # five self-reported conditions (see SUBMIT_SCHEMA's tier3_* fields), each cross-checked in
 # code by _enforce_tier3_override_guardrail() rather than trusted at face value.
 TIER3_EXCEPTION_MIN_SOURCES = 3
+# The `sources` field only asks for "specific URLs or named sources used" -- real model behavior
+# is to often list 2 representative URLs even when it examined 3+ independent sources, so
+# requiring len(sources) >= TIER3_EXCEPTION_MIN_SOURCES rejected genuinely valid overrides. This
+# lower floor just guards against a fully unsupported self-report (claiming 3 independent sources
+# while citing literally none); the real count-of-3 check is tier3_independent_source_count below.
+TIER3_EXCEPTION_MIN_LISTED_SOURCES = 1
 TIER3_EXCEPTION_MIN_PROPERTY_AGE_YEARS = 5
 
 SYSTEM_PROMPT = """You are a research assistant verifying property ownership-type records in a \
@@ -217,6 +223,14 @@ below every time truthfully -- they are what the code-level guardrail checks bef
 override built on Tier 3 evidence alone, and a claim that doesn't hold up against the property's own \
 data (e.g. citing a null fee when the row's fee field is actually populated) will be caught and \
 downgraded regardless of what the rest of your answer says.
+
+**`tier3_independent_source_count` is the actual test for condition 1, not the length of the \
+`sources` list.** `sources` only asks for specific URLs used -- it's fine (and normal) to list just \
+2 representative URLs there even when you examined 3 or more independent sources; don't pad it out \
+artificially, and don't treat listing fewer URLs as a reason to lower your `tier3_independent_source_count` \
+answer or decline the exception. If you genuinely found and examined 3+ independent, non-syndicated \
+sources agreeing, set `tier3_independent_source_count` to that real number regardless of how many \
+you chose to list as URLs.
 
 ## Known failure modes -- check every one of these before concluding Override
 
@@ -369,7 +383,13 @@ SUBMIT_SCHEMA = {
         "sources": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Specific URLs or named sources used. Empty list if none.",
+            "description": (
+                "Specific URLs or named sources used. Empty list if none. This does not need to "
+                "enumerate every independent source counted in tier3_independent_source_count -- "
+                "listing 2 representative URLs while reporting a source count of 3+ is fine and "
+                "expected; the count field, not this list's length, is what's checked for the "
+                "§4.1 exception's 3-source condition."
+            ),
         },
         "structural_edge_case": {
             "type": "string",
@@ -856,8 +876,8 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
     failure_reason = None
     if result.get("tier3_exception_invoked") != "yes":
         failure_reason = "did not invoke the §4.1 bounded exception"
-    elif len(result.get("sources", [])) < TIER3_EXCEPTION_MIN_SOURCES:
-        failure_reason = f"fewer than {TIER3_EXCEPTION_MIN_SOURCES} sources were listed"
+    elif len(result.get("sources", [])) < TIER3_EXCEPTION_MIN_LISTED_SOURCES:
+        failure_reason = "no sources were listed at all, so the independent-source claim is unsupported"
     elif (_parse_number(result.get("tier3_independent_source_count")) or 0) < TIER3_EXCEPTION_MIN_SOURCES:
         failure_reason = "self-reported independent source count is below 3"
     elif result.get("tier3_contradicting_evidence") != "no":
