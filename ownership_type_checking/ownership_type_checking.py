@@ -1030,12 +1030,103 @@ def print_summary(label: str, summary: dict):
         print(f"    {count_bucket} trigger(s): {_pct(counts['override'], counts['total'])}")
 
 
-def write_output(out_df: pd.DataFrame, output_path: str):
+# A property's Master Source, per the same flag priority used by the prior dedup tool:
+# Hotwire takes precedence over CoStar, which takes precedence over First American; a
+# property matching none of the three is "Other". Column names match the CLP DB export.
+MASTER_SOURCE_PRIORITY = [
+    ("In HW", "Hotwire"),
+    ("In Costar", "CoStar"),
+    ("In FA", "First American"),
+]
+
+
+def _is_flag_true(value) -> bool:
+    return _parse_number(value) == 1
+
+
+def _master_source(row) -> str:
+    for column, label in MASTER_SOURCE_PRIORITY:
+        if _is_flag_true(row.get(column)):
+            return label
+    return "Other"
+
+
+def compute_master_source_breakdown(out_df: pd.DataFrame) -> dict:
+    """Master Source counts across only the CHANGED rows (Decision != "Confirmed") in the
+    built output dataframe -- ordered Hotwire/CoStar/First American/Other, all four always
+    present (even at 0) so a batch with, say, zero CoStar-sourced changes still shows that
+    explicitly rather than omitting the row."""
+    counts = {label: 0 for _, label in MASTER_SOURCE_PRIORITY}
+    counts["Other"] = 0
+    if "Decision" not in out_df.columns:
+        return counts
+    changed = out_df[out_df["Decision"] != "Confirmed"]
+    for _, row in changed.iterrows():
+        source = _master_source(row)
+        counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def compute_summary_stats(results_by_id: dict) -> dict:
+    """Confirmed-vs-changed counts for the "Summary" sheet, reusing decision_display() as the
+    single source of truth for what counts as a real change -- so this can never drift from what
+    the per-row "Decision" column actually shows. changes_by_transition is keyed "X to Y" (DB
+    label to determined type) and only contains transitions that actually occur in this batch."""
+    total = len(results_by_id)
+    confirmed = 0
+    changed = 0
+    changes_by_transition = {}
+    for result in results_by_id.values():
+        db_type = result.get("db_listed_type")
+        if decision_display(db_type, result) == "Confirmed":
+            confirmed += 1
+        else:
+            changed += 1
+            transition = f"{db_type} to {result.get('determined_type')}"
+            changes_by_transition[transition] = changes_by_transition.get(transition, 0) + 1
+    return {
+        "total": total,
+        "confirmed": confirmed,
+        "changed": changed,
+        "changes_by_transition": changes_by_transition,
+    }
+
+
+def build_summary_stats_df(stats: dict, master_source_counts: dict) -> pd.DataFrame:
+    """One row for % Confirmed and % Changed (both as a fraction of the total batch), followed
+    by one row per distinct transition direction that actually occurred, each as a fraction of
+    the *changed* count -- so those sub-rows sum to the "Changed" percentage above them. Then a
+    Master Source breakdown, also as a fraction of the changed count, covering only the changed
+    properties (per Hotwire/CoStar/First American/Other precedence)."""
+    total = stats["total"]
+    changed_total = stats["changed"]
+    rows = [
+        {"Metric": "Confirmed", "Value": _pct(stats["confirmed"], total)},
+        {"Metric": "Changed", "Value": _pct(stats["changed"], total)},
+    ]
+    for transition, count in sorted(stats["changes_by_transition"].items()):
+        rows.append({"Metric": f"  {transition}", "Value": _pct(count, changed_total)})
+    rows.append({"Metric": "Master Source (changed properties)", "Value": ""})
+    for _, label in MASTER_SOURCE_PRIORITY:
+        rows.append({"Metric": f"  {label}", "Value": _pct(master_source_counts.get(label, 0), changed_total)})
+    rows.append({"Metric": "  Other", "Value": _pct(master_source_counts.get("Other", 0), changed_total)})
+    return pd.DataFrame(rows, columns=["Metric", "Value"])
+
+
+def write_output(out_df: pd.DataFrame, results_by_id: dict, output_path: str):
     out_df = sanitize_df_for_excel(out_df)
+    summary_df = sanitize_df_for_excel(
+        build_summary_stats_df(compute_summary_stats(results_by_id), compute_master_source_breakdown(out_df))
+    )
     if output_path.lower().endswith((".xlsx", ".xls")):
-        out_df.to_excel(output_path, index=False)
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+            summary_df.to_excel(writer, sheet_name="Summary", index=False)
+            out_df.to_excel(writer, sheet_name="Results", index=False)
     else:
         out_df.to_csv(output_path, index=False)
+        summary_path = str(Path(output_path).with_suffix("")) + "_summary_stats.csv"
+        summary_df.to_csv(summary_path, index=False)
+        print(f"Summary stats also written to {summary_path}")
 
 
 def main():
@@ -1109,7 +1200,7 @@ def main():
     processed_ids = {str(row.get("RecordID")) for row in all_rows}
     cumulative_results = {pid: r for pid, r in results_by_id.items() if pid in processed_ids}
     out_df = build_output_df(df, cumulative_results)
-    write_output(out_df, args.output)
+    write_output(out_df, cumulative_results, args.output)
 
     if batch_results:
         print_summary("This batch", compute_summary(batch_results))
