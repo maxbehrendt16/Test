@@ -92,7 +92,6 @@ class GuardrailTests(unittest.TestCase):
             "evidence_tier_used": "Tier 3",
             "reasoning": "A leasing website says apply now.",
             "sources": ["https://example.com"],
-            "archetype_flag": "",
         }
         fixed = otc._enforce_tier3_override_guardrail(result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
@@ -106,7 +105,6 @@ class GuardrailTests(unittest.TestCase):
             "evidence_tier_used": "Tier 1",
             "reasoning": "County registry lists it as a rental apartment complex.",
             "sources": ["https://sunbiz.org/x"],
-            "archetype_flag": "",
         }
         fixed = otc._enforce_tier3_override_guardrail(result)
         self.assertEqual(fixed["decision"], "Override")
@@ -121,15 +119,35 @@ class GuardrailTests(unittest.TestCase):
         fixed = otc._reconcile_decision_and_type("COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
 
-    def test_confirmed_edge_case_type_is_not_overwritten(self):
-        result = {"determined_type": "Edge Case", "decision": "Confirmed", "evidence_tier_used": "Tier 2"}
+    def test_not_enough_info_with_mismatched_type_is_corrected_to_db_label(self):
+        result = {"determined_type": "APT", "decision": "Not Enough Info", "evidence_tier_used": "Tier 3"}
         fixed = otc._reconcile_decision_and_type("COA", result)
-        self.assertEqual(fixed["determined_type"], "Edge Case")
+        self.assertEqual(fixed["determined_type"], "COA")
 
     def test_error_result_never_forces_override(self):
         result = otc._default_error_result("HOA", RuntimeError("boom"))
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertEqual(result["determined_type"], "HOA")
+
+
+class DecisionDisplayTests(unittest.TestCase):
+    def test_confirmed_displays_as_confirmed(self):
+        result = {"decision": "Confirmed", "determined_type": "COA"}
+        self.assertEqual(otc.decision_display("COA", result), "Confirmed")
+
+    def test_not_enough_info_displays_as_confirmed(self):
+        # Not Enough Info always means "keep the DB label" -- it collapses to the same
+        # display value as Confirmed; the thin-evidence nature shows up via confidence/reasoning.
+        result = {"decision": "Not Enough Info", "determined_type": "COA"}
+        self.assertEqual(otc.decision_display("COA", result), "Confirmed")
+
+    def test_override_displays_as_changed_from_x_to_y(self):
+        result = {"decision": "Override", "determined_type": "APT"}
+        self.assertEqual(otc.decision_display("COA", result), "Changed from COA to APT")
+
+    def test_override_with_no_actual_change_displays_as_confirmed(self):
+        result = {"decision": "Override", "determined_type": "COA"}
+        self.assertEqual(otc.decision_display("COA", result), "Confirmed")
 
 
 class CheckpointRoundTripTests(unittest.TestCase):
@@ -154,7 +172,6 @@ class SummaryTests(unittest.TestCase):
             "trigger_rules": rules,
             "trigger_types": signal_types,
             "trigger_count": trigger_count if trigger_count is not None else len(rules),
-            "archetype_flag": "",
             "is_error": False,
         }
 
@@ -177,6 +194,49 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(summary["by_decision"]["Confirmed"], 1)
         self.assertEqual(summary["by_decision"]["Not Enough Info"], 1)
         self.assertEqual(summary["by_decision"]["Override"], 0)
+
+
+class BuildOutputDfTests(unittest.TestCase):
+    def test_no_property_id_trigger_or_archetype_columns_and_correct_order(self):
+        df = pd.DataFrame([{"RecordID": "605", "Master_Property Name": "Barton Village - Flats I"}])
+        result = {
+            "605": {
+                "db_listed_type": "HOA",
+                "determined_type": "HOA",
+                "decision": "Confirmed",
+                "decision_display": "Confirmed",
+                "confidence": "Low",
+                "evidence_tier_used": "Tier 3",
+                "reasoning": "Ambiguous lease-up phase evidence; keeping DB label.",
+                "sources": ["https://example.com"],
+            }
+        }
+        out = otc.build_output_df(df, result)
+        new_columns = [c for c in out.columns if c not in df.columns]
+        self.assertEqual(
+            new_columns,
+            ["DB Listed Type", "Determined Type", "Decision", "Confidence", "Evidence Tier Used", "Reasoning", "Sources"],
+        )
+        for forbidden in ("Property ID", "Trigger Rule(s)", "Trigger Count", "Trigger Types", "Archetype Flag"):
+            self.assertNotIn(forbidden, out.columns)
+        self.assertEqual(out.at[0, "Decision"], "Confirmed")
+
+    def test_override_row_shows_changed_from_x_to_y(self):
+        df = pd.DataFrame([{"RecordID": "1", "Master_Property Name": "Something"}])
+        result = {
+            "1": {
+                "db_listed_type": "HOA",
+                "determined_type": "APT",
+                "decision": "Override",
+                "decision_display": "Changed from HOA to APT",
+                "confidence": "High",
+                "evidence_tier_used": "Tier 1",
+                "reasoning": "County registry confirms rental apartment complex.",
+                "sources": [],
+            }
+        }
+        out = otc.build_output_df(df, result)
+        self.assertEqual(out.at[0, "Decision"], "Changed from HOA to APT")
 
 
 if __name__ == "__main__":
