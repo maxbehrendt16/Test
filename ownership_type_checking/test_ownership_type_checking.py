@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 
@@ -133,6 +134,136 @@ class GuardrailTests(unittest.TestCase):
         self.assertEqual(result["determined_type"], "HOA")
 
 
+class StructuralEdgeCaseGuardrailTests(unittest.TestCase):
+    def test_non_none_edge_case_forces_confirmed_and_db_label(self):
+        # This is the real Arbor Hills Apartments failure: the model correctly identified a
+        # housing cooperative, then used the co-op's own association fees (backwards) to argue
+        # for overriding COA -> APT anyway. The guardrail must force it back regardless.
+        result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Mixed",
+            "reasoning": (
+                "Confirmed as a cooperative (co-op) ownership structure, not COA. Clear evidence "
+                "of monthly association fees supports this being an apartment. Overriding to APT."
+            ),
+            "structural_edge_case": "housing_cooperative",
+        }
+        fixed = otc._enforce_structural_edge_case_guardrail("COA", result)
+        self.assertEqual(fixed["decision"], "Confirmed")
+        self.assertEqual(fixed["determined_type"], "COA")
+        self.assertIn("housing_cooperative", fixed["reasoning"])
+
+    def test_none_edge_case_is_left_alone(self):
+        result = {"determined_type": "APT", "decision": "Override", "structural_edge_case": "none"}
+        fixed = otc._enforce_structural_edge_case_guardrail("HOA", result)
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertEqual(fixed["determined_type"], "APT")
+
+    def test_missing_edge_case_field_is_left_alone(self):
+        result = {"determined_type": "APT", "decision": "Override"}
+        fixed = otc._enforce_structural_edge_case_guardrail("HOA", result)
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_edge_case_that_already_agrees_does_not_rewrite_reasoning(self):
+        result = {
+            "determined_type": "COA", "decision": "Confirmed", "structural_edge_case": "housing_cooperative",
+            "reasoning": "This is a housing cooperative; DB label kept as-is.",
+        }
+        fixed = otc._enforce_structural_edge_case_guardrail("COA", result)
+        self.assertEqual(fixed["reasoning"], "This is a housing cooperative; DB label kept as-is.")
+
+    def test_all_edge_case_labels_other_than_none_are_forced(self):
+        for label in otc.STRUCTURAL_EDGE_CASE_LABELS:
+            if label == "none":
+                continue
+            result = {"determined_type": "APT", "decision": "Override", "structural_edge_case": label}
+            fixed = otc._enforce_structural_edge_case_guardrail("HOA", result)
+            self.assertEqual(fixed["decision"], "Confirmed", msg=f"label={label}")
+            self.assertEqual(fixed["determined_type"], "HOA", msg=f"label={label}")
+
+
+class PropertyBuildYearTests(unittest.TestCase):
+    def test_uses_original_build_year_when_present(self):
+        row = {"Master_Original Build Year": "1990", "Master_Most Recent Build Year": "2020"}
+        self.assertEqual(otc._property_build_year(row), 1990)
+
+    def test_falls_back_to_most_recent_when_original_blank(self):
+        row = {"Master_Original Build Year": "", "Master_Most Recent Build Year": "2005"}
+        self.assertEqual(otc._property_build_year(row), 2005)
+
+    def test_none_when_both_missing(self):
+        self.assertIsNone(otc._property_build_year({}))
+
+
+class ProcessPropertyIntegrationTests(unittest.TestCase):
+    """End-to-end through process_property() with research_property() mocked -- covers the two
+    real misclassifications reported against a prior batch, to lock in the fix as a regression
+    test rather than only testing the guardrails in isolation."""
+
+    def test_arbor_hills_style_coop_is_not_overridden(self):
+        row = {
+            "RecordID": "135831",
+            "Master_Property Name": "Arbor Hills Apartments",
+            "Master_Ownership Type": "COA",
+            "Master_Monthly Association Fees": "450",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Mixed",
+            "reasoning": "Confirmed as a housing cooperative with monthly fees supporting APT.",
+            "sources": ["https://redfin.com/x", "https://realtor.com/x"],
+            "structural_edge_case": "housing_cooperative",
+            "tier3_exception_invoked": "no",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_property_age_sufficient": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Confirmed")
+        self.assertEqual(result["determined_type"], "COA")
+        self.assertEqual(result["decision_display"], "Confirmed")
+
+    def test_cross_creek_style_property_with_null_fee_can_now_override(self):
+        row = {
+            "RecordID": "446701",
+            "Master_Property Name": "Cross Creek Apartments",
+            "Master_Ownership Type": "HOA",
+            "Master_Units_50+": "80",
+            "Master_Building Count_50+": "40",
+            "Master_Original Build Year": str(otc._current_year() - 36),
+            "Master_Monthly Association Fees": "",
+            "Leasing Company": "Advanced Precision",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": "Tier-3 corroborated override: single owner, no sales in 36 years.",
+            "sources": ["https://crosscreekapts.com", "https://apartments.com/x", "https://apartmentratings.com/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "yes",
+            "tier3_independent_source_count": 3,
+            "tier3_contradicting_evidence": "no",
+            "tier3_property_age_sufficient": "yes",
+            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units and 36 years old",
+            "tier3_structural_edge_case_ruled_out": "yes",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Override")
+        self.assertEqual(result["determined_type"], "APT")
+        self.assertEqual(result["confidence"], "Medium")
+        self.assertEqual(result["decision_display"], "Changed from HOA to APT")
+
+
 class Tier3ExceptionGuardrailTests(unittest.TestCase):
     def _clean_override(self, **overrides):
         result = {
@@ -154,7 +285,7 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
 
     def _old_large_row(self, **overrides):
         row = {
-            "Master_Build Year": str(otc._current_year() - 36),
+            "Master_Original Build Year": str(otc._current_year() - 36),
             "Master_Monthly Association Fees": "",
             "Master_Units_50+": "80",
         }
@@ -196,10 +327,10 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
     def test_recent_build_year_backstop_overrides_a_false_age_claim(self):
-        # Model claims age is sufficient, but the row's own Master_Build Year says the
-        # property is only 2 years old -- the deterministic backstop must catch this even
+        # Model claims age is sufficient, but the row's own Master_Original Build Year says
+        # the property is only 2 years old -- the deterministic backstop must catch this even
         # though every self-reported field looks clean.
-        row = self._old_large_row(**{"Master_Build Year": str(otc._current_year() - 2)})
+        row = self._old_large_row(**{"Master_Original Build Year": str(otc._current_year() - 2)})
         result = self._clean_override()
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
