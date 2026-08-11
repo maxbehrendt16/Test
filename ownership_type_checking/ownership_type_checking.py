@@ -1030,6 +1030,43 @@ def print_summary(label: str, summary: dict):
         print(f"    {count_bucket} trigger(s): {_pct(counts['override'], counts['total'])}")
 
 
+# A property's Master Source, per the same flag priority used by the prior dedup tool:
+# Hotwire takes precedence over CoStar, which takes precedence over First American; a
+# property matching none of the three is "Other". Column names match the CLP DB export.
+MASTER_SOURCE_PRIORITY = [
+    ("In HW", "Hotwire"),
+    ("In Costar", "CoStar"),
+    ("In FA", "First American"),
+]
+
+
+def _is_flag_true(value) -> bool:
+    return _parse_number(value) == 1
+
+
+def _master_source(row) -> str:
+    for column, label in MASTER_SOURCE_PRIORITY:
+        if _is_flag_true(row.get(column)):
+            return label
+    return "Other"
+
+
+def compute_master_source_breakdown(out_df: pd.DataFrame) -> dict:
+    """Master Source counts across only the CHANGED rows (Decision != "Confirmed") in the
+    built output dataframe -- ordered Hotwire/CoStar/First American/Other, all four always
+    present (even at 0) so a batch with, say, zero CoStar-sourced changes still shows that
+    explicitly rather than omitting the row."""
+    counts = {label: 0 for _, label in MASTER_SOURCE_PRIORITY}
+    counts["Other"] = 0
+    if "Decision" not in out_df.columns:
+        return counts
+    changed = out_df[out_df["Decision"] != "Confirmed"]
+    for _, row in changed.iterrows():
+        source = _master_source(row)
+        counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
 def compute_summary_stats(results_by_id: dict) -> dict:
     """Confirmed-vs-changed counts for the "Summary" sheet, reusing decision_display() as the
     single source of truth for what counts as a real change -- so this can never drift from what
@@ -1055,10 +1092,12 @@ def compute_summary_stats(results_by_id: dict) -> dict:
     }
 
 
-def build_summary_stats_df(stats: dict) -> pd.DataFrame:
+def build_summary_stats_df(stats: dict, master_source_counts: dict) -> pd.DataFrame:
     """One row for % Confirmed and % Changed (both as a fraction of the total batch), followed
     by one row per distinct transition direction that actually occurred, each as a fraction of
-    the *changed* count -- so those sub-rows sum to the "Changed" percentage above them."""
+    the *changed* count -- so those sub-rows sum to the "Changed" percentage above them. Then a
+    Master Source breakdown, also as a fraction of the changed count, covering only the changed
+    properties (per Hotwire/CoStar/First American/Other precedence)."""
     total = stats["total"]
     changed_total = stats["changed"]
     rows = [
@@ -1067,12 +1106,18 @@ def build_summary_stats_df(stats: dict) -> pd.DataFrame:
     ]
     for transition, count in sorted(stats["changes_by_transition"].items()):
         rows.append({"Metric": f"  {transition}", "Value": _pct(count, changed_total)})
+    rows.append({"Metric": "Master Source (changed properties)", "Value": ""})
+    for _, label in MASTER_SOURCE_PRIORITY:
+        rows.append({"Metric": f"  {label}", "Value": _pct(master_source_counts.get(label, 0), changed_total)})
+    rows.append({"Metric": "  Other", "Value": _pct(master_source_counts.get("Other", 0), changed_total)})
     return pd.DataFrame(rows, columns=["Metric", "Value"])
 
 
 def write_output(out_df: pd.DataFrame, results_by_id: dict, output_path: str):
     out_df = sanitize_df_for_excel(out_df)
-    summary_df = sanitize_df_for_excel(build_summary_stats_df(compute_summary_stats(results_by_id)))
+    summary_df = sanitize_df_for_excel(
+        build_summary_stats_df(compute_summary_stats(results_by_id), compute_master_source_breakdown(out_df))
+    )
     if output_path.lower().endswith((".xlsx", ".xls")):
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             summary_df.to_excel(writer, sheet_name="Summary", index=False)

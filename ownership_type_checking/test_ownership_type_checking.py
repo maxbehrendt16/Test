@@ -398,7 +398,8 @@ class SummaryStatsTests(unittest.TestCase):
             "3": self._result("APT", "COA", "Override"),
             "4": self._result("COA", "COA", "Confirmed"),
         }
-        df = otc.build_summary_stats_df(otc.compute_summary_stats(results))
+        no_master_source = {"Hotwire": 0, "CoStar": 0, "First American": 0, "Other": 0}
+        df = otc.build_summary_stats_df(otc.compute_summary_stats(results), no_master_source)
         rows = list(df.itertuples(index=False, name=None))
         self.assertEqual(rows[0], ("Confirmed", "25% (1/4)"))
         self.assertEqual(rows[1], ("Changed", "75% (3/4)"))
@@ -434,6 +435,59 @@ class SummaryStatsTests(unittest.TestCase):
             summary_df = pd.read_excel(path, sheet_name="Summary")
             self.assertEqual(summary_df.loc[summary_df["Metric"] == "Confirmed", "Value"].iloc[0], "50% (1/2)")
             self.assertEqual(summary_df.loc[summary_df["Metric"] == "Changed", "Value"].iloc[0], "50% (1/2)")
+
+
+class MasterSourceBreakdownTests(unittest.TestCase):
+    def test_priority_hotwire_beats_costar_and_fa(self):
+        row = {"In HW": "1", "In Costar": "1", "In FA": "1"}
+        self.assertEqual(otc._master_source(row), "Hotwire")
+
+    def test_priority_costar_beats_fa_when_not_in_hw(self):
+        row = {"In HW": "0", "In Costar": "1", "In FA": "1"}
+        self.assertEqual(otc._master_source(row), "CoStar")
+
+    def test_first_american_when_only_fa_flag_set(self):
+        row = {"In HW": "0", "In Costar": "0", "In FA": "1"}
+        self.assertEqual(otc._master_source(row), "First American")
+
+    def test_other_when_no_flags_set(self):
+        row = {"In HW": "0", "In Costar": "0", "In FA": "0"}
+        self.assertEqual(otc._master_source(row), "Other")
+
+    def test_other_when_flags_missing_entirely(self):
+        self.assertEqual(otc._master_source({}), "Other")
+
+    def test_breakdown_only_counts_changed_rows(self):
+        out_df = pd.DataFrame([
+            {"RecordID": "1", "Decision": "Changed from HOA to APT", "In HW": "1", "In Costar": "0", "In FA": "0"},
+            {"RecordID": "2", "Decision": "Changed from COA to APT", "In HW": "0", "In Costar": "1", "In FA": "0"},
+            {"RecordID": "3", "Decision": "Confirmed", "In HW": "1", "In Costar": "0", "In FA": "0"},
+        ])
+        counts = otc.compute_master_source_breakdown(out_df)
+        self.assertEqual(counts, {"Hotwire": 1, "CoStar": 1, "First American": 0, "Other": 0})
+
+    def test_breakdown_includes_all_four_labels_even_at_zero(self):
+        out_df = pd.DataFrame([{"RecordID": "1", "Decision": "Confirmed", "In HW": "1"}])
+        counts = otc.compute_master_source_breakdown(out_df)
+        self.assertEqual(set(counts.keys()), {"Hotwire", "CoStar", "First American", "Other"})
+        self.assertEqual(counts["Hotwire"], 0)
+
+    def test_summary_df_master_source_rows_are_fraction_of_changed(self):
+        results = {
+            "1": self._result_stub("HOA", "APT", "Override"),
+            "2": self._result_stub("COA", "APT", "Override"),
+        }
+        master_source_counts = {"Hotwire": 1, "CoStar": 1, "First American": 0, "Other": 0}
+        df = otc.build_summary_stats_df(otc.compute_summary_stats(results), master_source_counts)
+        rows = list(df.itertuples(index=False, name=None))
+        self.assertIn(("  Hotwire", "50% (1/2)"), rows)
+        self.assertIn(("  CoStar", "50% (1/2)"), rows)
+        self.assertIn(("  First American", "0% (0/2)"), rows)
+        self.assertIn(("  Other", "0% (0/2)"), rows)
+
+    @staticmethod
+    def _result_stub(db_type, determined_type, decision):
+        return {"db_listed_type": db_type, "determined_type": determined_type, "decision": decision}
 
 
 if __name__ == "__main__":
