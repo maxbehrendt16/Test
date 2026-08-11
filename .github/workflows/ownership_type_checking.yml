@@ -1,0 +1,55 @@
+name: Ownership Type Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_file:
+        description: "Input CSV/XLSX path, relative to ownership_type_checking/"
+        required: true
+        default: "sample_properties.csv"
+      batch_size:
+        description: "Only process the first N new properties (leave blank for a full run)"
+        required: false
+        default: ""
+      concurrency:
+        description: "Properties to research in parallel"
+        required: false
+        default: "1"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r ownership_type_checking/requirements.txt
+
+      - name: Run ownership type verification
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        working-directory: ownership_type_checking
+        run: |
+          args=(--input "${{ inputs.input_file }}" --output results.xlsx --concurrency "${{ inputs.concurrency }}")
+          if [ -n "${{ inputs.batch_size }}" ]; then
+            args+=(--batch-size "${{ inputs.batch_size }}")
+          fi
+          python ownership_type_checking.py "${args[@]}"
+
+      - name: Upload results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ownership-type-checking-results
+          path: |
+            ownership_type_checking/results.xlsx
+            ownership_type_checking/results.xlsx.checkpoint.jsonl
+          retention-days: 30
+          if-no-files-found: warn
