@@ -4,7 +4,7 @@ CLP Ownership Type Verification Tool.
 For each CLP database property flagged as having a possibly-incorrect ownership type
 (APT / COA / HOA), calls an LLM (with a web search tool enabled) to research the
 property online and either confirm the existing DB label or determine the correct
-type -- with reasoning, sourced evidence, and a confidence/archetype tag.
+type -- with reasoning, sourced evidence, and a confidence/evidence-tier tag.
 
 This mirrors the architecture of the prior duplicate-detection tool
 (checkpointing keyed off a stable ID, dry-run/--limit mode, structured decisioning
@@ -55,26 +55,17 @@ MAX_TURNS = 6
 URL_FETCH_TIMEOUT = 10
 URL_FETCH_MAX_CHARS = 3000
 
-DECISION_LABELS = ["Confirmed", "Override", "Not Enough Info", "Structural Edge Case"]
-DETERMINED_TYPE_LABELS = ["APT", "COA", "HOA", "Edge Case"]
+# Internal decision space the model chooses from. "Structural Edge Case" is intentionally
+# not a decision here -- per the output design, a property that doesn't cleanly fit the
+# three-way taxonomy still gets a best-fit APT/COA/HOA determined_type and a Confirmed/
+# Override decision; the edge-case nature is described in the reasoning text instead of
+# surfaced as its own category. "Confirmed" and "Not Enough Info" both mean "keep the DB
+# label" and are collapsed to a single "Confirmed" in the output (see decision_display());
+# the internal distinction is kept only for the batch summary's evidence-quality tracking.
+DECISION_LABELS = ["Confirmed", "Override", "Not Enough Info"]
+DETERMINED_TYPE_LABELS = ["APT", "COA", "HOA"]
 EVIDENCE_TIER_LABELS = ["Tier 1", "Tier 2", "Tier 3", "Mixed", "None"]
 CONFIDENCE_LABELS = ["High", "Medium", "Low"]
-
-# Canonical archetype strings from the spec's known-failure-mode catalog (Section 5) --
-# kept as a suggested list in the tool description, not a hard enum, since Section 6
-# allows a new free-text description when a property genuinely fits none of these.
-ARCHETYPE_LABELS = [
-    "Marketing Language Trap",
-    "Lease-Up Phase",
-    "Investor Bulk Ownership",
-    "Mixed-Use Development",
-    "Stale/Renamed",
-    "Fee Miscoding",
-    "Housing Cooperative",
-    "Condo-Hotel/Timeshare",
-    "Manufactured Home Community",
-    "Senior/Student Housing Naming Convention",
-]
 
 SYSTEM_PROMPT = """You are a research assistant verifying property ownership-type records in a \
 Community Lending Portfolio (CLP) database.
@@ -158,8 +149,8 @@ structure independently, don't let the naming convention drive the call), and ag
 master-planned communities using "Apartments" purely as a marketing brand for what's legally a COA. \
 Housing cooperatives (individually-sold shares in a corporation, often "... Apartment Corp." or \
 "... Apartments, Inc." in the Northeast) are a recurring pattern that looks like a rental APT from \
-aggregator listings but is legally a COA-like structure -- flag with the Housing Cooperative \
-archetype rather than treating "Apartments" in the name as confirming.
+aggregator listings but is legally a COA-like structure -- call this out explicitly in your \
+reasoning rather than treating "Apartments" in the name as confirming.
 8. **Fee field miscoding.** Before treating fee presence as COA/HOA evidence, sanity-check it isn't \
 a one-time deposit, a data-entry artifact, or a fee belonging to a different nearby property from a \
 prior dedup issue in the CLP DB. If the fee amount/structure looks legitimate and recurring, treat \
@@ -187,10 +178,17 @@ entity's name and type.
    - DB label confirmed by evidence found, or no contradicting evidence found -> **Confirmed**
    - Tier 1/2 evidence contradicts the DB label, corroborated by a second independent Tier 1/2 source -> **Override**
    - Evidence is mixed, thin, Tier-3-only, contradictory, or genuinely ambiguous even after Attempt 2 -> **Not Enough Info** (keep DB label, low confidence). When in doubt, don't change the label.
-   - Property doesn't fit the three-way taxonomy at all (condo-hotel, manufactured home community, etc.) -> **Structural Edge Case**
 4. Prefer a small number of well-targeted searches (2-4 is usually enough) over exhaustively \
 crawling many pages. If a property cannot be resolved with confidence after Attempt 2, stop and \
 label it Not Enough Info rather than digging indefinitely.
+
+**There is no separate decision or type for a structural edge case (condo-hotel/timeshare, \
+manufactured home community, senior/student housing, mixed-use development, housing cooperative, \
+etc.).** Still pick Confirmed/Override/Not Enough Info and a best-fit APT/COA/HOA determined_type as \
+above -- just say plainly in your 1-2 sentence reasoning that the property is this kind of edge \
+case and why that makes the label a reasonable-but-imperfect fit (e.g. "This is a condo-hotel with \
+fractional ownership; COA is the closest fit of the three categories but doesn't fully capture the \
+timeshare structure.").
 
 ## Confidence
 
@@ -201,15 +199,6 @@ inflated, not that the evidence was unusually clean across the board.
 an unverified assumption, or reliance on well-corroborated Tier 3 evidence alone.
 - **Low:** thin, mixed, Tier-3-only, or genuinely ambiguous evidence. This is the expected, normal \
 outcome for most Not Enough Info calls -- not a score to avoid.
-
-## Archetype flag
-
-If a known failure-mode pattern applies (regardless of your decision), name it -- e.g. "Marketing \
-Language Trap", "Lease-Up Phase", "Investor Bulk Ownership", "Mixed-Use Development", \
-"Stale/Renamed", "Fee Miscoding", "Housing Cooperative", "Condo-Hotel/Timeshare", "Manufactured \
-Home Community", "Senior/Student Housing Naming Convention". Combine multiple with "; " if more \
-than one applies. Leave empty if none apply. Only write a new free-text label when a property \
-genuinely fits none of these, phrased as a reusable pattern description, not pair-specific detail.
 
 ## Final answer
 
@@ -230,9 +219,10 @@ SUBMIT_SCHEMA = {
             "type": "string",
             "enum": DETERMINED_TYPE_LABELS,
             "description": (
-                "Your concluded ownership type: the same value as the DB label (Confirmed), the "
-                "corrected value (Override), or 'Edge Case' when the property doesn't fit the "
-                "three-way taxonomy (Structural Edge Case decision)."
+                "Your concluded ownership type -- always one of APT/COA/HOA, never a separate "
+                "'edge case' value. Same as the DB label for Confirmed/Not Enough Info; the "
+                "corrected value for Override. For a structural edge case, pick whichever of the "
+                "three is the closest fit and explain the mismatch in reasoning instead."
             ),
         },
         "decision": {
@@ -252,7 +242,10 @@ SUBMIT_SCHEMA = {
             "type": "string",
             "description": (
                 "STRICT LIMIT: 1-2 sentences, plain language -- this is read at scale, not a "
-                "research memo. State the specific facts found and how they support the decision."
+                "research memo. State the specific facts found and how they support the decision. "
+                "If this property is a structural edge case (condo-hotel, manufactured home "
+                "community, senior/student housing, mixed-use development, housing cooperative, "
+                "etc.), say so explicitly here -- there is no separate field for it."
             ),
         },
         "sources": {
@@ -260,16 +253,8 @@ SUBMIT_SCHEMA = {
             "items": {"type": "string"},
             "description": "Specific URLs or named sources used. Empty list if none.",
         },
-        "archetype_flag": {
-            "type": "string",
-            "description": (
-                "One or more of the canonical failure-mode tags (semicolon-separated if more than "
-                "one), or a new short reusable pattern description if none fit. Empty string if "
-                "no archetype applies."
-            ),
-        },
     },
-    "required": ["determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources", "archetype_flag"],
+    "required": ["determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources"],
     "additionalProperties": False,
 }
 
@@ -609,16 +594,28 @@ def _enforce_tier3_override_guardrail(result: dict) -> dict:
 def _reconcile_decision_and_type(db_type: str, result: dict) -> dict:
     """Self-contradiction check, mirroring the dedup tool's hard consistency check: an Override
     whose determined_type matches the DB label isn't actually an override (fix to Confirmed), and
-    a Confirmed whose determined_type differs from the DB label is a direct contradiction (fix
-    determined_type back to the DB label -- Confirmed means the DB label stands)."""
+    a Confirmed or Not Enough Info whose determined_type differs from the DB label is a direct
+    contradiction (fix determined_type back to the DB label -- neither of those decisions changes
+    the label)."""
     result = dict(result)
     decision = result.get("decision")
     determined = result.get("determined_type")
     if decision == "Override" and determined == db_type:
         result["decision"] = "Confirmed"
-    elif decision == "Confirmed" and determined not in (db_type, "Edge Case"):
+    elif decision in ("Confirmed", "Not Enough Info") and determined != db_type:
         result["determined_type"] = db_type
     return result
+
+
+def decision_display(db_type: str, result: dict) -> str:
+    """The two-value decision string shown in the output: 'Confirmed' whenever the DB label
+    stands (Confirmed or Not Enough Info internally -- both mean no change, and Not Enough Info's
+    thin-evidence nature is already visible via Low confidence and the reasoning text), or
+    'Changed from X to Y' when the label was actually overridden."""
+    determined = result.get("determined_type", db_type)
+    if result.get("decision") == "Override" and determined != db_type:
+        return f"Changed from {db_type} to {determined}"
+    return "Confirmed"
 
 
 def _default_error_result(db_type: str, error: Exception) -> dict:
@@ -631,7 +628,6 @@ def _default_error_result(db_type: str, error: Exception) -> dict:
         "evidence_tier_used": "None",
         "reasoning": f"{error.__class__.__name__}: {error}",
         "sources": [],
-        "archetype_flag": "Processing error",
     }
 
 
@@ -662,11 +658,11 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         "trigger_types": trigger_types,
         "determined_type": result.get("determined_type", db_type),
         "decision": result.get("decision", "Not Enough Info"),
+        "decision_display": decision_display(db_type, result),
         "confidence": result.get("confidence", "Low"),
         "evidence_tier_used": result.get("evidence_tier_used", "None"),
         "reasoning": result.get("reasoning", ""),
         "sources": result.get("sources", []),
-        "archetype_flag": result.get("archetype_flag", ""),
         "is_error": is_error,
     }
 
@@ -720,10 +716,14 @@ def sanitize_df_for_excel(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_output_df(df: pd.DataFrame, results_by_id: dict) -> pd.DataFrame:
+    """Appends the verification result columns, in the requested order, after the original
+    input columns. No property-ID or trigger/archetype columns -- those stay internal (used for
+    the checkpoint and the batch summary's sanity checks) but aren't part of the reviewer-facing
+    output. 'Decision' shows the two-value display string ("Confirmed" / "Changed from X to Y"),
+    not the internal decision label."""
     out = df.copy()
-    out["Property ID"] = out["RecordID"].astype(str)
-    for col in ["DB Listed Type", "Trigger Rule(s)", "Trigger Count", "Trigger Types", "Determined Type",
-                "Decision", "Confidence", "Evidence Tier Used", "Reasoning", "Sources", "Archetype Flag"]:
+    for col in ["DB Listed Type", "Determined Type", "Decision", "Confidence", "Evidence Tier Used",
+                "Reasoning", "Sources"]:
         out[col] = pd.Series([""] * len(out), index=out.index, dtype=object)
 
     for idx in out.index:
@@ -731,23 +731,18 @@ def build_output_df(df: pd.DataFrame, results_by_id: dict) -> pd.DataFrame:
         if not result:
             continue
         out.at[idx, "DB Listed Type"] = result["db_listed_type"]
-        out.at[idx, "Trigger Rule(s)"] = "; ".join(result["trigger_rules"])
-        out.at[idx, "Trigger Count"] = result["trigger_count"]
-        out.at[idx, "Trigger Types"] = "; ".join(result["trigger_types"])
         out.at[idx, "Determined Type"] = result["determined_type"]
-        out.at[idx, "Decision"] = result["decision"]
+        out.at[idx, "Decision"] = result["decision_display"]
         out.at[idx, "Confidence"] = result["confidence"]
         out.at[idx, "Evidence Tier Used"] = result["evidence_tier_used"]
         out.at[idx, "Reasoning"] = result["reasoning"]
         out.at[idx, "Sources"] = "; ".join(result.get("sources", []))
-        out.at[idx, "Archetype Flag"] = result["archetype_flag"]
     return out
 
 
 def compute_summary(results_by_id: dict) -> dict:
     total = len(results_by_id)
     by_decision = {label: 0 for label in DECISION_LABELS}
-    archetype_counts = {}
     by_rule = {}          # rule -> {"total": n, "override": n}
     by_trigger_count = {}  # count -> {"total": n, "override": n}
     by_signal_type = {}    # signal type -> {"total": n, "override": n}
@@ -755,11 +750,6 @@ def compute_summary(results_by_id: dict) -> dict:
 
     for result in results_by_id.values():
         by_decision[result["decision"]] = by_decision.get(result["decision"], 0) + 1
-        if result.get("archetype_flag"):
-            for tag in result["archetype_flag"].split(";"):
-                tag = tag.strip()
-                if tag:
-                    archetype_counts[tag] = archetype_counts.get(tag, 0) + 1
         if result.get("is_error"):
             errors += 1
 
@@ -783,7 +773,6 @@ def compute_summary(results_by_id: dict) -> dict:
     return {
         "total_properties": total,
         "by_decision": by_decision,
-        "archetype_counts": archetype_counts,
         "override_rate_by_rule": by_rule,
         "override_rate_by_trigger_count": by_trigger_count,
         "override_rate_by_signal_type": by_signal_type,
@@ -815,11 +804,6 @@ def print_summary(label: str, summary: dict):
             "Tier 3 marketing evidence. Tighten the prompt before scaling up (Section 9 QC step)."
         )
     print(f"  Errors: {_pct(summary['errors'], total)}")
-
-    if summary["archetype_counts"]:
-        print("  Archetype flags:")
-        for tag, count in sorted(summary["archetype_counts"].items(), key=lambda kv: -kv[1]):
-            print(f"    {tag}: {_pct(count, total)}")
 
     print("  Override rate by trigger rule:")
     for rule, counts in sorted(summary["override_rate_by_rule"].items()):
