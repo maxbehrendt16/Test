@@ -355,5 +355,86 @@ class BuildOutputDfTests(unittest.TestCase):
         self.assertEqual(out.at[0, "Decision"], "Changed from HOA to APT")
 
 
+class SummaryStatsTests(unittest.TestCase):
+    def _result(self, db_type, determined_type, decision):
+        return {"db_listed_type": db_type, "determined_type": determined_type, "decision": decision}
+
+    def test_confirmed_and_changed_fractions_are_of_total(self):
+        results = {
+            "1": self._result("HOA", "HOA", "Confirmed"),
+            "2": self._result("HOA", "HOA", "Not Enough Info"),
+            "3": self._result("HOA", "APT", "Override"),
+            "4": self._result("COA", "COA", "Confirmed"),
+        }
+        stats = otc.compute_summary_stats(results)
+        self.assertEqual(stats["total"], 4)
+        self.assertEqual(stats["confirmed"], 3)  # Confirmed, Not Enough Info (no real change), Confirmed
+        self.assertEqual(stats["changed"], 1)
+        self.assertEqual(stats["changes_by_transition"], {"HOA to APT": 1})
+
+    def test_transition_breakdown_only_includes_transitions_that_occur(self):
+        results = {
+            "1": self._result("HOA", "APT", "Override"),
+            "2": self._result("HOA", "APT", "Override"),
+            "3": self._result("APT", "COA", "Override"),
+            "4": self._result("COA", "COA", "Confirmed"),
+        }
+        stats = otc.compute_summary_stats(results)
+        self.assertEqual(stats["changed"], 3)
+        self.assertEqual(stats["changes_by_transition"], {"HOA to APT": 2, "APT to COA": 1})
+        self.assertNotIn("APT to HOA", stats["changes_by_transition"])
+        self.assertNotIn("COA to HOA", stats["changes_by_transition"])
+
+    def test_no_changes_produces_empty_transition_breakdown(self):
+        results = {"1": self._result("HOA", "HOA", "Confirmed")}
+        stats = otc.compute_summary_stats(results)
+        self.assertEqual(stats["changed"], 0)
+        self.assertEqual(stats["changes_by_transition"], {})
+
+    def test_summary_df_rows_and_percentages(self):
+        results = {
+            "1": self._result("HOA", "APT", "Override"),
+            "2": self._result("HOA", "APT", "Override"),
+            "3": self._result("APT", "COA", "Override"),
+            "4": self._result("COA", "COA", "Confirmed"),
+        }
+        df = otc.build_summary_stats_df(otc.compute_summary_stats(results))
+        rows = list(df.itertuples(index=False, name=None))
+        self.assertEqual(rows[0], ("Confirmed", "25% (1/4)"))
+        self.assertEqual(rows[1], ("Changed", "75% (3/4)"))
+        # Sub-rows are a fraction of the CHANGED count (3), not the total (4).
+        self.assertIn(("  APT to COA", "33% (1/3)"), rows)
+        self.assertIn(("  HOA to APT", "67% (2/3)"), rows)
+
+    def test_write_output_xlsx_puts_summary_sheet_first(self):
+        from openpyxl import load_workbook
+
+        df = pd.DataFrame([
+            {"RecordID": "1", "Master_Property Name": "A"},
+            {"RecordID": "2", "Master_Property Name": "B"},
+        ])
+        results = {
+            "1": {
+                "db_listed_type": "HOA", "determined_type": "APT", "decision": "Override",
+                "decision_display": "Changed from HOA to APT", "confidence": "Medium",
+                "evidence_tier_used": "Tier 3", "reasoning": "x", "sources": [],
+            },
+            "2": {
+                "db_listed_type": "COA", "determined_type": "COA", "decision": "Confirmed",
+                "decision_display": "Confirmed", "confidence": "High",
+                "evidence_tier_used": "Tier 1", "reasoning": "y", "sources": [],
+            },
+        }
+        out_df = otc.build_output_df(df, results)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "results.xlsx")
+            otc.write_output(out_df, results, path)
+            wb = load_workbook(path)
+            self.assertEqual(wb.sheetnames, ["Summary", "Results"])
+            summary_df = pd.read_excel(path, sheet_name="Summary")
+            self.assertEqual(summary_df.loc[summary_df["Metric"] == "Confirmed", "Value"].iloc[0], "50% (1/2)")
+            self.assertEqual(summary_df.loc[summary_df["Metric"] == "Changed", "Value"].iloc[0], "50% (1/2)")
+
+
 if __name__ == "__main__":
     unittest.main()
