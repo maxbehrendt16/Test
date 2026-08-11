@@ -185,14 +185,21 @@ change), per whichever normally applies.
      wouldn't have started. There's no single universal cutoff — use judgment based on the
      property's type and typical local resale patterns, but a property still within roughly its
      first several years after construction/recording should not qualify.
+   Check `Master_Original Build Year` (fall back to `Master_Most Recent Build Year` — there is no
+   single `Master_Build Year` column in the export). A confirmed multi-decade absence of sales
+   history from research is itself strong evidence this condition is met even if the build-year
+   field is blank or unclear — don't let a missing build year override a well-established research
+   finding, and don't let uncertainty here bleed into condition 4 below; evaluate each independently.
 4. **At least one internal DB field corroborates single ownership.** The clearest version of this:
    a null `Master_Monthly Association Fees` on a property old and large enough that a real HOA/COA
    of that size would almost always have a fee on file by now — a true association this size with no
    fee ever recorded anywhere in the DB is itself a signal that no association actually exists to
-   charge one. Other DB fields (e.g., a single `Owner`/`Cleaned Owner` value with no per-unit
-   variation, a populated `Bulk Flag`/`Bulk Package Type` at or near 100%) can also satisfy this
-   condition — the point is that the DB's own data, not just external search results, independently
-   points toward single ownership.
+   charge one. **A null/blank fee field, by itself, is sufficient for this condition** — it does not
+   need a second internal field on top of it, and it does not need condition 3 to be independently
+   airtight first; each condition stands on its own evidence. Other DB fields (e.g., a single
+   `Owner`/`Cleaned Owner` value with no per-unit variation, a populated `Bulk Flag`/`Bulk Package
+   Type` at or near 100%) can also satisfy this condition — the point is that the DB's own data, not
+   just external search results, independently points toward single ownership.
 5. **No structural edge case (§5.7) explains the pattern instead.** Rule this out explicitly before
    relying on the exception: a housing cooperative, a condo-hotel/timeshare, a senior/age-restricted
    or student community, or an investor/institutional *bulk-ownership* COA/HOA (§5.4 — where the
@@ -277,6 +284,22 @@ Some properties won't cleanly fit APT/COA/HOA:
   structure independently.
 - **Age-restricted or master-planned communities with a name like "The Apartments at [Community]"**
   used purely as a marketing brand for what's legally a COA — check the actual declaration.
+
+**Amendment: structural edge cases are never overridden, full stop.** (Housing cooperatives,
+condo-hotels/timeshares, manufactured home communities, and senior/student housing where the naming
+convention doesn't reflect true legal structure.) Once one of these is identified, the decision is
+always **Confirmed** and `determined_type` is always the existing DB label — never pick whichever
+of APT/COA/HOA seems like the closest technical fit and override to it. This is enforced in code, not
+just requested in the prompt: the tool's `structural_edge_case` output field, once set to anything
+other than `none`, forces `decision` back to `Confirmed` and `determined_type` back to the DB label
+regardless of what else the model submits. This amendment exists because of a real failure: a
+property was correctly identified as a housing cooperative, its monthly association fees were cited
+as evidence of that co-op structure, and then the *same* fees were used to justify overriding the
+label to APT anyway — exactly backwards, since a monthly fee is evidence *against* a property being
+a true rental APT (dues are an APT disqualifier), never evidence *for* one. Mixed-use/multi-component
+developments (§5.5) are explicitly **not** covered by this amendment — that's a scope-identification
+problem, not a taxonomy misfit, and once the specific component is confirmed it should be decided
+normally.
 
 ### 5.8 Fee field miscoding
 "Has Fees" as a trigger assumes the fee field is populated correctly. Before treating fee presence

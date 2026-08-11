@@ -76,6 +76,20 @@ CONFIDENCE_LABELS = ["High", "Medium", "Low"]
 YES_NO_LABELS = ["yes", "no"]
 YES_NO_NA_LABELS = ["yes", "no", "not_applicable"]
 
+# §5.7's structural edge cases -- these are always left as-is (Confirmed, DB label unchanged),
+# enforced in code by _enforce_structural_edge_case_guardrail() regardless of what the model
+# submits for decision/determined_type. Mixed-use/multi-component developments are deliberately
+# NOT included: that's a scope-identification problem (which specific component does the DB
+# record refer to), not a taxonomy misfit, and once resolved should be decided normally.
+STRUCTURAL_EDGE_CASE_LABELS = [
+    "none",
+    "housing_cooperative",
+    "condo_hotel_timeshare",
+    "manufactured_home_community",
+    "senior_or_student_housing",
+    "other",
+]
+
 # Spec §4.1: a bounded, narrow exception allowing an override on Tier 3 evidence alone --
 # for the investor-owned-single-family-rental-community-mislabeled-as-HOA pattern, where no
 # Tier 1/2 evidence can ever exist because no individual unit has ever been deeded. Gated by
@@ -156,15 +170,44 @@ name, nothing in Attempt 2's targeted searches pointing the other way.
 3. **The property is old enough that absence of individual-sale history is actually informative** \
 -- this excludes anything that could plausibly still be in the §5 lease-up phase or was built/ \
 recorded recently. Long-standing absence of sales is a real signal; absence of sales on a brand-new \
-property means nothing yet.
+property means nothing yet. Check `Master_Original Build Year` (fall back to `Master_Most Recent \
+Build Year`) -- a property built 5+ years ago clears this condition; do not treat missing/unclear \
+build-year data as an automatic fail here if the other evidence (36 years of zero sales history, \
+etc.) already independently establishes the property is long-standing.
 4. **At least one internal DB field corroborates single ownership** -- e.g. a null `Master_Monthly \
 Association Fees` on a property old and large enough that a real HOA/COA of that size would almost \
 always have a fee on file. A concentrated `Owner`/`Cleaned Owner` value or a `Bulk Flag`/`% Bulk \
-Overall` near 100% can also satisfy this.
+Overall` near 100% can also satisfy this. **A null/blank fee field, by itself, is sufficient for \
+this condition** -- do not treat it as merely "weak" or hold out for a second internal field on top \
+of it; the point of this condition is that the DB's own data is consistent with no association \
+existing at all, and an absent fee on an old, sizeable property is exactly that.
 5. **No structural edge case explains the pattern instead** -- not a housing cooperative, \
 condo-hotel, senior/age-restricted community, or an investor bulk-owned COA/HOA (§4 above) where \
 individual parcels still legally exist even though one owner holds most of them. If any of those \
-plausibly fits at least as well, this exception does not apply.
+plausibly fits at least as well, this exception does not apply -- and if it's a genuine structural \
+edge case rather than a masquerading APT, use the `structural_edge_case` field per failure mode 7 \
+below instead of the Tier-3 exception.
+
+**Evaluate all five conditions independently.** They do not gate each other -- a strong answer on \
+one condition (e.g. 36 years of zero sales history clearly satisfying condition 3) does not need \
+extra corroboration before you can also credit condition 4 on its own separate evidence (e.g. a \
+null fee field), and vice versa. Don't let uncertainty on one condition bleed into a vague, \
+generalized "insufficient corroboration overall" conclusion that effectively fails every condition \
+at once -- check each one on its own specific evidence and be precise in your reasoning about \
+exactly which condition(s), if any, aren't met.
+
+**Worked example (this is a real, previously-mishandled case -- get this one right):** an HOA-typed \
+property named "[X] Apartments," 80 units across 40 buildings, one leasing company, `Master_Monthly \
+Association Fees` is blank, built decades ago with zero MLS/deed sales history ever found for any \
+unit. Three independent, non-syndicated Tier 3 sources (the property's own site, an aggregator, and \
+a review site) agree on single ownership and one leasing office. Attempt 2 finds no contradicting \
+evidence and no declaration/HOA covenant on file. This satisfies all five conditions -- 3+ sources \
+(1), no contradicting evidence (2), decades old so the zero-sales history is meaningful (3), the \
+blank fee field alone corroborates single ownership on a property this old and large (4), and \
+nothing suggests a co-op/condo-hotel/bulk-owned-COA explanation instead (5) -- so this resolves to \
+**Override -> APT, confidence Medium**, not Not Enough Info. Do not decline to invoke the exception \
+here on the theory that "no single field is decisive on its own" -- each condition already has its \
+own sufficient evidence; that IS what the exception is for.
 
 If all five hold: the override is allowed, but **confidence is capped at Medium, never High** -- \
 High stays reserved for real Tier 1/2 evidence. Say so explicitly in your reasoning (e.g. "Tier-3 \
@@ -197,15 +240,30 @@ specific address/parcel the DB record refers to before classifying the whole nam
 6. **Stale or renamed properties.** If a name-based search returns nothing or inconsistent results, \
 re-search by address and check whether the property has been renamed (common after condo \
 conversions) before concluding evidence is unavailable.
-7. **Structural edge cases outside APT/COA/HOA:** condo-hotels/timeshares (legal condo declaration \
-but fractional/hotel-style operation), manufactured home communities (own the structure, lease the \
-land), senior/student housing (colloquially "apartments" regardless of legal structure -- check \
-structure independently, don't let the naming convention drive the call), and age-restricted/ \
-master-planned communities using "Apartments" purely as a marketing brand for what's legally a COA. \
-Housing cooperatives (individually-sold shares in a corporation, often "... Apartment Corp." or \
-"... Apartments, Inc." in the Northeast) are a recurring pattern that looks like a rental APT from \
-aggregator listings but is legally a COA-like structure -- call this out explicitly in your \
-reasoning rather than treating "Apartments" in the name as confirming.
+7. **Structural edge cases outside APT/COA/HOA -- these are NEVER overridden, full stop.** \
+condo-hotels/timeshares (legal condo declaration but fractional/hotel-style operation), \
+manufactured home communities (own the structure, lease the land), senior/student housing \
+(colloquially "apartments" regardless of legal structure -- check structure independently, don't \
+let the naming convention drive the call), and age-restricted/master-planned communities using \
+"Apartments" purely as a marketing brand for what's legally a COA. (Mixed-use/multi-component \
+developments are a different problem -- see failure mode 5 above -- and are NOT covered by this \
+rule: once you've confirmed which specific component the DB record refers to, decide normally.) \
+Housing cooperatives (individually-sold shares in a corporation, often "... \
+Apartment Corp." or "... Apartments, Inc." in the Northeast) are a recurring pattern that looks \
+like a rental APT from aggregator listings but is legally a COA-like structure. **If you identify \
+any of these, set the `structural_edge_case` field to name it and leave `decision` as `Confirmed` \
+and `determined_type` as the existing DB label** -- do not try to pick whichever of APT/COA/HOA \
+seems like the closest technical fit and change the label to it. The code enforces this \
+regardless of what you submit for decision/determined_type once `structural_edge_case` is set, so \
+there's no benefit in overriding anyway; submitting a decision consistent with your own \
+identification just keeps the output legible. A real failure this guards against: a property was \
+correctly identified as a housing cooperative, its monthly association fees were cited as evidence \
+of that co-op structure, and then the *same* fees were used to justify overriding the label to APT \
+-- exactly backwards. **A monthly association fee is evidence AGAINST a property being a true \
+rental APT (dues are an APT disqualifier), never evidence FOR one.** If you catch yourself about \
+to write that a fee supports an APT conclusion, that's a sign you have the polarity backwards -- \
+stop and reconsider, and if the property is actually some kind of edge case (like a co-op), name it \
+in `structural_edge_case` and leave the label alone instead.
 8. **Fee field miscoding.** Before treating fee presence as COA/HOA evidence, sanity-check it isn't \
 a one-time deposit, a data-entry artifact, or a fee belonging to a different nearby property from a \
 prior dedup issue in the CLP DB. If the fee amount/structure looks legitimate and recurring, treat \
@@ -238,13 +296,14 @@ entity's name and type.
 crawling many pages. If a property cannot be resolved with confidence after Attempt 2, stop and \
 label it Not Enough Info rather than digging indefinitely.
 
-**There is no separate decision or type for a structural edge case (condo-hotel/timeshare, \
-manufactured home community, senior/student housing, mixed-use development, housing cooperative, \
-etc.).** Still pick Confirmed/Override/Not Enough Info and a best-fit APT/COA/HOA determined_type as \
-above -- just say plainly in your 1-2 sentence reasoning that the property is this kind of edge \
-case and why that makes the label a reasonable-but-imperfect fit (e.g. "This is a condo-hotel with \
-fractional ownership; COA is the closest fit of the three categories but doesn't fully capture the \
-timeshare structure.").
+**A structural edge case (condo-hotel/timeshare, manufactured home community, senior/student \
+housing, housing cooperative, etc. -- failure mode 7 above) always resolves to `decision: \
+Confirmed` and `determined_type` equal to the existing DB label -- never Override, no matter how \
+confidently the evidence points to a different one of the three categories being a "better fit."** \
+Set `structural_edge_case` to name which kind, and say so in your 1-2 sentence reasoning (e.g. \
+"This is a housing cooperative; DB label kept as-is per policy for structural edge cases."). The \
+code enforces the DB label regardless of what you submit for decision/determined_type once this \
+field is set, so don't spend effort picking a "closest fit" category to change it to.
 
 ## Confidence
 
@@ -280,8 +339,9 @@ SUBMIT_SCHEMA = {
             "description": (
                 "Your concluded ownership type -- always one of APT/COA/HOA, never a separate "
                 "'edge case' value. Same as the DB label for Confirmed/Not Enough Info; the "
-                "corrected value for Override. For a structural edge case, pick whichever of the "
-                "three is the closest fit and explain the mismatch in reasoning instead."
+                "corrected value for Override. For a structural edge case (structural_edge_case != "
+                "'none'), set this to the existing DB label -- the code forces it back to the DB "
+                "label regardless, so don't spend effort picking a 'closest fit' category."
             ),
         },
         "decision": {
@@ -302,15 +362,29 @@ SUBMIT_SCHEMA = {
             "description": (
                 "STRICT LIMIT: 1-2 sentences, plain language -- this is read at scale, not a "
                 "research memo. State the specific facts found and how they support the decision. "
-                "If this property is a structural edge case (condo-hotel, manufactured home "
-                "community, senior/student housing, mixed-use development, housing cooperative, "
-                "etc.), say so explicitly here -- there is no separate field for it."
+                "If this property is a structural edge case, say so and name which kind -- that's "
+                "in addition to (not instead of) setting the structural_edge_case field below."
             ),
         },
         "sources": {
             "type": "array",
             "items": {"type": "string"},
             "description": "Specific URLs or named sources used. Empty list if none.",
+        },
+        "structural_edge_case": {
+            "type": "string",
+            "enum": STRUCTURAL_EDGE_CASE_LABELS,
+            "description": (
+                "'none' unless this property is a housing cooperative, condo-hotel/timeshare, "
+                "manufactured home community, or senior/student housing where the naming convention "
+                "doesn't reflect true legal structure. Setting this to anything other than 'none' "
+                "forces decision to Confirmed and determined_type to the existing DB label in code, "
+                "REGARDLESS of what you submit for those two fields -- so if you identify one of "
+                "these, don't also try to change the label; it won't take effect. Do NOT use this "
+                "for mixed-use/multi-component developments (that's a different problem -- identify "
+                "the right component and decide normally) or for a property you simply couldn't "
+                "resolve (that's Not Enough Info, not an edge case)."
+            ),
         },
         "tier3_exception_invoked": {
             "type": "string",
@@ -373,6 +447,7 @@ SUBMIT_SCHEMA = {
     },
     "required": [
         "determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources",
+        "structural_edge_case",
         "tier3_exception_invoked", "tier3_independent_source_count", "tier3_contradicting_evidence",
         "tier3_property_age_sufficient", "tier3_internal_db_corroboration", "tier3_structural_edge_case_ruled_out",
     ],
@@ -558,7 +633,8 @@ REASONING_FIELDS = [
     ("Master_Building Count_20+", "Building Count (20+ threshold, fallback)"),
     ("Building Count Bin", "Building Count Bin (sanity cross-check)"),
     ("Master_Floor Count", "Floor Count"),
-    ("Master_Build Year", "Build Year (relevant to the §4.1 Tier-3 exception's property-age condition)"),
+    ("Master_Original Build Year", "Original Build Year (relevant to the §4.1 Tier-3 exception's property-age condition)"),
+    ("Master_Most Recent Build Year", "Most Recent Build Year (e.g. a later phase/addition; fallback if Original is blank)"),
     ("Master_Monthly Association Fees", "Monthly Association Fees"),
     ("Leasing Company", "Leasing Company"),
     ("Leasing Company Contact Name", "Leasing Company Contact"),
@@ -698,18 +774,25 @@ def _current_year() -> int:
     return time.localtime().tm_year
 
 
+def _property_build_year(row: dict):
+    """Master_Original Build Year, falling back to Master_Most Recent Build Year when the
+    original is blank -- matches the two build-year columns actually present in the CLP export
+    (there is no single 'Master_Build Year' column)."""
+    return _parse_number(row.get("Master_Original Build Year")) or _parse_number(row.get("Master_Most Recent Build Year"))
+
+
 def _tier3_exception_backstop_failure(row: dict, result: dict):
     """Deterministic cross-checks of the model's self-reported §4.1 conditions against the
     property's own row data, for the two conditions where the data can actually be checked in
     code (age and internal-DB corroboration) -- rather than trusting a bare self-report. Returns
     a human-readable failure reason, or None if no backstop check fires (which does not by
     itself mean the exception is satisfied -- the self-reported fields still gate it)."""
-    build_year = _parse_number(row.get("Master_Build Year"))
+    build_year = _property_build_year(row)
     if build_year is not None:
         age = _current_year() - build_year
         if age < TIER3_EXCEPTION_MIN_PROPERTY_AGE_YEARS:
             return (
-                f"Master_Build Year ({build_year:g}) makes this property only ~{age:g} years old -- "
+                f"Build year ({build_year:g}) makes this property only ~{age:g} years old -- "
                 f"below the {TIER3_EXCEPTION_MIN_PROPERTY_AGE_YEARS}-year floor for ruling out "
                 f"lease-up ambiguity, regardless of what the model self-reported"
             )
@@ -724,6 +807,35 @@ def _tier3_exception_backstop_failure(row: dict, result: dict):
                 f"contradiction with the row's own data"
             )
     return None
+
+
+def _enforce_structural_edge_case_guardrail(db_type: str, result: dict) -> dict:
+    """§5.7's rule, restated as code rather than left to the model's judgment: a structural edge
+    case (housing cooperative, condo-hotel/timeshare, manufactured home community, senior/student
+    housing) always keeps the DB label as-is. A real failure this catches: the model correctly
+    identified a property as a housing cooperative, cited its monthly association fees as evidence
+    of that co-op structure, and then used those SAME fees to justify overriding the label to APT
+    anyway -- exactly backwards, since fees are evidence against a true rental APT, not for one.
+    Rather than trust the model to draw the right conclusion once it's flagged an edge case, this
+    forces decision back to Confirmed and determined_type back to the DB label whenever
+    structural_edge_case is set to anything other than "none", regardless of what else was
+    submitted. Runs before _enforce_tier3_override_guardrail so an edge case can never also sneak
+    through as a Tier-3-exception override."""
+    edge_case = result.get("structural_edge_case")
+    if not edge_case or edge_case == "none":
+        return result
+
+    result = dict(result)
+    if result.get("decision") != "Confirmed" or result.get("determined_type") != db_type:
+        original = result.get("reasoning", "")
+        result["reasoning"] = (
+            f"Automatically kept as-is: flagged as a structural edge case ({edge_case}) per §5.7, "
+            f"and edge cases are never overridden regardless of which category might seem like a "
+            f"closer technical fit. Original reasoning: {original}"
+        )
+    result["decision"] = "Confirmed"
+    result["determined_type"] = db_type
+    return result
 
 
 def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
@@ -829,6 +941,9 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
             raise ValueError(f"Model returned invalid decision label: {result.get('decision')!r}")
         if result.get("determined_type") not in DETERMINED_TYPE_LABELS:
             raise ValueError(f"Model returned invalid determined_type: {result.get('determined_type')!r}")
+        if result.get("structural_edge_case") not in STRUCTURAL_EDGE_CASE_LABELS:
+            raise ValueError(f"Model returned invalid structural_edge_case: {result.get('structural_edge_case')!r}")
+        result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _reconcile_decision_and_type(db_type, result)
         is_error = False
