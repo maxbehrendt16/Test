@@ -93,6 +93,14 @@ STRUCTURAL_EDGE_CASE_LABELS = [
     "other",
 ]
 
+# The §4.1 Tier-3 exception is directional. "to_apt" is the original pattern (an unregistered
+# rental community mislabeled HOA/COA, where no Tier 1/2 evidence can ever exist). "to_coa_hoa"
+# is the reverse (a genuine, legitimately-fee-charging COA/HOA mislabeled APT) -- a fundamentally
+# different, higher-risk case, since a real association is normally a registered legal entity and
+# SHOULD have discoverable Tier 1/2 records; this direction is a deliberate last resort, gated on
+# a genuinely exhausted Attempt 2 (see tier3_reverse_attempt2_exhausted), not a parallel shortcut.
+TIER3_EXCEPTION_DIRECTIONS = ["not_applicable", "to_apt", "to_coa_hoa"]
+
 # Spec §4.1: a bounded, narrow exception allowing an override built on Tier 3 evidence --
 # for the investor-owned-single-family-rental-community-mislabeled-as-HOA pattern, where no
 # Tier 1/2 evidence can ever exist because no individual unit has ever been deeded. Gated by
@@ -167,9 +175,14 @@ same "leasing office" claim is not independent corroboration -- it's one fact re
 Independent corroboration means two *different kinds* of source (e.g. a county registry entry AND \
 a separate GIS parcel record).
 
-## Bounded exception: Tier-3-only override
+## Bounded exception (forward direction, to APT): Tier-3-only override
 
-There is exactly one situation where Tier 3 evidence alone can justify an override: an \
+There are two directions a Tier-3-based override can go -- this section covers the first and more \
+common one (DB says HOA/COA, evidence says APT); the reverse direction (DB says APT, evidence says \
+COA/HOA) is covered in its own section further below, with a different, stricter gate. Set \
+`tier3_exception_direction` to `to_apt` when invoking this one.
+
+There is exactly one situation where Tier 3 evidence alone can justify an override to APT: an \
 **investor-owned single-family rental community mislabeled as HOA.** A single owner holds every \
 lot in a platted subdivision and rents the homes through one leasing office. No individual unit has \
 ever been sold, so no Tier 1/2 evidence (a declaration, a per-unit deed, a registry entry) can ever \
@@ -305,6 +318,58 @@ answer or decline the exception. If you genuinely found and examined 3+ independ
 sources agreeing, set `tier3_independent_source_count` to that real number regardless of how many \
 you chose to list as URLs.
 
+## Bounded exception (reverse direction, to COA/HOA): last-resort Tier-3-corroborated override
+
+This is the mirror image of the exception above, for the opposite mislabeling: DB says APT, but \
+Tier 3 evidence and a real association fee suggest the property is actually a COA/HOA. **This \
+direction is a deliberate last resort, not a parallel shortcut -- it exists ONLY after you've made \
+a genuine, thorough Attempt 2 and found nothing, per the note in the Verification Process above.** \
+Unlike the forward exception, a genuine COA/HOA is normally a registered legal entity, so real \
+Tier 1/2 evidence for it usually SHOULD exist and be findable; this path is for the residual case \
+where a property really does appear to be a COA/HOA but its specific records just aren't indexed \
+online or are otherwise hard to surface. Set `tier3_exception_direction` to `to_coa_hoa`.
+
+**Gate (checked before anything else): `tier3_reverse_attempt2_exhausted` must be `yes`** -- \
+meaning you actually ran the state business registry, county recorder, and tax assessor searches \
+for this specific property (not skipped them) and found no Tier 1/2 evidence either way. If you \
+haven't genuinely made that attempt, this exception does not apply -- go make it, or default to \
+Not Enough Info. Do not set this to `yes` if you simply didn't try.
+
+Once that gate is satisfied, the same four conditions from the forward exception apply, adapted:
+
+1. **3+ independent Tier 3 sources that agree, with a confirmed name/address anchor** -- same \
+requirement as condition 1 above.
+2. **Zero contradicting evidence anywhere** -- nothing suggesting this is genuinely a single-owner \
+rental with no association (e.g. no evidence of one owner holding all units, no indication the \
+"HOA" language is just marketing).
+3. **At least one internal DB field corroborates a real association** -- here, that's the mirror \
+image of the forward exception's condition 3: a **real, non-null, non-zero, recurring** \
+`Master_Monthly Association Fees` value, sanity-checked against §5.8's fee-miscoding pitfall (not a \
+one-time deposit or a data-entry artifact). A legitimate recurring fee, by itself, is sufficient -- \
+same "one field is enough, don't hunt for a reason to reject it" principle as the forward case.
+4. **No structural edge case explains the pattern instead** -- e.g. not a co-op being mistaken for \
+a "regular" COA/HOA in a way that would call for `structural_edge_case` instead of this exception \
+(co-ops still resolve to Confirmed per failure mode 7, regardless of this exception).
+
+If all four hold (this direction does not get the 3-of-4 partial-Tier-1/2-support relaxation -- \
+that relaxation is specifically for the forward direction): **Override -> COA or HOA (whichever the \
+evidence supports), confidence capped at Medium, never High.** Say so explicitly in your reasoning \
+(e.g. "Reverse Tier-3 exception: Attempt 2 exhausted, no Tier 1/2 evidence found; a real recurring \
+fee and 3 independent sources corroborate COA."). The `tier3_internal_db_corroboration` backstop \
+still applies here, direction-aware: if you cite the fee as corroboration but the row's fee field is \
+actually null/zero, that self-contradiction will be caught and downgraded regardless of what else \
+you submit.
+
+**Worked example:** "Casa Gataway Hoa," DB-listed APT, `Master_Monthly Association Fees` is $461 \
+(real, recurring, not miscoded). Multiple Tier 3 sources (a listing site with a confirmed name/ \
+address anchor, plus two others) describe it as a condominium with HOA governance. Attempt 2 -- a \
+real one, including a state business registry search for an incorporated association at this \
+address -- turns up nothing either way. All four conditions hold and the gate is satisfied: this \
+resolves to **Override -> COA, confidence Medium.** Do not stop at "no Tier 1/2 evidence found, so \
+Confirmed APT" without first genuinely attempting Attempt 2 and then explicitly checking this \
+exception's conditions -- that combination (real fee + Tier 3 corroboration + exhausted search) is \
+exactly what this exception is for.
+
 ## Known failure modes -- check every one of these before concluding Override
 
 1. **Marketing language is not ownership structure (most important).** A "leasing office," "apply \
@@ -402,15 +467,27 @@ for Not Enough Info before trying the targeted searches.
 2. **Attempt 2 -- targeted search (only if Attempt 1 is inconclusive or contradicts the DB label):** \
 county tax assessor/GIS parcel lookup for the specific address; county recorder search for a \
 Declaration of Condominium/CC&Rs/HOA covenant; state business registry search for the governing \
-entity's name and type.
+entity's name and type. **Make this a genuine, thorough attempt, not a single quick check --** \
+especially when Tier 3 evidence and a real (non-null, non-zero) `Master_Monthly Association Fees` \
+value both point toward the DB record actually being a COA/HOA that's mislabeled APT. A real, \
+recurring fee is itself a strong signal (dues are an APT disqualifier), and a genuine association \
+is normally a *registered legal entity* -- so unlike the forward exception below, real Tier 1/2 \
+evidence for a true COA/HOA should usually be findable if you actually look. Specifically try the \
+state business registry for an incorporated homeowners/condo association matching the property \
+name or address, not just the county recorder. Don't default to Not Enough Info on this direction \
+without having made that real effort -- see the reverse-direction exception below for what to do \
+if you genuinely exhaust Attempt 2 and still find nothing.
 3. **Decide:**
    - DB label confirmed by evidence found, or no contradicting evidence found -> **Confirmed**
    - Tier 1/2 evidence contradicts the DB label, corroborated by a second independent Tier 1/2 source -> **Override**
-   - All four conditions of the bounded Tier-3-only exception above hold -> **Override** on Tier 3 evidence alone, confidence capped at Medium
-   - Evidence is mixed, thin, Tier-3-only (and the exception above doesn't apply), contradictory, or genuinely ambiguous even after Attempt 2 -> **Not Enough Info** (keep DB label, low confidence). When in doubt, don't change the label.
+   - The bounded Tier-3-only exception's conditions hold (forward direction, to APT) -> **Override** on Tier 3 evidence, confidence capped at Medium
+   - The reverse-direction exception's conditions hold (to COA/HOA, only after a genuinely exhausted Attempt 2) -> **Override** on Tier 3 evidence, confidence capped at Medium
+   - Evidence is mixed, thin, Tier-3-only (and neither exception applies), contradictory, or genuinely ambiguous even after Attempt 2 -> **Not Enough Info** (keep DB label, low confidence). When in doubt, don't change the label.
 4. Prefer a small number of well-targeted searches (2-4 is usually enough) over exhaustively \
-crawling many pages. If a property cannot be resolved with confidence after Attempt 2, stop and \
-label it Not Enough Info rather than digging indefinitely.
+crawling many pages -- except per the Attempt 2 note above, where the situation specifically calls \
+for real effort before giving up. If a property still cannot be resolved with confidence after a \
+genuine Attempt 2, stop and label it Not Enough Info (or use the reverse-direction exception, if \
+its conditions hold) rather than digging indefinitely.
 
 **A structural edge case (condo-hotel/timeshare, manufactured home community, senior/student \
 housing, housing cooperative, etc. -- failure mode 7 above) always resolves to `decision: \
@@ -512,10 +589,34 @@ SUBMIT_SCHEMA = {
             "type": "string",
             "enum": YES_NO_LABELS,
             "description": (
-                "'yes' only if this is an Override built on Tier 3 evidence alone via the bounded "
-                "exception described in your instructions, and you believe all four of its "
-                "conditions hold. 'no' in every other case, including a normal Tier 1/2 Override, "
-                "Confirmed, or Not Enough Info."
+                "'yes' only if this is an Override built on Tier 3 evidence via one of the two "
+                "bounded exceptions described in your instructions (forward, to APT, or reverse, to "
+                "COA/HOA), and you believe enough of its conditions hold. 'no' in every other case, "
+                "including a normal Tier 1/2 Override, Confirmed, or Not Enough Info."
+            ),
+        },
+        "tier3_exception_direction": {
+            "type": "string",
+            "enum": TIER3_EXCEPTION_DIRECTIONS,
+            "description": (
+                "Only meaningful when tier3_exception_invoked is 'yes': 'to_apt' for the forward "
+                "exception (DB says HOA/COA, evidence says APT) or 'to_coa_hoa' for the reverse, "
+                "last-resort exception (DB says APT, evidence says COA/HOA, only after a genuinely "
+                "exhausted Attempt 2). Must be consistent with determined_type ('to_apt' pairs with "
+                "determined_type 'APT'; 'to_coa_hoa' pairs with 'COA' or 'HOA'). 'not_applicable' if "
+                "tier3_exception_invoked is 'no'."
+            ),
+        },
+        "tier3_reverse_attempt2_exhausted": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when tier3_exception_direction is 'to_coa_hoa': 'yes' only if you "
+                "actually ran the state business registry, county recorder, and tax assessor "
+                "searches for this specific property (not skipped them) and found no Tier 1/2 "
+                "evidence either way. This is an absolute gate for the reverse direction -- do not "
+                "set 'yes' if you didn't genuinely make that attempt. 'not_applicable' for the "
+                "forward direction or when tier3_exception_invoked is 'no'."
             ),
         },
         "tier3_independent_source_count": {
@@ -580,11 +681,15 @@ SUBMIT_SCHEMA = {
             "type": "string",
             "description": (
                 "Only meaningful when tier3_exception_invoked is 'yes': name the ONE specific "
-                "internal DB field and value that corroborates single ownership (e.g. "
-                "'Master_Monthly Association Fees is null despite 80 units and 36 years old'). "
-                "One field is enough -- do not describe a search across multiple fields for "
-                "agreement. Must be truthful and specific -- this is cross-checked against the "
-                "property's own row data. Empty string if tier3_exception_invoked is 'no'."
+                "internal DB field and value that corroborates your direction. For 'to_apt' "
+                "(forward): corroborates single ownership, e.g. 'Master_Monthly Association Fees "
+                "is null despite 80 units'. For 'to_coa_hoa' (reverse): corroborates a real "
+                "association, e.g. 'Master_Monthly Association Fees is $461/month, a real recurring "
+                "fee'. One field is enough either way -- do not describe a search across multiple "
+                "fields for agreement. Must be truthful and specific -- this is cross-checked "
+                "against the property's own row data (direction-aware: a forward claim needs a "
+                "null/zero fee, a reverse claim needs a real non-zero one). Empty string if "
+                "tier3_exception_invoked is 'no'."
             ),
         },
         "tier3_structural_edge_case_ruled_out": {
@@ -601,7 +706,8 @@ SUBMIT_SCHEMA = {
     "required": [
         "determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources",
         "structural_edge_case",
-        "tier3_exception_invoked", "tier3_independent_source_count", "tier3_name_address_anchor_confirmed",
+        "tier3_exception_invoked", "tier3_exception_direction", "tier3_reverse_attempt2_exhausted",
+        "tier3_independent_source_count", "tier3_name_address_anchor_confirmed",
         "tier3_partial_tier12_support", "tier3_contradicting_evidence", "tier3_internal_db_corroboration",
         "tier3_structural_edge_case_ruled_out",
     ],
@@ -927,22 +1033,31 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
 # stopped certain failure patterns, so the most safety-critical rules in the spec are also
 # enforced in code as a backstop, not just requested in the prompt.
 
-def _tier3_exception_backstop_failure(row: dict, result: dict):
-    """Deterministic cross-check of the model's self-reported §4.1 condition 3 against the
-    property's own row data -- the one condition where a claim can actually be checked in code --
-    rather than trusting a bare self-report. Returns a human-readable failure reason, or None if
-    no backstop check fires (which does not by itself mean the exception is satisfied -- the
-    self-reported fields still gate it). There is deliberately no property-age backstop here: the
-    §4.1 exception has no minimum-age/build-year requirement."""
+def _tier3_exception_backstop_failure(row: dict, result: dict, direction: str):
+    """Deterministic cross-check of the model's self-reported condition-3 corroboration against
+    the property's own row data -- the one condition where a claim can actually be checked in
+    code -- rather than trusting a bare self-report. Direction-aware: the forward exception
+    ('to_apt') expects a claim of a null/absent fee; the reverse exception ('to_coa_hoa') expects
+    the opposite, a claim of a real recurring fee. Returns a human-readable failure reason, or
+    None if no backstop check fires (which does not by itself mean the exception is satisfied --
+    the self-reported fields still gate it). There is deliberately no property-age backstop here:
+    neither direction has a minimum-age/build-year requirement."""
     corroboration_text = _norm_text(result.get("tier3_internal_db_corroboration")).lower()
-    if "fee" in corroboration_text:
-        fee = _parse_number(row.get("Master_Monthly Association Fees"))
-        if fee is not None and fee != 0:
-            return (
-                f"the model cited a null/absent association fee as internal corroboration, but "
-                f"Master_Monthly Association Fees is actually populated ({fee:g}) -- direct "
-                f"contradiction with the row's own data"
-            )
+    if "fee" not in corroboration_text:
+        return None
+    fee = _parse_number(row.get("Master_Monthly Association Fees"))
+    if direction == "to_apt" and fee is not None and fee != 0:
+        return (
+            f"the model cited a null/absent association fee as internal corroboration, but "
+            f"Master_Monthly Association Fees is actually populated ({fee:g}) -- direct "
+            f"contradiction with the row's own data"
+        )
+    if direction == "to_coa_hoa" and (fee is None or fee == 0):
+        return (
+            "the model cited the association fee as internal corroboration for a COA/HOA "
+            "determination, but Master_Monthly Association Fees is actually null/zero on this "
+            "row -- direct contradiction with the row's own data"
+        )
     return None
 
 
@@ -1010,13 +1125,15 @@ TIER3_EXCEPTION_CONDITIONS_TOTAL = 4
 TIER3_EXCEPTION_MIN_CONDITIONS_WITH_PARTIAL_TIER12 = 3
 
 
-def _tier3_exception_condition_failures(row: dict, result: dict) -> list:
-    """Evaluates each of the §4.1 exception's four conditions independently and returns a list
-    of human-readable failure descriptions for the ones that DON'T hold (empty list if all four
-    hold). Condition 3's evaluation folds in the deterministic backstop cross-check so a
-    self-report contradicted by the property's own data counts as a failure of that condition,
-    not a separate, always-fatal check -- this lets it participate correctly in the
-    partial-Tier-1/2-support relaxation below (still one condition failing, same as any other)."""
+def _tier3_exception_condition_failures(row: dict, result: dict, direction: str) -> list:
+    """Evaluates each of the exception's four conditions independently (identical structure for
+    both directions; only condition 3's polarity differs, handled inside the backstop) and
+    returns a list of human-readable failure descriptions for the ones that DON'T hold (empty
+    list if all four hold). Condition 3's evaluation folds in the deterministic backstop
+    cross-check so a self-report contradicted by the property's own data counts as a failure of
+    that condition, not a separate, always-fatal check -- this lets it participate correctly in
+    the forward direction's partial-Tier-1/2-support relaxation (still one condition failing,
+    same as any other)."""
     failures = []
 
     if len(result.get("sources", [])) < TIER3_EXCEPTION_MIN_LISTED_SOURCES:
@@ -1032,7 +1149,7 @@ def _tier3_exception_condition_failures(row: dict, result: dict) -> list:
     if not _norm_text(result.get("tier3_internal_db_corroboration")):
         failures.append("condition 3: no internal DB field corroboration was cited")
     else:
-        backstop_reason = _tier3_exception_backstop_failure(row, result)
+        backstop_reason = _tier3_exception_backstop_failure(row, result, direction)
         if backstop_reason:
             failures.append(f"condition 3: {backstop_reason}")
 
@@ -1042,17 +1159,33 @@ def _tier3_exception_condition_failures(row: dict, result: dict) -> list:
     return failures
 
 
+def _tier3_exception_direction_valid(determined_type: str, direction: str) -> bool:
+    if direction == "to_apt":
+        return determined_type == "APT"
+    if direction == "to_coa_hoa":
+        return determined_type in ("COA", "HOA")
+    return False
+
+
 def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
     """Section 4's rule -- 'a single Tier 3 source is never sufficient to override the DB
-    label' -- restated as code, with the narrow §4.1 exception also enforced in code rather than
-    left to the model's bare word. An Override resting on Tier 3 evidence (alone, or alongside a
-    single supporting-but-insufficient Tier 1/2 source) is downgraded to Not Enough Info UNLESS
-    the model explicitly invoked the exception (tier3_exception_invoked == "yes") and enough of
-    its four self-reported conditions check out -- all four normally, or at least three when
-    tier3_partial_tier12_support == "yes" (a real, single Tier 1/2 source also points the same
-    way, just not a second one, which is what a normal override would need). Always sets
-    result["tier3_exception_used"] so the batch summary can isolate this highest-risk override
-    path per §4.1/§9."""
+    label' -- restated as code, with two narrow, directional exceptions also enforced in code
+    rather than left to the model's bare word:
+
+    - Forward ('to_apt', §4.1): an unregistered rental community mislabeled HOA/COA, where no
+      Tier 1/2 evidence can ever exist. Normally requires all four self-reported conditions;
+      relaxes to 3-of-4 when tier3_partial_tier12_support == "yes" (a single, insufficient-alone
+      Tier 1/2 source also points the same way).
+    - Reverse ('to_coa_hoa'): a genuine COA/HOA mislabeled APT. A stricter, last-resort path,
+      gated on tier3_reverse_attempt2_exhausted == "yes" (a real Tier 1/2 search attempt that
+      found nothing) before the same four conditions are even considered -- no partial-credit
+      relaxation here, since unlike the forward case a real association should normally have
+      discoverable Tier 1/2 records.
+
+    An Override resting on Tier 3 evidence (alone, or alongside a single supporting-but-
+    insufficient Tier 1/2 source) is downgraded to Not Enough Info unless one of these two paths
+    is satisfied. Always sets result["tier3_exception_used"] so the batch summary can isolate
+    this highest-risk override path per §4.1/§9."""
     result = dict(result)
     result["tier3_exception_used"] = False
 
@@ -1060,17 +1193,36 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
         return result
 
     if result.get("tier3_exception_invoked") != "yes":
-        # Not attempting the §4.1 exception at all. A pure-Tier-3 Override can never stand
-        # without it. A "Mixed"-tier Override that isn't invoking it is instead relying on
+        # Not attempting either exception at all. A pure-Tier-3 Override can never stand
+        # without one. A "Mixed"-tier Override that isn't invoking one is instead relying on
         # ordinary Tier 1/2 corroboration for a normal override -- not this guardrail's concern.
         if result.get("evidence_tier_used") == "Tier 3":
-            return _downgrade_tier3_override(result, "did not invoke the §4.1 bounded exception")
+            return _downgrade_tier3_override(result, "did not invoke either bounded exception")
         return result
 
-    failures = _tier3_exception_condition_failures(row, result)
+    direction = result.get("tier3_exception_direction")
+    if not _tier3_exception_direction_valid(result.get("determined_type"), direction):
+        return _downgrade_tier3_override(
+            result,
+            f"tier3_exception_direction ({direction!r}) is missing or inconsistent with "
+            f"determined_type ({result.get('determined_type')!r})",
+        )
+
+    if direction == "to_coa_hoa" and result.get("tier3_reverse_attempt2_exhausted") != "yes":
+        return _downgrade_tier3_override(
+            result,
+            "the reverse-direction exception requires a genuinely exhausted Attempt 2 (no Tier "
+            "1/2 evidence found despite a real search attempt), which wasn't confirmed",
+        )
+
+    failures = _tier3_exception_condition_failures(row, result, direction)
     passed_count = TIER3_EXCEPTION_CONDITIONS_TOTAL - len(failures)
+    # The 3-of-4 partial-credit relaxation is specific to the forward direction -- a genuine
+    # COA/HOA should normally have discoverable Tier 1/2 records, so the reverse direction
+    # (already gated on an exhausted Attempt 2 above) always needs all four conditions.
     partial_tier12 = (
-        result.get("evidence_tier_used") == "Mixed"
+        direction == "to_apt"
+        and result.get("evidence_tier_used") == "Mixed"
         and result.get("tier3_partial_tier12_support") == "yes"
     )
     required_passes = (
@@ -1086,7 +1238,7 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
         return _downgrade_tier3_override(result, reason)
 
     # Enough conditions genuinely check out -- allow the override, but confidence is capped at
-    # Medium per §4.1 regardless of what the model submitted, even with partial Tier 1/2 support.
+    # Medium regardless of what the model submitted, even with partial Tier 1/2 support.
     if result.get("confidence") == "High":
         result["confidence"] = "Medium"
     result["tier3_exception_used"] = True
@@ -1100,8 +1252,8 @@ def _downgrade_tier3_override(result: dict, failure_reason: str) -> dict:
     result["confidence"] = "Low"
     result["tier3_exception_used"] = False
     result["reasoning"] = (
-        f"Automatically downgraded: the model concluded Override via the §4.1 exception, but "
-        f"{failure_reason}. Original reasoning: {original}"
+        f"Automatically downgraded: the model concluded Override via a bounded Tier-3 exception, "
+        f"but {failure_reason}. Original reasoning: {original}"
     )
     return result
 
@@ -1160,6 +1312,8 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
             raise ValueError(f"Model returned invalid determined_type: {result.get('determined_type')!r}")
         if result.get("structural_edge_case") not in STRUCTURAL_EDGE_CASE_LABELS:
             raise ValueError(f"Model returned invalid structural_edge_case: {result.get('structural_edge_case')!r}")
+        if result.get("tier3_exception_direction") not in TIER3_EXCEPTION_DIRECTIONS:
+            raise ValueError(f"Model returned invalid tier3_exception_direction: {result.get('tier3_exception_direction')!r}")
         result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_coop_mention_guardrail(db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
