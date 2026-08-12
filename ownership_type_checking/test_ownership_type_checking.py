@@ -842,5 +842,95 @@ class MasterSourceBreakdownTests(unittest.TestCase):
         return {"db_listed_type": db_type, "determined_type": determined_type, "decision": decision}
 
 
+class HoaCoaNamingMatchTests(unittest.TestCase):
+    """§4.2-adjacent tiebreaker: once an APT -> COA/HOA override already stands, align
+    determined_type to an HOA/COA keyword in the property's own name, since naming is the more
+    reliable signal for which of the two once the override itself is already justified."""
+
+    def test_hoa_named_property_overridden_to_coa_is_corrected_to_hoa(self):
+        row = {"Master_Property Name": "Willow Creek Homeowners Association"}
+        result = {"decision": "Override", "determined_type": "COA", "reasoning": "Tier 3 evidence supports a condo/HOA structure."}
+        fixed = otc._enforce_hoa_coa_naming_match(row, "APT", result)
+        self.assertEqual(fixed["determined_type"], "HOA")
+
+    def test_coa_named_property_overridden_to_hoa_is_corrected_to_coa(self):
+        row = {"Master_Property Name": "Riverside Condos"}
+        result = {"decision": "Override", "determined_type": "HOA", "reasoning": "Tier 3 evidence supports a condo/HOA structure."}
+        fixed = otc._enforce_hoa_coa_naming_match(row, "APT", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+
+    def test_matching_name_and_type_is_left_alone(self):
+        row = {"Master_Property Name": "Willow Creek HOA"}
+        result = {"decision": "Override", "determined_type": "HOA", "reasoning": "Matches."}
+        fixed = otc._enforce_hoa_coa_naming_match(row, "APT", result)
+        self.assertEqual(fixed["determined_type"], "HOA")
+
+    def test_name_with_no_hoa_or_coa_keyword_leaves_models_pick_alone(self):
+        row = {"Master_Property Name": "Casa Gataway"}
+        result = {"decision": "Override", "determined_type": "COA", "reasoning": "Tier 3 evidence."}
+        fixed = otc._enforce_hoa_coa_naming_match(row, "APT", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+
+    def test_name_with_both_keywords_is_ambiguous_and_leaves_models_pick_alone(self):
+        row = {"Master_Property Name": "Lakeside Condo Homeowners Community"}
+        result = {"decision": "Override", "determined_type": "HOA", "reasoning": "Tier 3 evidence."}
+        fixed = otc._enforce_hoa_coa_naming_match(row, "APT", result)
+        self.assertEqual(fixed["determined_type"], "HOA")
+
+    def test_does_not_apply_when_db_type_is_not_apt(self):
+        # Only the APT -> COA/HOA direction is in scope here -- a COA<->HOA override starting
+        # from a non-APT DB label (or a forward to_apt override) is untouched by this check.
+        row = {"Master_Property Name": "Willow Creek Homeowners Association"}
+        result = {"decision": "Override", "determined_type": "COA", "reasoning": "Tier 1/2 evidence."}
+        fixed = otc._enforce_hoa_coa_naming_match(row, "HOA", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+
+    def test_does_not_apply_to_confirmed_decisions(self):
+        row = {"Master_Property Name": "Willow Creek Homeowners Association"}
+        result = {"decision": "Confirmed", "determined_type": "APT", "reasoning": "No contradicting evidence found."}
+        fixed = otc._enforce_hoa_coa_naming_match(row, "APT", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+
+    def test_does_not_apply_when_override_target_is_apt(self):
+        row = {"Master_Property Name": "Willow Creek Homeowners Association"}
+        result = {"decision": "Override", "determined_type": "APT", "reasoning": "Tier 3 corroborated override."}
+        fixed = otc._enforce_hoa_coa_naming_match(row, "HOA", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+
+    def test_casa_gataway_style_override_corrected_to_named_type_end_to_end(self):
+        # End-to-end regression: the model settles on COA via the §4.2 reverse-direction
+        # exception, but the property is actually named as an HOA -- the naming tiebreaker
+        # should correct the final label without disturbing the override itself.
+        row = {
+            "RecordID": "912345",
+            "Master_Property Name": "Casa Gataway Hoa",
+            "Master_Ownership Type": "APT",
+            "Master_Monthly Association Fees": "461",
+        }
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": "Tier-3 corroborated reverse override: multiple listings and a real fee support a condo/HOA structure.",
+            "sources": ["https://realtor.com/x", "https://zillow.com/x", "https://homes.com/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_coa_hoa",
+            "tier3_reverse_attempt2_exhausted": "yes",
+            "tier3_independent_source_count": 3,
+            "tier3_name_address_anchor_confirmed": "yes",
+            "tier3_partial_tier12_support": "not_applicable",
+            "tier3_contradicting_evidence": "no",
+            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is populated ($461)",
+            "tier3_structural_edge_case_ruled_out": "yes",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Override")
+        self.assertEqual(result["determined_type"], "HOA")
+        self.assertEqual(result["decision_display"], "Changed from APT to HOA")
+
+
 if __name__ == "__main__":
     unittest.main()
