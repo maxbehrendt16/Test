@@ -53,6 +53,46 @@ to counteract that tendency structurally, not just via a "be careful" instructio
   not edge cases. If evidence is thin, mixed, or Tier 3-only, the correct output is "keep the DB
   label, low confidence" rather than a forced call in either direction.
 
+### 2.1 Functional classification overrides legal structure
+
+**The DB's ownership type field exists to describe who we'd need to contact or sell to as an
+internet provider, not to record legal structure.** A recorded condo declaration or HOA covenant
+establishes the legal structure, but it does not by itself determine the correct DB label. If a
+building is legally a condominium but every unit is currently owned and controlled by one
+company, we'd be pitching that one company — not a board, not individual owners — so that
+building should be labeled APT even though it's legally a condo. Conversely, if even one unit is
+individually owned, there's a real association/individual-owner relationship we'd have to
+navigate, so it should stay COA/HOA, no matter how few units that is.
+
+**Rule A — Functional APT override.** If a property carries a legal condominium or HOA
+designation, but currently (a) 100% of units are owned by a single entity, (b) there is one
+centralized leasing/management contact for the whole building, and (c) no unit is currently
+individually owned or listed for individual sale — classify as APT, regardless of the legal
+declaration. Tag this with the archetype flag **"Legally Condo, Functionally Apartment."**
+
+**Rule B — Any individual ownership keeps COA/HOA.** If even one unit is currently individually
+owned (i.e., held by a party other than the bulk owner, whether or not it's currently occupied,
+rented, or vacant), the property stays COA or HOA, never APT — regardless of what fraction of the
+building is bulk-owned. A single individual owner means an association relationship exists that
+we'd have to work through.
+
+**This is a required verification step, not an optional one:** before finalizing any decision,
+explicitly check current ownership concentration (single owner vs. any individual owners), not
+just legal declaration status — see §6. Neither rule applies (`ownership_concentration`:
+`not_applicable`) when this can't be clearly established, or when the property's legal type and
+functional reality already agree.
+
+**Neither rule applies when a structural edge case (§5.7) is in play** — a housing cooperative,
+condo-hotel/timeshare, manufactured home community, or senior/student housing is resolved by
+"never override" regardless of ownership concentration, and functional bulk-ownership evidence is
+never a reason to reopen that policy.
+
+Note this sharpens, rather than contradicts, §5.4's "investor/institutional bulk ownership"
+pitfall: §5.4 covers the common case of *most* (not all) units bulk-owned, where the legal
+structure is still COA/HOA regardless (Rule B). Rule A is the narrower, literal-100% case — only
+when there is no individual owner or listing anywhere in the building — where the legal
+declaration is overridden by the functional reality instead.
+
 ## 3. The six trigger rules — and what each one actually implies
 
 The ~25.8K properties come from six distinct rules, not one. They carry very different
@@ -141,6 +181,19 @@ rather than two naming rules that likely share the same root cause).
 - MLS / Zillow / Realtor.com listing presence, individual sale histories
 - Property's own marketing/leasing website ("apply now," "leasing office," "floor plans")
 - General web search snippets, forum mentions, local news human-interest coverage
+
+**A past individual sale record is evidence of historical ownership and legal structure, not proof
+of current ownership.** Some buildings convert from individually-owned condos back into
+single-owner rentals via a bulk buyout of the whole building by one investor/entity. Before
+treating a past individual sale as current evidence of COA/HOA status (per §2.1's Rule B):
+- Check whether the sale is recent, or whether more recent records (county parcel/assessor data,
+  current listings) show the same unit — or the whole building — now held under one owner name.
+- If county records show a single owner name across all or nearly all units despite historical
+  individual sale records, treat this as a likely reverse conversion and apply §2.1's Rule A
+  instead. Tag this with the archetype flag **"Reverse Conversion — Formerly Individually Owned,
+  Now Bulk-Owned."**
+- If even one unit's most recent record still shows a distinct individual owner, §2.1's Rule B
+  applies and the property stays COA/HOA.
 
 **Rule: an override requires at least one Tier 1 or Tier 2 source, corroborated by a second
 independent source of Tier 1 or 2.** Tier 3 evidence can support a decision already justified by
@@ -364,7 +417,11 @@ Distinct from 5.1 above: some COA/HOA communities have a majority of units owned
 investor or fund and rented as a block, sometimes even marketed under a single "community" leasing
 brand. This can look exactly like a single-owner APT from a marketing search, but the underlying
 legal structure (recorded declaration, individual parcel IDs even if commonly held) is still COA/HOA.
-Parcel-level records (Tier 2) are the way to distinguish this from a true APT.
+Parcel-level records (Tier 2) are the way to distinguish this from a true APT: if even one unit's
+parcel record shows a distinct individual owner, that's §2.1's Rule B — stays COA/HOA no matter how
+small that one unit is relative to the rest. **This section is specifically the *majority-but-not-
+all* case.** Only when it's genuinely ALL units, with no individual owner or listing anywhere, does
+§2.1's Rule A apply and classify it functionally as APT instead, despite the legal declaration.
 
 ### 5.5 Mixed-use / multi-component developments
 A single branded development may contain multiple legally distinct components — e.g., an apartment
@@ -474,7 +531,22 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
    inconclusive — this is the search most likely to surface the Tier 1/2 evidence this exact
    scenario needs, and it's the one most likely to be skipped or rushed. This thoroughness is what
    §4.2's `tier3_reverse_attempt2_exhausted` gate is checking for.
-3. **Decision:**
+3. **Required check, before finalizing anything — current ownership concentration, per §2.1:**
+   regardless of legal declaration status, explicitly determine whether (a) 100% of units are
+   currently owned by a single entity with one centralized leasing/management contact and no
+   individually-owned or individually-listed unit (§2.1's Rule A — functional APT), or (b) even one
+   unit is currently individually owned (§2.1's Rule B — stays COA/HOA). A past individual sale
+   record alone doesn't settle this — check recency first (see the reverse-conversion note in §4)
+   before concluding either way. Skip this check only if you genuinely can't establish either
+   pattern, or the property's legal type and functional reality already agree.
+4. **Decision:**
+   - §2.1's Rule A applies (100% single-owned, centrally managed, no individual owner/listing) →
+     **Override — APT** (or **Confirmed** if the DB already says APT), regardless of a legal
+     condo/HOA declaration, archetype flag "Legally Condo, Functionally Apartment" (plus "Reverse
+     Conversion — Formerly Individually Owned, Now Bulk-Owned" if reached via a stale-sale
+     correction per §4)
+   - §2.1's Rule B applies (even one unit currently individually owned) → stays **COA/HOA**, never
+     APT, regardless of what fraction of the building is bulk-owned
    - DB label confirmed by evidence found, or no contradicting evidence found → **Confirmed**
    - Tier 1/2 evidence contradicts DB label, corroborated by a second independent Tier 1/2 source →
      **Override — [correct type]**
@@ -490,7 +562,7 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
      development) → **Not Enough Info — default to no change** (keep DB label, flagged
      low-confidence for optional human review). **When in doubt, don't change the label.**
    - Property doesn't fit the three-way taxonomy → **Structural Edge Case — [description]**
-4. Every decision gets a **short, 1–2 sentence** plain-language reasoning and the specific evidence
+5. Every decision gets a **short, 1–2 sentence** plain-language reasoning and the specific evidence
    tier(s) relied on, plus source URLs. Keep it concise — this field is read at scale, not as a
    research memo.
 
@@ -509,8 +581,9 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
 | `evidence_tier_used` | Tier 1 / Tier 2 / Tier 3 / Mixed |
 | `reasoning` | **1–2 sentences**, plain language. Short enough to scan at scale — not a research memo. |
 | `sources` | List of source URLs |
-| `archetype_flag` | One of the failure-mode tags from §5 if applicable (e.g., "Marketing Language Trap," "Lease-Up Phase," "Investor Bulk Ownership," "Mixed-Use Development," "Stale/Renamed," "Structural Edge Case," "Fee Miscoding"), or "Tier-3 Corroborated Override" per §4.1 or §4.2 |
+| `archetype_flag` | One of the failure-mode tags from §5 if applicable (e.g., "Marketing Language Trap," "Lease-Up Phase," "Investor Bulk Ownership," "Mixed-Use Development," "Stale/Renamed," "Structural Edge Case," "Fee Miscoding"), or "Tier-3 Corroborated Override" per §4.1 or §4.2, or "Legally Condo, Functionally Apartment" / "Reverse Conversion — Formerly Individually Owned, Now Bulk-Owned" per §2.1/§4 |
 | `tier3_exception_direction` | For a "Tier-3 Corroborated Override": `to_apt` (§4.1, forward) or `to_coa_hoa` (§4.2, reverse) |
+| `ownership_concentration` | Per §2.1: `single_owner_full_bulk` (Rule A), `individual_owner_present` (Rule B), or `not_applicable` |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -571,6 +644,13 @@ general QC bar applied to the rest of the tool. Within this sample, pay particul
 §4.2 (reverse-direction, `to_coa_hoa`) cases specifically — they're the newer, stricter, and
 structurally higher-risk of the two directions (see §4.2's rationale), so their accuracy deserves
 independent scrutiny rather than being folded into the §4.1 track record.
+
+**Also oversample "Legally Condo, Functionally Apartment" cases (§2.1's Rule A) specifically**,
+for the same reason — it's a new mechanism that overrides a legal declaration based on current
+ownership concentration, and needs to demonstrate real-world accuracy on its own before being
+trusted at full volume. Give particular scrutiny to any case also tagged "Reverse Conversion" —
+those rest on correctly distinguishing a stale individual-sale record from current ownership,
+which is the part of this rule most likely to be gotten wrong.
 
 ## 10. Input file format
 

@@ -263,6 +263,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_structural_edge_case_ruled_out": "not_applicable",
             "tier3_exception_direction": "not_applicable",
             "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
             result = otc.process_property(None, "gpt-4o", row, {})
@@ -297,6 +299,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
             result = otc.process_property(None, "gpt-4o", row, {})
@@ -332,6 +336,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is populated ($461), consistent with an HOA",
             "tier3_structural_edge_case_ruled_out": "yes",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
             result = otc.process_property(None, "gpt-4o", row, {})
@@ -366,6 +372,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is populated ($461), consistent with an HOA",
             "tier3_structural_edge_case_ruled_out": "yes",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
             result = otc.process_property(None, "gpt-4o", row, {})
@@ -391,6 +399,8 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
         }
         result.update(overrides)
         return result
@@ -924,12 +934,259 @@ class HoaCoaNamingMatchTests(unittest.TestCase):
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is populated ($461)",
             "tier3_structural_edge_case_ruled_out": "yes",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Override")
         self.assertEqual(result["determined_type"], "HOA")
         self.assertEqual(result["decision_display"], "Changed from APT to HOA")
+
+
+class FunctionalOwnershipGuardrailTests(unittest.TestCase):
+    """§2.1: the DB label reflects who we'd have to sell to, not legal structure. Rule A
+    ('single_owner_full_bulk') forces APT despite a legal condo/HOA declaration; Rule B
+    ('individual_owner_present') keeps COA/HOA the moment even one unit is individually owned."""
+
+    def test_rule_a_forces_apt_despite_legal_coa_label(self):
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "COA",
+            "reasoning": "Legally a condo, but 100% single-owned with one leasing office.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertTrue(fixed["functional_apt_override_used"])
+        self.assertFalse(fixed["reverse_conversion_used"])
+
+    def test_rule_a_with_reverse_conversion_is_tracked_separately(self):
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "HOA",
+            "reasoning": "Historical individual sales, but county records now show one owner.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "yes",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("HOA", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertTrue(fixed["functional_apt_override_used"])
+        self.assertTrue(fixed["reverse_conversion_used"])
+
+    def test_rule_a_already_correct_is_left_alone_but_still_tracked(self):
+        # The model already got it right on its own -- no correction needed, but this is still
+        # the "Legally Condo, Functionally Apartment" pattern and should still be tracked.
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "confidence": "High",
+            "reasoning": "100% single-owned, no individual sales.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "no",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("HOA", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertTrue(fixed["functional_apt_override_used"])
+        self.assertFalse(fixed["reverse_conversion_used"])
+
+    def test_rule_a_is_a_no_op_when_db_already_apt(self):
+        # No legal-condo tension to resolve if the DB already says APT -- nothing to track.
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "APT",
+            "reasoning": "Single-owned APT, no association.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("APT", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertFalse(fixed["functional_apt_override_used"])
+
+    def test_rule_b_forces_away_from_apt_back_to_db_label(self):
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "reasoning": "Mostly bulk-owned by one investor, but one unit was individually sold.",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+        self.assertEqual(fixed["decision"], "Confirmed")
+
+    def test_rule_b_with_db_already_apt_falls_back_to_not_enough_info(self):
+        # Self-contradictory model output (db is APT, yet an individual owner was found) --
+        # can't tell whether it should be COA or HOA, so fall back to the safe default rather
+        # than guess.
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "APT",
+            "reasoning": "One unit found individually owned.",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("APT", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_rule_b_does_not_disturb_a_legitimate_coa_to_hoa_relabel(self):
+        # determined_type isn't APT here at all -- this guardrail has nothing to do with an
+        # ordinary COA<->HOA relabeling and must not interfere.
+        result = {
+            "decision": "Override",
+            "determined_type": "HOA",
+            "reasoning": "Individually owned units, governed as an HOA not a COA.",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        self.assertEqual(fixed["determined_type"], "HOA")
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_not_applicable_concentration_is_a_no_op(self):
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "COA",
+            "reasoning": "Ordinary case.",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+        self.assertEqual(fixed["decision"], "Confirmed")
+
+    def test_structural_edge_case_takes_precedence_over_rule_a(self):
+        # A housing co-op that happens to be 100% single-owned must still never be overridden --
+        # structural edge cases (never overridden, per §5.7) take precedence over §2.1.
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "COA",
+            "reasoning": "This is a housing cooperative.",
+            "structural_edge_case": "housing_cooperative",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+        self.assertEqual(fixed["decision"], "Confirmed")
+        self.assertNotIn("functional_apt_override_used", fixed)
+
+    def test_coop_mention_in_reasoning_takes_precedence_over_rule_a(self):
+        # Same protection, but via the free-text co-op-mention backstop rather than the
+        # structured structural_edge_case field.
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "COA",
+            "reasoning": "This may be a cooperative, though not fully confirmed.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+        self.assertNotIn("functional_apt_override_used", fixed)
+
+
+class FunctionalOwnershipIntegrationTests(unittest.TestCase):
+    """End-to-end through process_property() -- Rule A and Rule B as a real batch run would
+    exercise them, including the required ownership_concentration validation."""
+
+    def test_fully_bulk_owned_condo_building_overrides_to_apt(self):
+        row = {
+            "RecordID": "555001",
+            "Master_Property Name": "Lakeview Condominiums",
+            "Master_Ownership Type": "COA",
+            "Master_Monthly Association Fees": "0",
+        }
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Confirmed",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 2",
+            "reasoning": (
+                "County parcel records show all 40 units held by a single LLC, one centralized "
+                "leasing office manages the whole building, and no unit is individually listed "
+                "or sold."
+            ),
+            "sources": ["https://county-assessor.example.gov/parcel/555001"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "no",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Override")
+        self.assertEqual(result["determined_type"], "APT")
+        self.assertEqual(result["decision_display"], "Changed from COA to APT")
+        self.assertTrue(result["functional_apt_override_used"])
+
+    def test_one_individually_owned_unit_keeps_coa_despite_bulk_ownership(self):
+        row = {
+            "RecordID": "555002",
+            "Master_Property Name": "Lakeview Condominiums",
+            "Master_Ownership Type": "COA",
+            "Master_Monthly Association Fees": "210",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 2",
+            "reasoning": (
+                "39 of 40 units are held by a single investor, but county records show unit "
+                "12B individually owned and occupied by its owner."
+            ),
+            "sources": ["https://county-assessor.example.gov/parcel/555002"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Confirmed")
+        self.assertEqual(result["determined_type"], "COA")
+        self.assertFalse(result["functional_apt_override_used"])
+
+    def test_missing_ownership_concentration_field_is_a_validation_error(self):
+        row = {"RecordID": "555003", "Master_Ownership Type": "COA"}
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Confirmed",
+            "confidence": "High",
+            "evidence_tier_used": "None",
+            "reasoning": "No research done.",
+            "sources": [],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            # ownership_concentration deliberately omitted
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertTrue(result["is_error"])
 
 
 if __name__ == "__main__":
