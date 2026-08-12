@@ -316,6 +316,25 @@ required every time.
 If the Attempt 2 gate isn't met, or any of the four conditions is unclear, unverified, or only
 partially met, do not apply the exception; fall back to the normal §6 decision process.
 
+### 4.3 COA/HOA naming tiebreaker (deterministic, code-level only)
+
+This is not a decision rule — it doesn't change whether an override happens, what evidence
+justifies it, or any of §4.1/§4.2's conditions. It's a final, code-enforced tiebreaker that only
+runs *after* a decision to override from APT to COA or HOA already stands on its own merits (via
+either §4.1's forward direction reaching an APT-to-non-APT case, ordinary Tier 1/2 evidence, or
+§4.2's reverse direction): if the property's own `Master_Property Name` contains an HOA-specific
+keyword ("homeowner," "hoa") or a COA-specific keyword ("condo," "coa"), the final label is aligned
+to match the name rather than left at whichever of COA/HOA the model's research happened to settle
+on. COA and HOA are similar enough in practice that once "some kind of association" is already the
+justified conclusion, the property's own name is a more reliable signal for which specific one it
+is than the model's independent read of the research. If the name contains **both** kinds of
+keyword, or **neither**, this tiebreaker doesn't apply and the model's own pick stands — it only
+fires when the name unambiguously points to one specific type.
+
+Real motivating example: **Casa Gataway Hoa** (DB: APT) — the §4.2 worked example earlier in this
+document — is unambiguously named as an HOA, so even if the model's research settles on "COA" as
+the specific label, the final output should read HOA to match the name.
+
 ## 5. Known failure modes / pitfalls — be explicit about all of these
 
 ### 5.1 Marketing language is not ownership structure (the most important pitfall)

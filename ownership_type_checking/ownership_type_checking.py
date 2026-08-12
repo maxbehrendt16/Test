@@ -1274,6 +1274,40 @@ def _reconcile_decision_and_type(db_type: str, result: dict) -> dict:
     return result
 
 
+def _enforce_hoa_coa_naming_match(row: dict, db_type: str, result: dict) -> dict:
+    """Final tiebreaker, applied only once an Override from APT to COA/HOA already stands on its
+    own merits: if the property's own name contains an HOA-specific or COA-specific keyword,
+    align determined_type to match the name rather than whichever of the two the model happened
+    to pick. COA and HOA are similar enough in practice that once an override to "some kind of
+    association" is already justified, the name itself is the most reliable signal for which of
+    the two it actually is -- more reliable than the model's independent guess. This never affects
+    whether an override happens or what evidence justified it, only which of COA/HOA it lands on."""
+    if result.get("decision") != "Override" or db_type != "APT":
+        return result
+    determined = result.get("determined_type")
+    if determined not in ("COA", "HOA"):
+        return result
+    name = _norm_text(row.get("Master_Property Name"))
+    is_hoa_named = _contains_any(name, NAME_HOA_KEYWORDS)
+    is_coa_named = _contains_any(name, NAME_COA_KEYWORDS)
+    if is_hoa_named and not is_coa_named:
+        name_type = "HOA"
+    elif is_coa_named and not is_hoa_named:
+        name_type = "COA"
+    else:
+        return result
+    if determined == name_type:
+        return result
+    result = dict(result)
+    result["determined_type"] = name_type
+    result["reasoning"] = (
+        f"{result.get('reasoning', '')} (Adjusted from {determined} to {name_type} to match "
+        f"the property name -- COA/HOA naming is treated as authoritative for which of the two "
+        f"once an override is already justified.)"
+    ).strip()
+    return result
+
+
 def decision_display(db_type: str, result: dict) -> str:
     """The two-value decision string shown in the output: 'Confirmed' whenever the DB label
     stands (Confirmed or Not Enough Info internally -- both mean no change, and Not Enough Info's
@@ -1318,6 +1352,7 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         result = _enforce_coop_mention_guardrail(db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _reconcile_decision_and_type(db_type, result)
+        result = _enforce_hoa_coa_naming_match(row, db_type, result)
         is_error = False
     except Exception as e:
         result = _default_error_result(db_type, e)
