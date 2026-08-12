@@ -101,6 +101,14 @@ STRUCTURAL_EDGE_CASE_LABELS = [
 # a genuinely exhausted Attempt 2 (see tier3_reverse_attempt2_exhausted), not a parallel shortcut.
 TIER3_EXCEPTION_DIRECTIONS = ["not_applicable", "to_apt", "to_coa_hoa"]
 
+# §2.1's governing principle: the DB label reflects who we'd have to sell to, not legal
+# structure. "single_owner_full_bulk" (Rule A) forces APT even over a legal condo/HOA
+# declaration once currently 100% single-owned, centrally managed, and no unit is
+# individually owned or listed. "individual_owner_present" (Rule B) keeps COA/HOA the moment
+# even one unit is individually owned, no matter how small a fraction of the building that is.
+# "not_applicable" covers every other case and triggers neither rule.
+OWNERSHIP_CONCENTRATION_LABELS = ["single_owner_full_bulk", "individual_owner_present", "not_applicable"]
+
 # Spec §4.1: a bounded, narrow exception allowing an override built on Tier 3 evidence --
 # for the investor-owned-single-family-rental-community-mislabeled-as-HOA pattern, where no
 # Tier 1/2 evidence can ever exist because no individual unit has ever been deeded. Gated by
@@ -140,6 +148,41 @@ value that triggered review turned out not to indicate an actual misclassificati
 the DB label when Tier 1 or Tier 2 evidence (see below) directly contradicts it, corroborated by a \
 second independent source. When in doubt, don't change the label.
 
+## §2.1 Functional classification overrides legal structure
+
+**This field exists to describe who we'd have to contact or sell to as an internet provider, \
+not to record legal structure.** A recorded condo declaration or HOA covenant establishes the \
+legal structure, but it does not by itself determine the correct DB label. If a building is \
+legally a condominium but every unit is currently owned and controlled by one company, we'd be \
+pitching that one company, never a board or individual owners -- that building should be labeled \
+APT even though it's legally a condo. Conversely, if even one unit is individually owned, a real \
+association/individual-owner relationship exists that we'd have to navigate, so it stays COA/HOA \
+no matter how few units that is.
+
+**Rule A -- functional APT override.** If a property carries a legal condominium or HOA \
+designation, but you can currently verify ALL THREE of: (a) 100% of units owned by a single \
+entity, (b) one centralized leasing/management contact for the whole building, and (c) no unit \
+currently individually owned or listed for individual sale -- classify as APT, regardless of the \
+legal declaration. This is enforced in code: set `ownership_concentration` to \
+`single_owner_full_bulk` and the code forces `determined_type` to APT regardless of what else you \
+submit, so don't also try to argue for keeping the legal COA/HOA label once you've verified all \
+three.
+
+**Rule B -- any individual ownership keeps COA/HOA.** If even one unit is currently individually \
+owned (held by a party other than the bulk owner, whether occupied, rented, or vacant), the \
+property stays COA or HOA, never APT -- regardless of what fraction of the building is \
+bulk-owned. Set `ownership_concentration` to `individual_owner_present` when you find this; the \
+code forces `determined_type` away from APT regardless of what else you submit. A single \
+individual owner means a real association relationship exists that we'd have to work through, no \
+matter how small a fraction of the building that unit represents.
+
+**This is a required check, not an optional one -- before finalizing any decision, explicitly \
+check current ownership concentration (single owner vs. any individual owners), not just legal \
+declaration status.** `ownership_concentration` is `not_applicable` only when neither pattern is \
+clearly established (e.g. you genuinely couldn't determine current ownership concentration, or \
+the property's legal type and functional reality already agree and neither rule's trigger \
+condition is in play).
+
 ## Evidence hierarchy
 
 **Tier 1 -- Legal/authoritative** (can independently justify an override, with one corroborating source):
@@ -155,6 +198,20 @@ second independent source. When in doubt, don't change the label.
 - MLS/Zillow/Realtor.com listings, individual sale histories
 - The property's own marketing/leasing website ("apply now," "leasing office," "floor plans")
 - General web search snippets, forum mentions, local news human-interest coverage
+
+**A past individual sale record is evidence of historical ownership and legal structure, not \
+proof of CURRENT ownership -- some buildings convert from individually-owned condos back into \
+single-owner rentals via a bulk buyout of the whole building by one investor/entity.** Before \
+treating an MLS/Redfin/Zillow record of a past individual sale as current evidence the property is \
+COA/HOA (per §2.1's Rule B), check whether that sale is recent, or whether more recent records \
+(county parcel/assessor data, current listings) show the same unit -- or the whole building -- now \
+held under one owner name. If county records show a single owner name across all or nearly all \
+units despite historical individual-sale records, treat this as a likely reverse conversion and \
+apply Rule A instead: set `ownership_concentration` to `single_owner_full_bulk` and \
+`reverse_conversion_detected` to `yes`. If even one unit's MOST RECENT record still shows a \
+distinct individual owner, Rule B applies and the property stays COA/HOA -- set \
+`reverse_conversion_detected` to `no` (or `not_applicable` if `ownership_concentration` isn't \
+`single_owner_full_bulk` at all).
 
 **Rule: an override requires at least one Tier 1 or Tier 2 source, corroborated by a second \
 independent source of Tier 1 or 2.** A single Tier 3 source is NEVER sufficient to override the DB \
@@ -383,9 +440,13 @@ classification -- only the reason this property is being checked.
 before individual units are sold and recorded. They are legally COA/HOA (declaration recorded) but \
 look identical online to a true rental APT. Check recording/construction dates against the absence \
 of sales history before treating "no MLS history" as APT-confirming.
-4. **Investor/institutional bulk ownership.** Some COA/HOA communities have most units owned by one \
-investor/fund and rented as a block, sometimes marketed under a single leasing brand -- can look \
-exactly like a single-owner APT. Parcel-level records (Tier 2) distinguish this from a true APT.
+4. **Investor/institutional bulk ownership.** Some COA/HOA communities have most (but not ALL) \
+units owned by one investor/fund and rented as a block, sometimes marketed under a single leasing \
+brand -- can look exactly like a single-owner APT. Parcel-level records (Tier 2) distinguish this \
+from a true APT: if even one unit's parcel record shows a distinct individual owner, that's §2.1's \
+Rule B (`individual_owner_present`) -- stays COA/HOA no matter how small that one unit is relative \
+to the rest. Only when it's genuinely ALL units, with no individual owner or listing anywhere, \
+does §2.1's Rule A (`single_owner_full_bulk`) apply and classify it functionally as APT instead.
 5. **Mixed-use/multi-component developments.** One branded development may contain multiple legally \
 distinct components (e.g. an apartment tower plus a separate townhome HOA phase). Confirm which \
 specific address/parcel the DB record refers to before classifying the whole named development.
@@ -477,13 +538,24 @@ state business registry for an incorporated homeowners/condo association matchin
 name or address, not just the county recorder. Don't default to Not Enough Info on this direction \
 without having made that real effort -- see the reverse-direction exception below for what to do \
 if you genuinely exhaust Attempt 2 and still find nothing.
-3. **Decide:**
+3. **Required check, before finalizing anything -- current ownership concentration, per §2.1:** \
+regardless of legal declaration status, explicitly determine whether (a) 100% of units are \
+currently owned by a single entity with one centralized leasing/management contact and no \
+individually-owned or individually-listed unit (set `ownership_concentration` to \
+`single_owner_full_bulk` -- Rule A, functional APT), or (b) even one unit is currently \
+individually owned (set `ownership_concentration` to `individual_owner_present` -- Rule B, stays \
+COA/HOA). Remember that a past individual sale record alone doesn't settle this -- check recency \
+(see the reverse-conversion note in the Evidence hierarchy above) before concluding either way. \
+`not_applicable` only if you genuinely can't establish either pattern.
+4. **Decide:**
+   - §2.1's Rule A applies (`ownership_concentration`: `single_owner_full_bulk`) -> **Override -> APT** (or **Confirmed** if the DB already says APT), regardless of a legal condo/HOA declaration
+   - §2.1's Rule B applies (`ownership_concentration`: `individual_owner_present`) -> stays **COA/HOA**, never APT, regardless of what fraction of the building is bulk-owned
    - DB label confirmed by evidence found, or no contradicting evidence found -> **Confirmed**
    - Tier 1/2 evidence contradicts the DB label, corroborated by a second independent Tier 1/2 source -> **Override**
    - The bounded Tier-3-only exception's conditions hold (forward direction, to APT) -> **Override** on Tier 3 evidence, confidence capped at Medium
    - The reverse-direction exception's conditions hold (to COA/HOA, only after a genuinely exhausted Attempt 2) -> **Override** on Tier 3 evidence, confidence capped at Medium
    - Evidence is mixed, thin, Tier-3-only (and neither exception applies), contradictory, or genuinely ambiguous even after Attempt 2 -> **Not Enough Info** (keep DB label, low confidence). When in doubt, don't change the label.
-4. Prefer a small number of well-targeted searches (2-4 is usually enough) over exhaustively \
+5. Prefer a small number of well-targeted searches (2-4 is usually enough) over exhaustively \
 crawling many pages -- except per the Attempt 2 note above, where the situation specifically calls \
 for real effort before giving up. If a property still cannot be resolved with confidence after a \
 genuine Attempt 2, stop and label it Not Enough Info (or use the reverse-direction exception, if \
@@ -583,6 +655,39 @@ SUBMIT_SCHEMA = {
                 "for mixed-use/multi-component developments (that's a different problem -- identify "
                 "the right component and decide normally) or for a property you simply couldn't "
                 "resolve (that's Not Enough Info, not an edge case)."
+            ),
+        },
+        "ownership_concentration": {
+            "type": "string",
+            "enum": OWNERSHIP_CONCENTRATION_LABELS,
+            "description": (
+                "Required per §2.1: who would we actually have to sell to right now, regardless of "
+                "the legal condo/HOA declaration on file? 'single_owner_full_bulk' only if you "
+                "verified ALL THREE: (a) 100% of units currently owned by one entity, (b) one "
+                "centralized leasing/management contact for the whole building, and (c) no unit is "
+                "currently individually owned or listed for individual sale -- this forces "
+                "determined_type to APT in code regardless of what else you submit, and regardless "
+                "of a legal condo/HOA declaration. 'individual_owner_present' if even ONE unit is "
+                "currently individually owned (held by anyone other than the bulk owner, occupied "
+                "or not) -- this forces determined_type away from APT in code, no matter how small "
+                "a fraction of the building that one unit is. 'not_applicable' if you genuinely "
+                "can't establish either pattern, or neither rule's trigger condition is in play. "
+                "Skipped entirely (has no effect) for a structural edge case."
+            ),
+        },
+        "reverse_conversion_detected": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when ownership_concentration is 'single_owner_full_bulk': 'yes' if "
+                "you found historical MLS/Redfin/Zillow records of individual unit sales, but MORE "
+                "RECENT records (county parcel/assessor data, current listings) show the same unit, "
+                "or the whole building, now held under one owner name -- i.e. the building was "
+                "individually owned but has since been bulk-bought by a single entity. A past "
+                "individual sale is evidence of historical ownership, not current status. 'no' if "
+                "no such reverse-conversion pattern applies (either no historical individual sales "
+                "exist, or they remain current). 'not_applicable' if ownership_concentration is not "
+                "'single_owner_full_bulk'."
             ),
         },
         "tier3_exception_invoked": {
@@ -705,7 +810,7 @@ SUBMIT_SCHEMA = {
     },
     "required": [
         "determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources",
-        "structural_edge_case",
+        "structural_edge_case", "ownership_concentration", "reverse_conversion_detected",
         "tier3_exception_invoked", "tier3_exception_direction", "tier3_reverse_attempt2_exhausted",
         "tier3_independent_source_count", "tier3_name_address_anchor_confirmed",
         "tier3_partial_tier12_support", "tier3_contradicting_evidence", "tier3_internal_db_corroboration",
@@ -1119,6 +1224,63 @@ def _enforce_coop_mention_guardrail(db_type: str, result: dict) -> dict:
     return result
 
 
+def _enforce_functional_ownership_guardrail(db_type: str, result: dict) -> dict:
+    """§2.1's governing principle, restated as code: the correct DB label reflects who we'd
+    actually have to sell to right now, not the legal condo/HOA declaration on file.
+
+    - Rule A ('single_owner_full_bulk'): 100% of units currently held by one entity, one
+      centralized leasing/management contact, and no unit currently individually owned or
+      listed -- forces determined_type to APT regardless of a legal declaration.
+    - Rule B ('individual_owner_present'): at least one unit is currently individually owned --
+      forces determined_type away from APT, no matter how small a fraction of the building
+      that unit is.
+
+    Skipped entirely for a structural edge case (housing co-op, condo-hotel, etc., whether
+    flagged via structural_edge_case or caught by the co-op-mention backstop) -- those are their
+    own category, resolved by "never override" (§5.7), and functional bulk-ownership evidence is
+    not a reason to reopen that policy. Runs before _enforce_tier3_override_guardrail, so a Rule
+    A claim resting only on Tier 3 evidence is still subject to that guardrail's normal
+    restrictions -- Rule A is not a way to bypass the Tier-3-evidence rules, it mainly matters
+    when the ownership-concentration evidence is itself Tier 1/2 (e.g. parcel/deed records)."""
+    edge_case = result.get("structural_edge_case")
+    if edge_case and edge_case != "none":
+        return result
+    if COOP_MENTION_RE.search(result.get("reasoning", "") or ""):
+        return result
+
+    concentration = result.get("ownership_concentration")
+    result = dict(result)
+    result["functional_apt_override_used"] = False
+    result["reverse_conversion_used"] = False
+
+    if concentration == "single_owner_full_bulk":
+        if result.get("determined_type") != "APT":
+            original = result.get("reasoning", "")
+            result["determined_type"] = "APT"
+            result["decision"] = "Confirmed" if db_type == "APT" else "Override"
+            result["reasoning"] = (
+                f"Automatically corrected to APT per §2.1: 100% single ownership, one centralized "
+                f"leasing/management contact, and no individually-owned or individually-listed "
+                f"unit means we'd only ever be selling to one entity, regardless of the legal "
+                f"condo/HOA declaration on file. Original reasoning: {original}"
+            )
+        if db_type != "APT":
+            result["functional_apt_override_used"] = True
+            result["reverse_conversion_used"] = result.get("reverse_conversion_detected") == "yes"
+    elif concentration == "individual_owner_present" and result.get("determined_type") == "APT":
+        original = result.get("reasoning", "")
+        result["determined_type"] = db_type
+        result["decision"] = "Confirmed" if db_type in ("COA", "HOA") else "Not Enough Info"
+        result["reasoning"] = (
+            f"Automatically corrected per §2.1: at least one individually-owned unit was found, "
+            f"so this cannot be APT no matter how small a fraction of the building is "
+            f"bulk-owned -- a real individual-owner relationship exists either way. Original "
+            f"reasoning: {original}"
+        )
+
+    return result
+
+
 TIER3_EXCEPTION_CONDITIONS_TOTAL = 4
 # When a single (insufficient-alone) Tier 1/2 source also supports the same conclusion, the bar
 # relaxes from all four §4.1 conditions to at least this many -- see tier3_partial_tier12_support.
@@ -1348,8 +1510,11 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
             raise ValueError(f"Model returned invalid structural_edge_case: {result.get('structural_edge_case')!r}")
         if result.get("tier3_exception_direction") not in TIER3_EXCEPTION_DIRECTIONS:
             raise ValueError(f"Model returned invalid tier3_exception_direction: {result.get('tier3_exception_direction')!r}")
+        if result.get("ownership_concentration") not in OWNERSHIP_CONCENTRATION_LABELS:
+            raise ValueError(f"Model returned invalid ownership_concentration: {result.get('ownership_concentration')!r}")
         result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_coop_mention_guardrail(db_type, result)
+        result = _enforce_functional_ownership_guardrail(db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _reconcile_decision_and_type(db_type, result)
         result = _enforce_hoa_coa_naming_match(row, db_type, result)
@@ -1372,6 +1537,8 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         "reasoning": result.get("reasoning", ""),
         "sources": result.get("sources", []),
         "tier3_exception_used": result.get("tier3_exception_used", False),
+        "functional_apt_override_used": result.get("functional_apt_override_used", False),
+        "reverse_conversion_used": result.get("reverse_conversion_used", False),
         "is_error": is_error,
     }
 
@@ -1457,6 +1624,8 @@ def compute_summary(results_by_id: dict) -> dict:
     by_signal_type = {}    # signal type -> {"total": n, "override": n}
     errors = 0
     tier3_exception_overrides = 0
+    functional_apt_overrides = 0
+    reverse_conversion_overrides = 0
 
     for result in results_by_id.values():
         by_decision[result["decision"]] = by_decision.get(result["decision"], 0) + 1
@@ -1464,6 +1633,10 @@ def compute_summary(results_by_id: dict) -> dict:
             errors += 1
         if result.get("tier3_exception_used"):
             tier3_exception_overrides += 1
+        if result.get("functional_apt_override_used"):
+            functional_apt_overrides += 1
+        if result.get("reverse_conversion_used"):
+            reverse_conversion_overrides += 1
 
         is_override = result["decision"] == "Override"
         for rule in result["trigger_rules"]:
@@ -1490,6 +1663,8 @@ def compute_summary(results_by_id: dict) -> dict:
         "override_rate_by_signal_type": by_signal_type,
         "errors": errors,
         "tier3_exception_overrides": tier3_exception_overrides,
+        "functional_apt_overrides": functional_apt_overrides,
+        "reverse_conversion_overrides": reverse_conversion_overrides,
     }
 
 
@@ -1527,6 +1702,13 @@ def print_summary(label: str, summary: dict):
             "without ever finding Tier 1/2 evidence. Oversample these specifically during the §9 "
             "QC pass rather than trusting them at the same rate as ordinary overrides."
         )
+
+    functional_apt = summary.get("functional_apt_overrides", 0)
+    print(f"  Legally Condo, Functionally Apartment (§2.1 Rule A): {_pct(functional_apt, total)} "
+          f"of all properties, {_pct(functional_apt, overrides)} of overrides")
+    reverse_conversions = summary.get("reverse_conversion_overrides", 0)
+    print(f"    of which Reverse Conversion (formerly individually owned, now bulk-owned): "
+          f"{_pct(reverse_conversions, functional_apt)}")
 
     print("  Override rate by trigger rule:")
     for rule, counts in sorted(summary["override_rate_by_rule"].items()):
