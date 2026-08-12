@@ -313,6 +313,7 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "tier3_exception_invoked": "yes",
             "tier3_independent_source_count": 3,
             "tier3_name_address_anchor_confirmed": "yes",
+            "tier3_partial_tier12_support": "not_applicable",
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
@@ -336,6 +337,65 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         self.assertEqual(fixed["decision"], "Override")
         self.assertEqual(fixed["confidence"], "Medium")
         self.assertTrue(fixed["tier3_exception_used"])
+
+    def test_partial_tier12_support_allows_one_failing_condition(self):
+        # The new relaxed-threshold rule: a single (insufficient-alone) Tier 1/2 source plus
+        # Tier 3 evidence only needs 3 of the 4 conditions, not all 4.
+        row = self._large_row()
+        result = self._clean_override(
+            evidence_tier_used="Mixed",
+            tier3_partial_tier12_support="yes",
+            tier3_structural_edge_case_ruled_out="no",  # condition 4 fails -- the one allowed gap
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertEqual(fixed["confidence"], "Medium")
+        self.assertTrue(fixed["tier3_exception_used"])
+
+    def test_partial_tier12_support_still_fails_with_two_failing_conditions(self):
+        # Only ONE condition is allowed to fail under the relaxed threshold -- two is still
+        # too many even with partial Tier 1/2 support.
+        row = self._large_row()
+        result = self._clean_override(
+            evidence_tier_used="Mixed",
+            tier3_partial_tier12_support="yes",
+            tier3_structural_edge_case_ruled_out="no",
+            tier3_contradicting_evidence="yes",
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_partial_tier12_support_without_mixed_tier_does_not_relax(self):
+        # tier3_partial_tier12_support alone isn't enough -- evidence_tier_used must also be
+        # 'Mixed' (a pure 'Tier 3' claim with this flag set is an inconsistent self-report, and
+        # the strict all-four bar still applies).
+        row = self._large_row()
+        result = self._clean_override(
+            evidence_tier_used="Tier 3",
+            tier3_partial_tier12_support="yes",
+            tier3_structural_edge_case_ruled_out="no",
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_mixed_tier_without_partial_support_flag_does_not_relax(self):
+        row = self._large_row()
+        result = self._clean_override(
+            evidence_tier_used="Mixed",
+            tier3_partial_tier12_support="no",
+            tier3_structural_edge_case_ruled_out="no",
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_mixed_tier_override_not_invoking_exception_is_left_alone(self):
+        # A "Mixed"-tier Override that isn't invoking the §4.1 exception at all is relying on
+        # ordinary Tier 1/2 corroboration for a ordinary override -- not this guardrail's concern.
+        row = self._large_row()
+        result = self._clean_override(evidence_tier_used="Mixed", tier3_exception_invoked="no")
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertFalse(fixed["tier3_exception_used"])
 
     def test_newly_built_property_can_still_qualify(self):
         # There is no minimum-age/build-year requirement for this exception -- a recently

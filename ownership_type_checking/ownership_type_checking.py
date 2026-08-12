@@ -21,10 +21,13 @@ columns, before any research happens. See compute_triggers().
 
 Overrides normally require Tier 1/2 evidence (see SYSTEM_PROMPT's evidence hierarchy).
 A single narrow exception -- spec §4.1, for investor-owned single-family-rental
-communities mislabeled HOA, where no Tier 1/2 evidence can ever exist -- allows a
-Tier-3-only override, but only when the model's self-reported four conditions survive
-the deterministic cross-checks in _enforce_tier3_override_guardrail(). These cases are
-capped at Medium confidence and isolated in the batch summary for extra QC scrutiny.
+communities mislabeled HOA, where no Tier 1/2 evidence can ever exist -- allows an
+override built on Tier 3 evidence (alone, or alongside one insufficient-alone Tier 1/2
+source), but only when the model's self-reported conditions survive the deterministic
+cross-checks in _enforce_tier3_override_guardrail(): all four normally, or at least
+three when a single supporting Tier 1/2 source also exists (tier3_partial_tier12_support).
+These cases are capped at Medium confidence and isolated in the batch summary for extra
+QC scrutiny.
 
 Usage:
     export OPENAI_API_KEY=...
@@ -90,11 +93,13 @@ STRUCTURAL_EDGE_CASE_LABELS = [
     "other",
 ]
 
-# Spec §4.1: a bounded, narrow exception allowing an override on Tier 3 evidence alone --
+# Spec §4.1: a bounded, narrow exception allowing an override built on Tier 3 evidence --
 # for the investor-owned-single-family-rental-community-mislabeled-as-HOA pattern, where no
 # Tier 1/2 evidence can ever exist because no individual unit has ever been deeded. Gated by
 # four self-reported conditions (see SUBMIT_SCHEMA's tier3_* fields), each cross-checked in
-# code by _enforce_tier3_override_guardrail() rather than trusted at face value.
+# code by _enforce_tier3_override_guardrail() rather than trusted at face value -- normally all
+# four must hold, but the bar relaxes to 3-of-4 when a single (insufficient-alone) Tier 1/2
+# source also supports the conclusion (tier3_partial_tier12_support).
 TIER3_EXCEPTION_MIN_SOURCES = 3
 # The `sources` field only asks for "specific URLs or named sources used" -- real model behavior
 # is to often list 2 representative URLs even when it examined 3+ independent sources, so
@@ -147,8 +152,13 @@ second independent source. When in doubt, don't change the label.
 independent source of Tier 1 or 2.** A single Tier 3 source is NEVER sufficient to override the DB \
 label, no matter how confident it sounds. Tier 3 evidence can support a decision already justified \
 by Tier 1/2, but cannot drive one on its own -- with exactly one narrow exception, described \
-immediately below. This is enforced in code as well as here: an Override decision resting only on \
-Tier 3 evidence, that doesn't satisfy every condition of that exception, will be automatically \
+immediately below, which also covers the case where you have real but *insufficient* Tier 1/2 \
+evidence (one corroborating source, not the two a normal override needs) alongside your Tier 3 \
+evidence. Do not conclude "there's only one Tier 1/2 source, so no override is possible" without \
+also checking whether the §4.1 exception applies -- the exception exists precisely to cover that \
+gap, not just the pure-no-Tier-1/2-at-all case. This is enforced in code as well as here: an \
+Override decision resting on Tier 3 evidence (alone, or alongside that one insufficient Tier 1/2 \
+source), that doesn't satisfy enough of that exception's conditions, will be automatically \
 downgraded to Not Enough Info regardless of what you submit, so there's no benefit to stretching \
 Tier 3 evidence into an override outside of it.
 
@@ -164,9 +174,12 @@ There is exactly one situation where Tier 3 evidence alone can justify an overri
 lot in a platted subdivision and rents the homes through one leasing office. No individual unit has \
 ever been sold, so no Tier 1/2 evidence (a declaration, a per-unit deed, a registry entry) can ever \
 exist -- there is no association to register. Under the normal rule this could never be corrected. \
-This exception exists only for that pattern, and only when ALL FOUR of the following hold. If even \
-one fails, do not apply it -- fall back to the normal decision process (Not Enough Info if there's \
-no Tier 1/2 evidence).
+This exception exists only for that pattern, and normally requires ALL FOUR of the following to \
+hold -- if even one fails, do not apply it. The one exception to that: if you also have one (not \
+two) independent Tier 1/2 source pointing the same way, per the relaxed-threshold rule right after \
+condition 4 below, the bar drops to at least THREE of four -- one condition is then allowed to \
+fail. Either way, if too many fail for whichever bar applies, fall back to the normal decision \
+process (Not Enough Info if there's no Tier 1/2 evidence sufficient on its own).
 
 1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the property name and \
 address together (the "anchor")** -- different companies/platforms (the property's own site, an \
@@ -198,6 +211,17 @@ individual parcels still legally exist even though one owner holds most of them.
 plausibly fits at least as well, this exception does not apply -- and if it's a genuine structural \
 edge case rather than a masquerading APT, use the `structural_edge_case` field per failure mode 7 \
 below instead of the Tier-3 exception.
+
+**Relaxed threshold with partial Tier 1/2 support: if you also found one (not two) independent \
+Tier 1 or Tier 2 source pointing the same way, you only need THREE of the four conditions above to \
+hold, not all four.** A single Tier 1/2 source is real, authoritative-tier evidence -- it just can't \
+carry a normal override alone, which needs a second independent one. That single source is itself \
+worth something, and this exception's evidence bar reflects that: set `evidence_tier_used` to \
+`Mixed` (not `Tier 3`) and `tier3_partial_tier12_support` to `yes` in this case. Which one of the \
+four conditions is allowed to be missing isn't fixed -- any one of them can be the gap, as long as \
+the other three genuinely hold. Without that extra Tier 1/2 source (pure Tier 3, `evidence_tier_used` \
+= `Tier 3`), all four are still required -- this relaxation exists specifically to reward the extra, \
+real corroboration a single Tier 1/2 source provides, not to generally loosen the bar.
 
 **There is no minimum-age or build-year requirement for this exception.** A newly-built \
 investor-owned rental community can qualify just as well as an old one -- absence of individual-\
@@ -250,7 +274,21 @@ other property's rental-apartment status onto this record just because it sits a
 file. (Contrast with the first worked example: there, the property's own site DID name "[X] \
 Apartments" at the DB's address, which is exactly the anchor this case is missing.)
 
-If all four hold: the override is allowed, but **confidence is capped at Medium, never High** -- \
+**A third worked example, on the relaxed-threshold rule:** an HOA-typed property named "[Z] Apts." \
+A county tax assessor record (Tier 2) lists the parcel's use-code as "multi-family rental" -- real, \
+authoritative-tier evidence, but only one source, not the two a normal override needs. Alongside \
+it, three independent Tier 3 sources (with a confirmed name/address anchor) agree on single \
+ownership and one leasing office, and `Master_Monthly Association Fees` is blank on a large \
+property, but Attempt 2's targeted searches couldn't fully rule out a specific structural edge \
+case for this one (condition 4 unresolved). That's 3 of 4 conditions clearly met -- source count \
+with anchor (1), no contradicting evidence (2), internal DB corroboration (3) -- with condition 4 \
+the one gap. Because there's also that single Tier 2 source (`evidence_tier_used`: `Mixed`, \
+`tier3_partial_tier12_support`: `yes`), 3 of 4 is enough here: this resolves to **Override -> APT, \
+confidence Medium**, not Not Enough Info. Without that Tier 2 source, this same picture (3 of 4, \
+condition 4 unresolved) would NOT be enough -- it would need all four.
+
+If enough conditions hold (four normally, or three with partial Tier 1/2 support): the override is \
+allowed, but **confidence is capped at Medium, never High** -- \
 High stays reserved for real Tier 1/2 evidence. Say so explicitly in your reasoning (e.g. "Tier-3 \
 corroborated override: ...") so a reviewer scanning the Reasoning column can see this path was used \
 without a separate field for it. You must fill in the `tier3_exception_*` fields in the schema \
@@ -510,6 +548,24 @@ SUBMIT_SCHEMA = {
                 "'not_applicable' if tier3_exception_invoked is 'no'."
             ),
         },
+        "tier3_partial_tier12_support": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when tier3_exception_invoked is 'yes': 'yes' only if, IN ADDITION "
+                "to your Tier 3 evidence, you also found exactly ONE independent Tier 1 or Tier 2 "
+                "source supporting the same conclusion -- real authoritative-tier evidence, just not "
+                "enough alone for a normal override (which needs a second independent Tier 1/2 "
+                "source). Set evidence_tier_used to 'Mixed' in this case, not 'Tier 3'. This matters: "
+                "when 'yes', the §4.1 exception's bar is relaxed from all four conditions to at "
+                "least three of four, since a single corroborating Tier 1/2 source is itself "
+                "meaningful even though it can't carry a normal override by itself. 'no' if no Tier "
+                "1/2 evidence exists at all (pure Tier 3), or if you actually found two or more "
+                "independent Tier 1/2 sources (in which case you have a normal override, not this "
+                "exception, and evidence_tier_used should reflect that directly). 'not_applicable' "
+                "if tier3_exception_invoked is 'no'."
+            ),
+        },
         "tier3_contradicting_evidence": {
             "type": "string",
             "enum": YES_NO_NA_LABELS,
@@ -546,7 +602,8 @@ SUBMIT_SCHEMA = {
         "determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources",
         "structural_edge_case",
         "tier3_exception_invoked", "tier3_independent_source_count", "tier3_name_address_anchor_confirmed",
-        "tier3_contradicting_evidence", "tier3_internal_db_corroboration", "tier3_structural_edge_case_ruled_out",
+        "tier3_partial_tier12_support", "tier3_contradicting_evidence", "tier3_internal_db_corroboration",
+        "tier3_structural_edge_case_ruled_out",
     ],
     "additionalProperties": False,
 }
@@ -947,54 +1004,105 @@ def _enforce_coop_mention_guardrail(db_type: str, result: dict) -> dict:
     return result
 
 
+TIER3_EXCEPTION_CONDITIONS_TOTAL = 4
+# When a single (insufficient-alone) Tier 1/2 source also supports the same conclusion, the bar
+# relaxes from all four §4.1 conditions to at least this many -- see tier3_partial_tier12_support.
+TIER3_EXCEPTION_MIN_CONDITIONS_WITH_PARTIAL_TIER12 = 3
+
+
+def _tier3_exception_condition_failures(row: dict, result: dict) -> list:
+    """Evaluates each of the §4.1 exception's four conditions independently and returns a list
+    of human-readable failure descriptions for the ones that DON'T hold (empty list if all four
+    hold). Condition 3's evaluation folds in the deterministic backstop cross-check so a
+    self-report contradicted by the property's own data counts as a failure of that condition,
+    not a separate, always-fatal check -- this lets it participate correctly in the
+    partial-Tier-1/2-support relaxation below (still one condition failing, same as any other)."""
+    failures = []
+
+    if len(result.get("sources", [])) < TIER3_EXCEPTION_MIN_LISTED_SOURCES:
+        failures.append("condition 1: no sources were listed at all, so the independent-source claim is unsupported")
+    elif (_parse_number(result.get("tier3_independent_source_count")) or 0) < TIER3_EXCEPTION_MIN_SOURCES:
+        failures.append("condition 1: self-reported independent source count is below 3")
+    elif result.get("tier3_name_address_anchor_confirmed") != "yes":
+        failures.append("condition 1: no source was confirmed to tie the property name and address together")
+
+    if result.get("tier3_contradicting_evidence") != "no":
+        failures.append("condition 2: contradicting evidence was found, or this wasn't explicitly ruled out")
+
+    if not _norm_text(result.get("tier3_internal_db_corroboration")):
+        failures.append("condition 3: no internal DB field corroboration was cited")
+    else:
+        backstop_reason = _tier3_exception_backstop_failure(row, result)
+        if backstop_reason:
+            failures.append(f"condition 3: {backstop_reason}")
+
+    if result.get("tier3_structural_edge_case_ruled_out") != "yes":
+        failures.append("condition 4: a structural edge case wasn't explicitly ruled out")
+
+    return failures
+
+
 def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
     """Section 4's rule -- 'a single Tier 3 source is never sufficient to override the DB
     label' -- restated as code, with the narrow §4.1 exception also enforced in code rather than
-    left to the model's bare word. An Override resting on Tier 3-only evidence is downgraded to
-    Not Enough Info UNLESS the model explicitly invoked the exception (tier3_exception_invoked ==
-    "yes") and every one of its self-reported conditions checks out, including the deterministic
-    backstops in _tier3_exception_backstop_failure() that catch a self-report contradicted by the
-    property's own data. Always sets result["tier3_exception_used"] so the batch summary can
-    isolate this highest-risk override path per §4.1/§9."""
+    left to the model's bare word. An Override resting on Tier 3 evidence (alone, or alongside a
+    single supporting-but-insufficient Tier 1/2 source) is downgraded to Not Enough Info UNLESS
+    the model explicitly invoked the exception (tier3_exception_invoked == "yes") and enough of
+    its four self-reported conditions check out -- all four normally, or at least three when
+    tier3_partial_tier12_support == "yes" (a real, single Tier 1/2 source also points the same
+    way, just not a second one, which is what a normal override would need). Always sets
+    result["tier3_exception_used"] so the batch summary can isolate this highest-risk override
+    path per §4.1/§9."""
     result = dict(result)
     result["tier3_exception_used"] = False
 
-    if result.get("decision") != "Override" or result.get("evidence_tier_used") != "Tier 3":
+    if result.get("decision") != "Override" or result.get("evidence_tier_used") not in ("Tier 3", "Mixed"):
         return result
 
-    failure_reason = None
     if result.get("tier3_exception_invoked") != "yes":
-        failure_reason = "did not invoke the §4.1 bounded exception"
-    elif len(result.get("sources", [])) < TIER3_EXCEPTION_MIN_LISTED_SOURCES:
-        failure_reason = "no sources were listed at all, so the independent-source claim is unsupported"
-    elif (_parse_number(result.get("tier3_independent_source_count")) or 0) < TIER3_EXCEPTION_MIN_SOURCES:
-        failure_reason = "self-reported independent source count is below 3"
-    elif result.get("tier3_name_address_anchor_confirmed") != "yes":
-        failure_reason = "no source was confirmed to tie the property name and address together"
-    elif result.get("tier3_contradicting_evidence") != "no":
-        failure_reason = "contradicting evidence was found, or this wasn't explicitly ruled out"
-    elif not _norm_text(result.get("tier3_internal_db_corroboration")):
-        failure_reason = "no internal DB field corroboration was cited"
-    elif result.get("tier3_structural_edge_case_ruled_out") != "yes":
-        failure_reason = "a structural edge case wasn't explicitly ruled out"
-    else:
-        failure_reason = _tier3_exception_backstop_failure(row, result)
-
-    if failure_reason:
-        original = result.get("reasoning", "")
-        result["decision"] = "Not Enough Info"
-        result["confidence"] = "Low"
-        result["reasoning"] = (
-            f"Automatically downgraded: the model concluded Override on Tier 3 evidence alone via "
-            f"the §4.1 exception, but {failure_reason}. Original reasoning: {original}"
-        )
+        # Not attempting the §4.1 exception at all. A pure-Tier-3 Override can never stand
+        # without it. A "Mixed"-tier Override that isn't invoking it is instead relying on
+        # ordinary Tier 1/2 corroboration for a normal override -- not this guardrail's concern.
+        if result.get("evidence_tier_used") == "Tier 3":
+            return _downgrade_tier3_override(result, "did not invoke the §4.1 bounded exception")
         return result
 
-    # All four conditions genuinely check out -- allow the override, but confidence is capped
-    # at Medium per §4.1 regardless of what the model submitted.
+    failures = _tier3_exception_condition_failures(row, result)
+    passed_count = TIER3_EXCEPTION_CONDITIONS_TOTAL - len(failures)
+    partial_tier12 = (
+        result.get("evidence_tier_used") == "Mixed"
+        and result.get("tier3_partial_tier12_support") == "yes"
+    )
+    required_passes = (
+        TIER3_EXCEPTION_MIN_CONDITIONS_WITH_PARTIAL_TIER12 if partial_tier12 else TIER3_EXCEPTION_CONDITIONS_TOTAL
+    )
+
+    if passed_count < required_passes:
+        reason = (
+            f"only {passed_count}/{TIER3_EXCEPTION_CONDITIONS_TOTAL} conditions held (needed "
+            f"{required_passes}{' with partial Tier 1/2 support' if partial_tier12 else ''}) -- "
+            f"{'; '.join(failures)}"
+        )
+        return _downgrade_tier3_override(result, reason)
+
+    # Enough conditions genuinely check out -- allow the override, but confidence is capped at
+    # Medium per §4.1 regardless of what the model submitted, even with partial Tier 1/2 support.
     if result.get("confidence") == "High":
         result["confidence"] = "Medium"
     result["tier3_exception_used"] = True
+    return result
+
+
+def _downgrade_tier3_override(result: dict, failure_reason: str) -> dict:
+    result = dict(result)
+    original = result.get("reasoning", "")
+    result["decision"] = "Not Enough Info"
+    result["confidence"] = "Low"
+    result["tier3_exception_used"] = False
+    result["reasoning"] = (
+        f"Automatically downgraded: the model concluded Override via the §4.1 exception, but "
+        f"{failure_reason}. Original reasoning: {original}"
+    )
     return result
 
 
