@@ -22,7 +22,7 @@ columns, before any research happens. See compute_triggers().
 Overrides normally require Tier 1/2 evidence (see SYSTEM_PROMPT's evidence hierarchy).
 A single narrow exception -- spec §4.1, for investor-owned single-family-rental
 communities mislabeled HOA, where no Tier 1/2 evidence can ever exist -- allows a
-Tier-3-only override, but only when the model's self-reported five conditions survive
+Tier-3-only override, but only when the model's self-reported four conditions survive
 the deterministic cross-checks in _enforce_tier3_override_guardrail(). These cases are
 capped at Medium confidence and isolated in the batch summary for extra QC scrutiny.
 
@@ -93,7 +93,7 @@ STRUCTURAL_EDGE_CASE_LABELS = [
 # Spec §4.1: a bounded, narrow exception allowing an override on Tier 3 evidence alone --
 # for the investor-owned-single-family-rental-community-mislabeled-as-HOA pattern, where no
 # Tier 1/2 evidence can ever exist because no individual unit has ever been deeded. Gated by
-# five self-reported conditions (see SUBMIT_SCHEMA's tier3_* fields), each cross-checked in
+# four self-reported conditions (see SUBMIT_SCHEMA's tier3_* fields), each cross-checked in
 # code by _enforce_tier3_override_guardrail() rather than trusted at face value.
 TIER3_EXCEPTION_MIN_SOURCES = 3
 # The `sources` field only asks for "specific URLs or named sources used" -- real model behavior
@@ -102,7 +102,6 @@ TIER3_EXCEPTION_MIN_SOURCES = 3
 # lower floor just guards against a fully unsupported self-report (claiming 3 independent sources
 # while citing literally none); the real count-of-3 check is tier3_independent_source_count below.
 TIER3_EXCEPTION_MIN_LISTED_SOURCES = 1
-TIER3_EXCEPTION_MIN_PROPERTY_AGE_YEARS = 5
 
 SYSTEM_PROMPT = """You are a research assistant verifying property ownership-type records in a \
 Community Lending Portfolio (CLP) database.
@@ -165,7 +164,7 @@ There is exactly one situation where Tier 3 evidence alone can justify an overri
 lot in a platted subdivision and rents the homes through one leasing office. No individual unit has \
 ever been sold, so no Tier 1/2 evidence (a declaration, a per-unit deed, a registry entry) can ever \
 exist -- there is no association to register. Under the normal rule this could never be corrected. \
-This exception exists only for that pattern, and only when ALL FIVE of the following hold. If even \
+This exception exists only for that pattern, and only when ALL FOUR of the following hold. If even \
 one fails, do not apply it -- fall back to the normal decision process (Not Enough Info if there's \
 no Tier 1/2 evidence).
 
@@ -173,32 +172,33 @@ no Tier 1/2 evidence).
 own site, an aggregator, and a genuinely distinct third source), not mirrors of one syndicated feed.
 2. **Zero contradicting evidence anywhere** -- no MLS individual sale, no county deed in a different \
 name, nothing in Attempt 2's targeted searches pointing the other way.
-3. **The property is old enough that absence of individual-sale history is actually informative** \
--- this excludes anything that could plausibly still be in the §5 lease-up phase or was built/ \
-recorded recently. Long-standing absence of sales is a real signal; absence of sales on a brand-new \
-property means nothing yet. Check `Master_Original Build Year` (fall back to `Master_Most Recent \
-Build Year`) -- a property built 5+ years ago clears this condition; do not treat missing/unclear \
-build-year data as an automatic fail here if the other evidence (36 years of zero sales history, \
-etc.) already independently establishes the property is long-standing.
-4. **At least one internal DB field corroborates single ownership** -- e.g. a null `Master_Monthly \
-Association Fees` on a property old and large enough that a real HOA/COA of that size would almost \
-always have a fee on file. A concentrated `Owner`/`Cleaned Owner` value can also satisfy this. \
+3. **At least one internal DB field corroborates single ownership** -- e.g. a null `Master_Monthly \
+Association Fees` on a property large enough that a real HOA/COA of that size would almost always \
+have a fee on file. A concentrated `Owner`/`Cleaned Owner` value can also satisfy this. \
 **A null/blank fee field, by itself, is sufficient for this condition** -- do not treat it as merely \
 "weak" or hold out for a second internal field on top of it; the point of this condition is that the \
-DB's own data is consistent with no association existing at all, and an absent fee on an old, \
-sizeable property is exactly that. **This condition asks for ONE corroborating field, not unanimous \
+DB's own data is consistent with no association existing at all, and an absent fee on a sizeable \
+property is exactly that. **This condition asks for ONE corroborating field, not unanimous \
 agreement across every internal field.** Once you have one, stop -- do not go hunting through other, \
 unrelated DB columns for something that might complicate or contradict it; that is looking for a \
 reason NOT to override, which is exactly backwards for a condition that's already satisfied.
-5. **No structural edge case explains the pattern instead** -- not a housing cooperative, \
+4. **No structural edge case explains the pattern instead** -- not a housing cooperative, \
 condo-hotel, senior/age-restricted community, or an investor bulk-owned COA/HOA (§4 above) where \
 individual parcels still legally exist even though one owner holds most of them. If any of those \
 plausibly fits at least as well, this exception does not apply -- and if it's a genuine structural \
 edge case rather than a masquerading APT, use the `structural_edge_case` field per failure mode 7 \
 below instead of the Tier-3 exception.
 
-**Your job on conditions 2 and 4 is to look FOR a single piece of qualifying evidence, not to audit \
-every available field for disqualifying ones.** Condition 4 in particular asks whether at least one \
+**There is no minimum-age or build-year requirement for this exception.** A newly-built \
+investor-owned rental community can qualify just as well as an old one -- absence of individual-\
+sale history is meaningful for a genuinely single-owner rental property regardless of when it was \
+built, as long as conditions 1-4 above are otherwise met. (This is different from the §5.3 \
+lease-up-phase failure mode, which is about a genuine COA/HOA that HAS started individual sales but \
+hasn't gotten far into them yet -- that's still a real pattern to watch for in your general \
+research, it's just not a hard-coded gate on this exception specifically.)
+
+**Your job on conditions 2 and 3 is to look FOR a single piece of qualifying evidence, not to audit \
+every available field for disqualifying ones.** Condition 3 in particular asks whether at least one \
 internal DB field corroborates single ownership -- once you've found one (a blank fee field is \
 usually enough on its own), you're done with that condition; do not then go looking through other, \
 unrelated DB columns to see if anything might complicate or contradict it. That is hunting for a \
@@ -206,28 +206,25 @@ reason NOT to override, which defeats the purpose of a condition that already ha
 evidence. (Condition 2 is the deliberate exception to this framing -- there, you ARE checking for \
 contradicting evidence specifically, because that's what that condition is.)
 
-**Evaluate all five conditions independently.** They do not gate each other -- a strong answer on \
-one condition (e.g. 36 years of zero sales history clearly satisfying condition 3) does not need \
-extra corroboration before you can also credit condition 4 on its own separate evidence (e.g. a \
-null fee field), and vice versa. Don't let uncertainty on one condition bleed into a vague, \
-generalized "insufficient corroboration overall" conclusion that effectively fails every condition \
-at once -- check each one on its own specific evidence and be precise in your reasoning about \
-exactly which condition(s), if any, aren't met.
+**Evaluate all four conditions independently.** They do not gate each other -- a strong answer on \
+one condition does not need extra corroboration from another before you can credit it. Don't let \
+uncertainty on one condition bleed into a vague, generalized "insufficient corroboration overall" \
+conclusion that effectively fails every condition at once -- check each one on its own specific \
+evidence and be precise in your reasoning about exactly which condition(s), if any, aren't met.
 
 **Worked example (this is a real, previously-mishandled case -- get this one right):** an HOA-typed \
 property named "[X] Apartments," 80 units across 40 buildings, one leasing company, `Master_Monthly \
-Association Fees` is blank, built decades ago with zero MLS/deed sales history ever found for any \
-unit. Three independent, non-syndicated Tier 3 sources (the property's own site, an aggregator, and \
-a review site) agree on single ownership and one leasing office. Attempt 2 finds no contradicting \
-evidence and no declaration/HOA covenant on file. This satisfies all five conditions -- 3+ sources \
-(1), no contradicting evidence (2), decades old so the zero-sales history is meaningful (3), the \
-blank fee field alone corroborates single ownership on a property this old and large (4), and \
-nothing suggests a co-op/condo-hotel/bulk-owned-COA explanation instead (5) -- so this resolves to \
-**Override -> APT, confidence Medium**, not Not Enough Info. Do not decline to invoke the exception \
-here on the theory that "no single field is decisive on its own" -- each condition already has its \
-own sufficient evidence; that IS what the exception is for.
+Association Fees` is blank, zero MLS/deed sales history ever found for any unit. Three independent, \
+non-syndicated Tier 3 sources (the property's own site, an aggregator, and a review site) agree on \
+single ownership and one leasing office. Attempt 2 finds no contradicting evidence and no \
+declaration/HOA covenant on file. This satisfies all four conditions -- 3+ sources (1), no \
+contradicting evidence (2), the blank fee field alone corroborates single ownership on a property \
+this large (3), and nothing suggests a co-op/condo-hotel/bulk-owned-COA explanation instead (4) -- \
+so this resolves to **Override -> APT, confidence Medium**, not Not Enough Info. Do not decline to \
+invoke the exception here on the theory that "no single field is decisive on its own" -- each \
+condition already has its own sufficient evidence; that IS what the exception is for.
 
-If all five hold: the override is allowed, but **confidence is capped at Medium, never High** -- \
+If all four hold: the override is allowed, but **confidence is capped at Medium, never High** -- \
 High stays reserved for real Tier 1/2 evidence. Say so explicitly in your reasoning (e.g. "Tier-3 \
 corroborated override: ...") so a reviewer scanning the Reasoning column can see this path was used \
 without a separate field for it. You must fill in the `tier3_exception_*` fields in the schema \
@@ -290,6 +287,18 @@ rental APT (dues are an APT disqualifier), never evidence FOR one.** If you catc
 to write that a fee supports an APT conclusion, that's a sign you have the polarity backwards -- \
 stop and reconsider, and if the property is actually some kind of edge case (like a co-op), name it \
 in `structural_edge_case` and leave the label alone instead.
+
+**For housing cooperatives specifically: if research raises "this might be a co-op" as a live \
+possibility, even one you can't fully confirm, treat it as one for this policy** -- set \
+`structural_edge_case` to `housing_cooperative` and decision `Confirmed`. Do not reason "there's a \
+co-op signal here, but not enough evidence to be sure it's a co-op specifically, so I'll weigh the \
+other evidence and lean toward Override instead" -- an unresolved co-op possibility is a reason for \
+extra caution against changing the label, not a reason to set it aside. If your final answer is \
+Override and your own reasoning text still mentions a co-op/cooperative possibility anywhere, that \
+is a direct contradiction: either you've ruled it out (say so, and don't use those words) or you \
+haven't (in which case the answer is Confirmed, not Override). This is enforced in code as well -- \
+an Override whose `reasoning` mentions "co-op" or "cooperative" is forced back to Confirmed \
+regardless of what else you submit.
 8. **Fee field miscoding.** Before treating fee presence as COA/HOA evidence, sanity-check it isn't \
 a one-time deposit, a data-entry artifact, or a fee belonging to a different nearby property from a \
 prior dedup issue in the CLP DB. If the fee amount/structure looks legitimate and recurring, treat \
@@ -316,7 +325,7 @@ entity's name and type.
 3. **Decide:**
    - DB label confirmed by evidence found, or no contradicting evidence found -> **Confirmed**
    - Tier 1/2 evidence contradicts the DB label, corroborated by a second independent Tier 1/2 source -> **Override**
-   - All five conditions of the bounded Tier-3-only exception above hold -> **Override** on Tier 3 evidence alone, confidence capped at Medium
+   - All four conditions of the bounded Tier-3-only exception above hold -> **Override** on Tier 3 evidence alone, confidence capped at Medium
    - Evidence is mixed, thin, Tier-3-only (and the exception above doesn't apply), contradictory, or genuinely ambiguous even after Attempt 2 -> **Not Enough Info** (keep DB label, low confidence). When in doubt, don't change the label.
 4. Prefer a small number of well-targeted searches (2-4 is usually enough) over exhaustively \
 crawling many pages. If a property cannot be resolved with confidence after Attempt 2, stop and \
@@ -340,7 +349,7 @@ Never use High for a Tier-3-only override, even one that clears the bounded exce
 - **Medium:** real, relevant evidence found and leans toward the decision, but with a genuine gap, \
 an unverified assumption, or reliance on well-corroborated Tier 3 evidence alone -- including every \
 override that clears the bounded Tier-3-only exception, which is capped here regardless of how \
-clean the five conditions look.
+clean the four conditions look.
 - **Low:** thin, mixed, Tier-3-only, or genuinely ambiguous evidence. This is the expected, normal \
 outcome for most Not Enough Info calls -- not a score to avoid.
 
@@ -423,7 +432,7 @@ SUBMIT_SCHEMA = {
             "enum": YES_NO_LABELS,
             "description": (
                 "'yes' only if this is an Override built on Tier 3 evidence alone via the bounded "
-                "exception described in your instructions, and you believe all five of its "
+                "exception described in your instructions, and you believe all four of its "
                 "conditions hold. 'no' in every other case, including a normal Tier 1/2 Override, "
                 "Confirmed, or Not Enough Info."
             ),
@@ -444,16 +453,6 @@ SUBMIT_SCHEMA = {
                 "checked for and found zero contradicting evidence (MLS individual sale, a deed in "
                 "a different name, anything from Attempt 2's targeted searches pointing the other "
                 "way). 'yes' if any contradicting evidence exists. 'not_applicable' otherwise."
-            ),
-        },
-        "tier3_property_age_sufficient": {
-            "type": "string",
-            "enum": YES_NO_NA_LABELS,
-            "description": (
-                "Only meaningful when tier3_exception_invoked is 'yes': 'yes' only if the property "
-                "is old enough that the absence of individual-sale history is actually informative "
-                "-- i.e. it is NOT a candidate for the lease-up-phase ambiguity failure mode and was "
-                "not recently built/recorded. 'not_applicable' otherwise."
             ),
         },
         "tier3_internal_db_corroboration": {
@@ -482,7 +481,7 @@ SUBMIT_SCHEMA = {
         "determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources",
         "structural_edge_case",
         "tier3_exception_invoked", "tier3_independent_source_count", "tier3_contradicting_evidence",
-        "tier3_property_age_sufficient", "tier3_internal_db_corroboration", "tier3_structural_edge_case_ruled_out",
+        "tier3_internal_db_corroboration", "tier3_structural_edge_case_ruled_out",
     ],
     "additionalProperties": False,
 }
@@ -666,7 +665,7 @@ REASONING_FIELDS = [
     ("Master_Building Count_20+", "Building Count (20+ threshold, fallback)"),
     ("Building Count Bin", "Building Count Bin (sanity cross-check)"),
     ("Master_Floor Count", "Floor Count"),
-    ("Master_Original Build Year", "Original Build Year (relevant to the §4.1 Tier-3 exception's property-age condition)"),
+    ("Master_Original Build Year", "Original Build Year (general context, e.g. assessing §5.3 lease-up-phase ambiguity qualitatively -- there is no minimum-age requirement for the §4.1 Tier-3 exception)"),
     ("Master_Most Recent Build Year", "Most Recent Build Year (e.g. a later phase/addition; fallback if Original is blank)"),
     ("Master_Monthly Association Fees", "Monthly Association Fees"),
     ("Leasing Company", "Leasing Company"),
@@ -806,33 +805,13 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
 # stopped certain failure patterns, so the most safety-critical rules in the spec are also
 # enforced in code as a backstop, not just requested in the prompt.
 
-def _current_year() -> int:
-    return time.localtime().tm_year
-
-
-def _property_build_year(row: dict):
-    """Master_Original Build Year, falling back to Master_Most Recent Build Year when the
-    original is blank -- matches the two build-year columns actually present in the CLP export
-    (there is no single 'Master_Build Year' column)."""
-    return _parse_number(row.get("Master_Original Build Year")) or _parse_number(row.get("Master_Most Recent Build Year"))
-
-
 def _tier3_exception_backstop_failure(row: dict, result: dict):
-    """Deterministic cross-checks of the model's self-reported §4.1 conditions against the
-    property's own row data, for the two conditions where the data can actually be checked in
-    code (age and internal-DB corroboration) -- rather than trusting a bare self-report. Returns
-    a human-readable failure reason, or None if no backstop check fires (which does not by
-    itself mean the exception is satisfied -- the self-reported fields still gate it)."""
-    build_year = _property_build_year(row)
-    if build_year is not None:
-        age = _current_year() - build_year
-        if age < TIER3_EXCEPTION_MIN_PROPERTY_AGE_YEARS:
-            return (
-                f"Build year ({build_year:g}) makes this property only ~{age:g} years old -- "
-                f"below the {TIER3_EXCEPTION_MIN_PROPERTY_AGE_YEARS}-year floor for ruling out "
-                f"lease-up ambiguity, regardless of what the model self-reported"
-            )
-
+    """Deterministic cross-check of the model's self-reported §4.1 condition 3 against the
+    property's own row data -- the one condition where a claim can actually be checked in code --
+    rather than trusting a bare self-report. Returns a human-readable failure reason, or None if
+    no backstop check fires (which does not by itself mean the exception is satisfied -- the
+    self-reported fields still gate it). There is deliberately no property-age backstop here: the
+    §4.1 exception has no minimum-age/build-year requirement."""
     corroboration_text = _norm_text(result.get("tier3_internal_db_corroboration")).lower()
     if "fee" in corroboration_text:
         fee = _parse_number(row.get("Master_Monthly Association Fees"))
@@ -874,6 +853,35 @@ def _enforce_structural_edge_case_guardrail(db_type: str, result: dict) -> dict:
     return result
 
 
+COOP_MENTION_RE = re.compile(r"\bco-?ops?\b|\bcooperatives?\b", re.IGNORECASE)
+
+
+def _enforce_coop_mention_guardrail(db_type: str, result: dict) -> dict:
+    """A second, independent backstop for the same policy as _enforce_structural_edge_case_
+    guardrail() above: co-ops are never overridden, full stop. This one doesn't rely on the model
+    correctly setting structural_edge_case -- it directly scans the free-text `reasoning` for a
+    co-op mention. Real failure this guards against: reasoning that raises a co-op as a live
+    possibility ("this may be a cooperative, but there wasn't enough evidence to confirm") without
+    setting structural_edge_case, after which a weak Override built on other, unrelated evidence
+    could otherwise slip through. Any Override whose own reasoning mentions "co-op"/"cooperative"
+    is forced back to Confirmed/the DB label, regardless of what triggered the mention."""
+    if result.get("decision") != "Override":
+        return result
+    if not COOP_MENTION_RE.search(result.get("reasoning", "")):
+        return result
+
+    result = dict(result)
+    original = result.get("reasoning", "")
+    result["decision"] = "Confirmed"
+    result["determined_type"] = db_type
+    result["reasoning"] = (
+        f"Automatically kept as-is: the model's own reasoning raised a housing-cooperative "
+        f"possibility, and co-ops are never overridden regardless of how that possibility was "
+        f"weighed against other evidence. Original reasoning: {original}"
+    )
+    return result
+
+
 def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
     """Section 4's rule -- 'a single Tier 3 source is never sufficient to override the DB
     label' -- restated as code, with the narrow §4.1 exception also enforced in code rather than
@@ -898,8 +906,6 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
         failure_reason = "self-reported independent source count is below 3"
     elif result.get("tier3_contradicting_evidence") != "no":
         failure_reason = "contradicting evidence was found, or this wasn't explicitly ruled out"
-    elif result.get("tier3_property_age_sufficient") != "yes":
-        failure_reason = "property age wasn't confirmed sufficient to rule out lease-up ambiguity"
     elif not _norm_text(result.get("tier3_internal_db_corroboration")):
         failure_reason = "no internal DB field corroboration was cited"
     elif result.get("tier3_structural_edge_case_ruled_out") != "yes":
@@ -917,7 +923,7 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
         )
         return result
 
-    # All five conditions genuinely check out -- allow the override, but confidence is capped
+    # All four conditions genuinely check out -- allow the override, but confidence is capped
     # at Medium per §4.1 regardless of what the model submitted.
     if result.get("confidence") == "High":
         result["confidence"] = "Medium"
@@ -980,6 +986,7 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         if result.get("structural_edge_case") not in STRUCTURAL_EDGE_CASE_LABELS:
             raise ValueError(f"Model returned invalid structural_edge_case: {result.get('structural_edge_case')!r}")
         result = _enforce_structural_edge_case_guardrail(db_type, result)
+        result = _enforce_coop_mention_guardrail(db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _reconcile_decision_and_type(db_type, result)
         is_error = False

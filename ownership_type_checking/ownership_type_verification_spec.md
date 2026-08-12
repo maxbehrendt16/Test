@@ -156,11 +156,11 @@ management company's own portfolio page), because there is no deed, declaration,
 for an association that doesn't exist. Under the strict §4 rule, a genuine APT masquerading as an
 HOA in the DB can never be corrected, because the very evidence that would prove it is structurally
 unavailable. This section defines a narrow, bounded path to override on Tier 3 evidence alone —
-**only** when every one of the following five conditions holds. If any one fails, there is no
+**only** when every one of the following four conditions holds. If any one fails, there is no
 override; the property falls back to the §6 default of "Not Enough Info" or "Confirmed" (no
 change), per whichever normally applies.
 
-**All five conditions required:**
+**All four conditions required:**
 
 1. **3+ independent Tier 3 sources that agree.** "Independent" means different companies or
    platforms — a property's own leasing site, an aggregator (Apartments.com, Zillow rentals,
@@ -175,30 +175,15 @@ change), per whichever normally applies.
    in Attempt 2's targeted searches (county recorder, tax assessor, state business registry) that
    points the other way. A single contradicting data point anywhere is disqualifying, regardless of
    how much Tier 3 evidence agrees.
-3. **The property is old enough that absence of individual-sale history is actually informative.**
-   Long-standing absence of any individual unit sale is a real signal that no units have ever been
-   individually deeded; absence of sales on a property built or converted recently means nothing yet
-   — it could simply not have reached resale age. This condition specifically excludes:
-   - Anything flagged under the §5.3 lease-up-phase ambiguity (a new COA/HOA that hasn't started
-     individual sales yet looks identical to this pattern in its first few years).
-   - Any property whose construction/recording date is recent enough that a normal sales cycle
-     wouldn't have started. There's no single universal cutoff — use judgment based on the
-     property's type and typical local resale patterns, but a property still within roughly its
-     first several years after construction/recording should not qualify.
-   Check `Master_Original Build Year` (fall back to `Master_Most Recent Build Year` — there is no
-   single `Master_Build Year` column in the export). A confirmed multi-decade absence of sales
-   history from research is itself strong evidence this condition is met even if the build-year
-   field is blank or unclear — don't let a missing build year override a well-established research
-   finding, and don't let uncertainty here bleed into condition 4 below; evaluate each independently.
-4. **At least one internal DB field corroborates single ownership.** The clearest version of this:
-   a null `Master_Monthly Association Fees` on a property old and large enough that a real HOA/COA
-   of that size would almost always have a fee on file by now — a true association this size with no
-   fee ever recorded anywhere in the DB is itself a signal that no association actually exists to
-   charge one. **A null/blank fee field, by itself, is sufficient for this condition** — it does not
-   need a second internal field on top of it, and it does not need condition 3 to be independently
-   airtight first; each condition stands on its own evidence. A single `Owner`/`Cleaned Owner` value
-   with no per-unit variation can also satisfy this condition — the point is that the DB's own data,
-   not just external search results, independently points toward single ownership.
+3. **At least one internal DB field corroborates single ownership.** The clearest version of this:
+   a null `Master_Monthly Association Fees` on a property large enough that a real HOA/COA of that
+   size would almost always have a fee on file by now — a true association this size with no fee
+   ever recorded anywhere in the DB is itself a signal that no association actually exists to charge
+   one. **A null/blank fee field, by itself, is sufficient for this condition** — it does not need a
+   second internal field on top of it; the condition stands on its own evidence. A single
+   `Owner`/`Cleaned Owner` value with no per-unit variation can also satisfy this condition — the
+   point is that the DB's own data, not just external search results, independently points toward
+   single ownership.
    **This condition asks for ONE corroborating field, not an audit of every internal DB field for
    agreement.** Once you have one (most commonly the blank fee field), the condition is met — stop
    there. Do not go hunting through unrelated columns looking for something that might complicate or
@@ -208,7 +193,7 @@ change), per whichever normally applies.
    bulk-owned" or used as evidence for or against single ownership. A property showing "50% bulk"
    telecom service is not evidence of 50%-bulk real-estate ownership; it is simply not a real-estate
    signal at all and should be ignored for this condition.
-5. **No structural edge case (§5.7) explains the pattern instead.** Rule this out explicitly before
+4. **No structural edge case (§5.7) explains the pattern instead.** Rule this out explicitly before
    relying on the exception: a housing cooperative, a condo-hotel/timeshare, a senior/age-restricted
    or student community, or an investor/institutional *bulk-ownership* COA/HOA (§5.4 — where the
    underlying legal structure is still individually-parceled COA/HOA even though a single investor
@@ -217,10 +202,18 @@ change), per whichever normally applies.
    of these plausibly fits at least as well as "no association ever existed," the exception does not
    apply.
 
-**If all five hold:**
+**There is no minimum-age or build-year requirement.** A recently-built investor-owned rental
+community qualifies exactly the same way an old one does, as long as conditions 1-4 above are
+otherwise met — absence of individual-sale history is meaningful for a genuinely single-owner
+rental property regardless of when it was built. (This is distinct from the §5.3 lease-up-phase
+failure mode, which is about a genuine COA/HOA that HAS started individual sales but is early in
+that process — still a real pattern worth watching for in general research, just not a hard-coded
+age gate on this specific exception.)
+
+**If all four hold:**
 
 - The override is allowed, but **confidence is capped at Medium, never High** — High stays
-  reserved for cases resting on real Tier 1/2 evidence. Even a clean five-for-five Tier-3-only case
+  reserved for cases resting on real Tier 1/2 evidence. Even a clean four-for-four Tier-3-only case
   is inherently less certain than direct legal/structural confirmation, and the confidence field
   must reflect that regardless of how consistent the Tier 3 picture looks.
 - Tag the decision with a new archetype flag, **"Tier-3 Corroborated Override,"** distinct from
@@ -232,7 +225,7 @@ change), per whichever normally applies.
   accuracy doesn't hold up under manual review, tighten or retire this exception before scaling up,
   rather than letting it run at the same trust level as the rest of the tool.
 
-If any of the five conditions is unclear, unverified, or only partially met, do not apply the
+If any of the four conditions is unclear, unverified, or only partially met, do not apply the
 exception — fall back to the normal §6 decision process (which, absent Tier 1/2 evidence, lands on
 Not Enough Info). This exception is meant to be rare and tightly bounded, not a general-purpose
 lowering of the evidence bar for Tier 3 evidence.
@@ -309,6 +302,18 @@ developments (§5.5) are explicitly **not** covered by this amendment — that's
 problem, not a taxonomy misfit, and once the specific component is confirmed it should be decided
 normally.
 
+**Second amendment, specifically for housing cooperatives: a suspected co-op is treated the same as
+a confirmed one.** If research raises "this might be a co-op" as a live possibility that can't be
+fully resolved, that is itself a reason for `decision: Confirmed`, not a reason to weigh other
+evidence and lean toward Override anyway. Do not reason "there's a co-op signal here, but not
+enough evidence to be sure it's a co-op specifically, so I'll go with the stronger APT/COA/HOA
+signal instead" — an unresolved co-op possibility should bias toward leaving the label alone, not
+be set aside once a competing signal shows up. This is enforced by a second, independent code
+backstop: an Override whose own `reasoning` text mentions "co-op" or "cooperative" anywhere is
+forced back to `Confirmed`/the DB label, regardless of whether `structural_edge_case` was set —
+this exists because relying on that field alone assumes the model always remembers to set it
+when a co-op possibility comes up, and it doesn't always.
+
 ### 5.8 Fee field miscoding
 "Has Fees" as a trigger assumes the fee field is populated correctly. Before treating fee presence
 as evidence of COA/HOA structure, sanity-check that the fee isn't a miscoded value (e.g., a
@@ -337,7 +342,7 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
    - DB label confirmed by evidence found, or no contradicting evidence found → **Confirmed**
    - Tier 1/2 evidence contradicts DB label, corroborated by a second independent Tier 1/2 source →
      **Override — [correct type]**
-   - All five §4.1 bounded-exception conditions hold → **Override — [correct type]** on Tier 3
+   - All four §4.1 bounded-exception conditions hold → **Override — [correct type]** on Tier 3
      evidence alone, confidence capped at Medium, archetype flag "Tier-3 Corroborated Override"
    - Evidence is mixed, thin, Tier 3-only (and the §4.1 exception does not apply), contradictory, or
      genuinely ambiguous even after Attempt 2 (e.g., evidence points different directions, or the
@@ -614,11 +619,11 @@ years. `Master_Monthly Association Fees` is null.
 | `decision` | **Override — APT**, via the §4.1 bounded Tier-3-only exception |
 | `confidence` | **Medium** (capped — Tier 3 only; never High under §4.1) |
 | `evidence_tier_used` | Tier 3 (three independent, non-mirrored sources; no Tier 1/2 source exists or could exist for this pattern) |
-| `reasoning` | Three independent, non-syndicated sources (the property's own leasing site, Apartments.com, and ApartmentRatings.com reviews) consistently describe one owner and one leasing office for all 80 units, with no MLS or county deed record of an individual sale across 36 years and a null DB association fee corroborating that no real HOA exists; the property's age rules out lease-up ambiguity, and nothing suggests a co-op, condo-hotel, or bulk-owned COA/HOA instead. |
+| `reasoning` | Three independent, non-syndicated sources (the property's own leasing site, Apartments.com, and ApartmentRatings.com reviews) consistently describe one owner and one leasing office for all 80 units, with no MLS or county deed record of an individual sale ever found and a null DB association fee corroborating that no real HOA exists; nothing suggests a co-op, condo-hotel, or bulk-owned COA/HOA instead. |
 | `sources` | crosscreekapts.com (property's own site); Apartments.com; ApartmentRatings.com |
 | `archetype_flag` | Tier-3 Corroborated Override |
 
-**Why all five §4.1 conditions hold:**
+**Why all four §4.1 conditions hold:**
 
 1. **3+ independent sources** — the property's own site, Apartments.com, and ApartmentRatings.com
    are three distinct companies, not mirrors of one syndicated feed, and all three independently
@@ -626,18 +631,19 @@ years. `Master_Monthly Association Fees` is null.
 2. **Zero contradicting evidence** — Attempt 2's targeted searches (county recorder, tax assessor,
    state business registry for LaGrange/Troup County, GA) turned up no Declaration of Condominium,
    no HOA covenant, and no MLS or deed record of any individual unit ever selling separately.
-3. **Age makes the absence of sales informative** — 36 years is far beyond any plausible lease-up
-   phase; this is not a new development still working through its first sales cycle.
-4. **Internal DB corroboration** — `Master_Monthly Association Fees` is null despite the property
-   being large enough (80 units) and old enough (36 years) that a real HOA of this size would
-   almost certainly have a fee on file by now.
-5. **No structural edge case fits better** — not a housing cooperative (no share-based ownership
+3. **Internal DB corroboration** — `Master_Monthly Association Fees` is null despite the property
+   being large enough (80 units) that a real HOA of this size would almost certainly have a fee on
+   file by now. (This property also happens to be ~36 years old with zero sales history across
+   that whole span, which independently reinforces the picture — but that age fact is descriptive
+   color here, not a required condition; a newly-built version of this same property would satisfy
+   condition 3 just as well on the blank fee field alone.)
+4. **No structural edge case fits better** — not a housing cooperative (no share-based ownership
    language anywhere), not a condo-hotel, not senior/student housing, and not an investor
    bulk-owned COA/HOA (§5.4) — there is no evidence of individual parcels or a declaration existing
    at all, which is what would distinguish "one investor owns every COA unit" from "no COA/HOA
    exists here in the first place."
 
-Because all five hold, this overrides to APT rather than falling back to Not Enough Info — but at
+Because all four hold, this overrides to APT rather than falling back to Not Enough Info — but at
 capped Medium confidence, and flagged "Tier-3 Corroborated Override" so it's isolated in the batch
 summary and specifically oversampled during the §9 QC pass before this exception is trusted at
 scale.
