@@ -168,13 +168,18 @@ This exception exists only for that pattern, and only when ALL FOUR of the follo
 one fails, do not apply it -- fall back to the normal decision process (Not Enough Info if there's \
 no Tier 1/2 evidence).
 
-1. **3+ independent Tier 3 sources that agree, and EACH ONE must match both the DB's \
-Master_Property Name and Address** -- different companies/platforms (the property's own site, an \
-aggregator, and a genuinely distinct third source), not mirrors of one syndicated feed. Per failure \
-mode 6 below, a source that matches the address but describes a clearly different, unrelated \
-development doesn't count toward this condition at all -- it's not weaker evidence, it's evidence \
-about a different property. If your best sources only match on address (or only on name), this \
-condition is not met, regardless of how many such sources you found.
+1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the property name and \
+address together (the "anchor")** -- different companies/platforms (the property's own site, an \
+aggregator, and a genuinely distinct third source), not mirrors of one syndicated feed. You need \
+one source that explicitly confirms BOTH the DB's Master_Property Name and its Address (e.g. a \
+listing that names the property AND states the DB's address) -- once you have that anchor, other \
+sources describing only the address (without repeating the name) or only the name (without \
+repeating the address) still count toward the 3+, since the anchor already established that the \
+address genuinely belongs to this named property. Example: Zillow names "[X] Apartments" at the \
+DB's address (the anchor); two other sites separately describe apartments at that same address \
+without using the name -- all three count. Per failure mode 6 below, if NO source ever ties the \
+name and address together, address-only sources don't count at all, no matter how many you find -- \
+they're evidence about whatever is actually at that address, not necessarily this named record.
 2. **Zero contradicting evidence anywhere** -- no MLS individual sale, no county deed in a different \
 name, nothing in Attempt 2's targeted searches pointing the other way.
 3. **At least one internal DB field corroborates single ownership** -- e.g. a null `Master_Monthly \
@@ -220,25 +225,30 @@ evidence and be precise in your reasoning about exactly which condition(s), if a
 **Worked example (this is a real, previously-mishandled case -- get this one right):** an HOA-typed \
 property named "[X] Apartments," 80 units across 40 buildings, one leasing company, `Master_Monthly \
 Association Fees` is blank, zero MLS/deed sales history ever found for any unit. Three independent, \
-non-syndicated Tier 3 sources (the property's own site, an aggregator, and a review site) each \
-explicitly name "[X] Apartments" at the DB's address and agree on single ownership and one leasing \
-office. Attempt 2 finds no contradicting evidence and no declaration/HOA covenant on file. This \
-satisfies all four conditions -- 3+ sources that each match both name and address (1), no \
-contradicting evidence (2), the blank fee field alone corroborates single ownership on a property \
-this large (3), and nothing suggests a co-op/condo-hotel/bulk-owned-COA explanation instead (4) -- \
-so this resolves to **Override -> APT, confidence Medium**, not Not Enough Info. Do not decline to \
-invoke the exception here on the theory that "no single field is decisive on its own" -- each \
-condition already has its own sufficient evidence; that IS what the exception is for.
+non-syndicated Tier 3 sources agree on single ownership and one leasing office: the property's own \
+site names "[X] Apartments" at the DB's address (the anchor tying name and address together), and \
+two other sites (an aggregator and a review site) separately describe apartments at that same \
+address without repeating the name -- all three still count toward the 3+ because the anchor \
+already confirmed the address belongs to "[X] Apartments." Attempt 2 finds no contradicting \
+evidence and no declaration/HOA covenant on file. This satisfies all four conditions -- 3+ sources \
+with a confirmed name/address anchor (1), no contradicting evidence (2), the blank fee field alone \
+corroborates single ownership on a property this large (3), and nothing suggests a \
+co-op/condo-hotel/bulk-owned-COA explanation instead (4) -- so this resolves to **Override -> APT, \
+confidence Medium**, not Not Enough Info. Do not decline to invoke the exception here on the theory \
+that "no single field is decisive on its own" -- each condition already has its own sufficient \
+evidence; that IS what the exception is for.
 
-**A second, real previously-mishandled case, on condition 1's name/address requirement \
+**A second, real previously-mishandled case, on condition 1's name/address anchor requirement \
 specifically:** an HOA-typed property named "[Y] Manor Apts." Several Tier 3 sources confirm the \
 DB's address hosts a real rental apartment complex -- but none of them actually call it "[Y] Manor \
-Apts"; they describe a differently-named, seemingly unrelated complex. This does NOT satisfy \
-condition 1, even though the sources are individually reliable and agree with each other -- they \
-agree about a different property, not this one. The likely explanation is the DB's address for \
-"[Y] Manor Apts" is stale or wrong. The correct answer is **Not Enough Info**, not Override -- do \
-not import the other property's rental-apartment status onto this record just because it sits at \
-the address on file.
+Apts"; they describe a differently-named, seemingly unrelated complex, and no source anywhere ties \
+"[Y] Manor Apts" to that address specifically. This does NOT satisfy condition 1 -- there is no \
+anchor, so these address-only sources are evidence about whatever is actually at that address, not \
+necessarily about "[Y] Manor Apts." The likely explanation is the DB's address for "[Y] Manor Apts" \
+is stale or wrong. The correct answer is **Not Enough Info**, not Override -- do not import the \
+other property's rental-apartment status onto this record just because it sits at the address on \
+file. (Contrast with the first worked example: there, the property's own site DID name "[X] \
+Apartments" at the DB's address, which is exactly the anchor this case is missing.)
 
 If all four hold: the override is allowed, but **confidence is capped at Medium, never High** -- \
 High stays reserved for real Tier 1/2 evidence. Say so explicitly in your reasoning (e.g. "Tier-3 \
@@ -276,22 +286,26 @@ exactly like a single-owner APT. Parcel-level records (Tier 2) distinguish this 
 5. **Mixed-use/multi-component developments.** One branded development may contain multiple legally \
 distinct components (e.g. an apartment tower plus a separate townhome HOA phase). Confirm which \
 specific address/parcel the DB record refers to before classifying the whole named development.
-6. **Stale or renamed properties -- and a source is only evidence if it matches BOTH the DB's \
-Master_Property Name and Address.** If a name-based search returns nothing or inconsistent results, \
-re-search by address and check whether the property has been renamed (common after condo \
-conversions) before concluding evidence is unavailable. But a source that matches the address \
-while describing a clearly DIFFERENT, unrelated development (not a renamed/rebranded version of \
-the same one) is not evidence about this record at all -- it means the DB's address itself is \
-likely wrong, not that you've found the right property under a new name. A real failure this \
-guards against: "[X] Apts" was overridden to APT because several Tier 3 sources confirmed the \
-address hosts a genuine rental apartment complex -- but that complex isn't "[X] Apts," it's an \
-unrelated property that happens to share the address, meaning the DB's address for this record is \
-stale/wrong and those sources say nothing about "[X] Apts" itself. Before crediting ANY Tier 3 \
-source as evidence, confirm it plausibly refers to the *same* property as the DB record -- matching \
-the name (allowing for an explained rename/rebrand you can point to) AND the address, not just one \
-of the two. If your best sources match the address but describe a clearly different, unrelated \
-development, that's not weak evidence for this record, it's evidence about a different one -- \
-label it Not Enough Info rather than importing that other property's characteristics.
+6. **Stale or renamed properties -- and address-only sources are only usable evidence once some \
+source ties the name and address together.** If a name-based search returns nothing or \
+inconsistent results, re-search by address and check whether the property has been renamed \
+(common after condo conversions) before concluding evidence is unavailable. It's fine for most of \
+your sources to describe only the address, or only the name, as long as AT LEAST ONE source \
+explicitly confirms both together (the "anchor") -- e.g. Zillow names the property at the DB's \
+address, and two other sites just describe apartments at that same address without repeating the \
+name; all three are usable. But if NO source ever ties the name and address together, a source \
+that matches the address while describing a clearly DIFFERENT, unrelated development (not a \
+renamed/rebranded version of the same one) is not evidence about this record at all -- it means the \
+DB's address itself is likely wrong, not that you've found the right property under a new name. A \
+real failure this guards against: "[X] Apts" was overridden to APT because several Tier 3 sources \
+confirmed the address hosts a genuine rental apartment complex -- but that complex isn't "[X] \
+Apts," it's an unrelated property that happens to share the address, and no source ever actually \
+named "[X] Apts" at that address. The DB's address for this record was stale/wrong, and those \
+sources said nothing about "[X] Apts" itself. Before crediting Tier 3 sources as a group, confirm \
+at least one of them plausibly ties the *same* property's name (allowing for an explained \
+rename/rebrand you can point to) to the address on file. If none of them do, that's not weak \
+evidence for this record, it's evidence about a different one -- label it Not Enough Info rather \
+than importing that other property's characteristics.
 7. **Structural edge cases outside APT/COA/HOA -- these are NEVER overridden, full stop.** \
 condo-hotels/timeshares (legal condo declaration but fractional/hotel-style operation), \
 manufactured home communities (own the structure, lease the land), senior/student housing \
@@ -471,19 +485,28 @@ SUBMIT_SCHEMA = {
             "description": (
                 "Only meaningful when tier3_exception_invoked is 'yes': how many genuinely "
                 "independent (different company/platform, not a syndicated mirror) Tier 3 sources "
-                "you found agreeing. 0 if tier3_exception_invoked is 'no'."
+                "you found agreeing, INCLUDING the anchor source counted in "
+                "tier3_name_address_anchor_confirmed. An address-only or name-only source counts "
+                "toward this total as long as tier3_name_address_anchor_confirmed is 'yes' -- see "
+                "that field. 0 if tier3_exception_invoked is 'no'."
             ),
         },
-        "tier3_sources_match_name_and_address": {
+        "tier3_name_address_anchor_confirmed": {
             "type": "string",
             "enum": YES_NO_NA_LABELS,
             "description": (
-                "Only meaningful when tier3_exception_invoked is 'yes': 'yes' only if EVERY source "
-                "counted in tier3_independent_source_count explicitly matches BOTH the DB's "
-                "Master_Property Name (allowing for an explained rename/rebrand) and its Address -- "
-                "not just one of the two. 'no' if your best sources match the address but describe a "
-                "clearly different, unrelated development (or vice versa) -- that means the DB's "
-                "address is likely wrong, and those sources are not evidence about this record. "
+                "Only meaningful when tier3_exception_invoked is 'yes': 'yes' only if AT LEAST ONE "
+                "of your sources explicitly ties the DB's Master_Property Name AND Address together "
+                "(e.g. a listing that names the property AND states the DB's address) -- this is the "
+                "'anchor' that confirms the address genuinely belongs to this named property. Once "
+                "you have that anchor, OTHER sources that describe only the address (without "
+                "repeating the name) or only the name (without repeating the address) still count "
+                "toward tier3_independent_source_count -- e.g. Zillow names the property at the DB "
+                "address (the anchor), and two other sites separately describe apartments at that "
+                "same address without using the name; all three count. 'no' if NO source ever ties "
+                "the name and address together -- in that case, address-only sources are evidence "
+                "about whatever property is actually at that address, not necessarily this named "
+                "record, and don't count at all no matter how many of them you find. "
                 "'not_applicable' if tier3_exception_invoked is 'no'."
             ),
         },
@@ -522,7 +545,7 @@ SUBMIT_SCHEMA = {
     "required": [
         "determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources",
         "structural_edge_case",
-        "tier3_exception_invoked", "tier3_independent_source_count", "tier3_sources_match_name_and_address",
+        "tier3_exception_invoked", "tier3_independent_source_count", "tier3_name_address_anchor_confirmed",
         "tier3_contradicting_evidence", "tier3_internal_db_corroboration", "tier3_structural_edge_case_ruled_out",
     ],
     "additionalProperties": False,
@@ -946,8 +969,8 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
         failure_reason = "no sources were listed at all, so the independent-source claim is unsupported"
     elif (_parse_number(result.get("tier3_independent_source_count")) or 0) < TIER3_EXCEPTION_MIN_SOURCES:
         failure_reason = "self-reported independent source count is below 3"
-    elif result.get("tier3_sources_match_name_and_address") != "yes":
-        failure_reason = "sources were not confirmed to match both the property name and address"
+    elif result.get("tier3_name_address_anchor_confirmed") != "yes":
+        failure_reason = "no source was confirmed to tie the property name and address together"
     elif result.get("tier3_contradicting_evidence") != "no":
         failure_reason = "contradicting evidence was found, or this wasn't explicitly ruled out"
     elif not _norm_text(result.get("tier3_internal_db_corroboration")):

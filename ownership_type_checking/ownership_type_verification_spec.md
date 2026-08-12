@@ -162,18 +162,23 @@ change), per whichever normally applies.
 
 **All four conditions required:**
 
-1. **3+ independent Tier 3 sources that agree, and each one must match BOTH the DB's
-   `Master_Property Name` and `Address`.** "Independent" means different companies or
-   platforms — a property's own leasing site, an aggregator (Apartments.com, Zillow rentals,
-   ApartmentRatings.com, etc.), and a distinct third source (a local news rental feature, a
+1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the DB's
+   `Master_Property Name` and `Address` together (the "anchor").** "Independent" means different
+   companies or platforms — a property's own leasing site, an aggregator (Apartments.com, Zillow
+   rentals, ApartmentRatings.com, etc.), and a distinct third source (a local news rental feature, a
    different management company's portfolio listing, tenant review site) all describing the same
    single-owner rental operation. Three restatements of one syndicated feed (e.g., the same listing
    mirrored across five aggregator sites that all pull from one data provider) do not satisfy this
    — this is the same corroboration-vs-accumulation distinction as §5.9, just applied at a stricter
-   threshold because Tier 3 evidence alone is carrying the whole decision here. Per the §5.6
-   amendment, a source that matches the address but describes a clearly different, unrelated
-   development does not count toward this condition at all — it's not weaker evidence, it's evidence
-   about a different property, and it means the DB's address is likely wrong.
+   threshold because Tier 3 evidence alone is carrying the whole decision here.
+   **Not every source needs to state both the name and the address — only one does.** Once at least
+   one source explicitly confirms both together (e.g. Zillow names the property at the DB's
+   address), other sources describing only the address (without repeating the name) or only the
+   name (without repeating the address) still count toward the 3+, since the anchor already
+   established that the address genuinely belongs to this named property. Per the §5.6 amendment,
+   if NO source ever ties the name and address together, address-only sources don't count toward
+   this condition at all, no matter how many you find — they're not weaker evidence, they're
+   evidence about whatever property is actually at that address, which may not be this one.
 2. **Zero contradicting evidence anywhere.** No MLS record of an individual unit sale, no county
    deed showing a different owner name for any specific address within the property, nothing found
    in Attempt 2's targeted searches (county recorder, tax assessor, state business registry) that
@@ -276,21 +281,27 @@ determine, treat as no evidence either way" without a fallback. Re-search by add
 whether the property has been renamed (common after condo conversions or rebranding) before
 concluding evidence is unavailable.
 
-**Amendment: a source is only evidence for a record if it matches BOTH `Master_Property Name`
-(allowing for an explained rename/rebrand) AND `Address` — not just one of the two.** A source that
-matches the address but describes a clearly different, unrelated development is not weaker evidence
-for this record — it's evidence about a *different* record, and using it means the DB's address is
-likely wrong, not that a name-based search simply needs to fall back to searching by address. Real
-failure this amendment closes: "Dearlove Manor Apts" (DB: not APT) was overridden to APT because
-several Tier 3 sources confirmed the DB's listed address hosts a genuine rental apartment complex —
-but none of those sources actually call it "Dearlove Manor Apts"; they describe a different,
-unrelated complex that happens to sit at that address. That's the DB's address being stale/wrong,
-not evidence about Dearlove Manor Apts itself. Before crediting any Tier 3 source, confirm it
-plausibly refers to the *same* property as the DB record on both facets — if your best sources
-match address-only or name-only, that source doesn't count, and the correct output is **Not Enough
+**Amendment: address-only or name-only sources are usable evidence only once some source ties the
+name and address together (the "anchor").** Not every source needs to state both
+`Master_Property Name` (allowing for an explained rename/rebrand) and `Address` — it's fine for
+most sources to describe only the address, or only the name, as long as AT LEAST ONE source
+explicitly confirms both together. E.g. Zillow names the property at the DB's address (the anchor);
+two other sites separately describe apartments at that same address without repeating the name —
+all three are usable, since the anchor already established that the address genuinely belongs to
+that named property. But if NO source ever ties the name and address together, a source that
+matches the address while describing a clearly different, unrelated development is not weaker
+evidence for this record — it's evidence about a *different* record, and using it means the DB's
+address is likely wrong, not that a name-based search simply needs to fall back to searching by
+address. Real failure this amendment closes: "Dearlove Manor Apts" (DB: not APT) was overridden to
+APT because several Tier 3 sources confirmed the DB's listed address hosts a genuine rental
+apartment complex — but none of those sources actually call it "Dearlove Manor Apts"; they describe
+a different, unrelated complex that happens to sit at that address, and no source ever tied the two
+together. That's the DB's address being stale/wrong, not evidence about Dearlove Manor Apts itself.
+Before crediting a group of Tier 3 sources, confirm at least one of them plausibly ties the *same*
+property's name to the address on file — if none of them do, the correct output is **Not Enough
 Info**, not a decision built on the other property's characteristics. This is now a named condition
-of §4.1's exception (condition 1) and is enforced in code via a required `tier3_sources_match_
-name_and_address` field, not left to the model's judgment alone.
+of §4.1's exception (condition 1) and is enforced in code via a required
+`tier3_name_address_anchor_confirmed` field, not left to the model's judgment alone.
 
 ### 5.7 Structural edge cases outside the three-way taxonomy
 Some properties won't cleanly fit APT/COA/HOA:
@@ -645,9 +656,11 @@ years. `Master_Monthly Association Fees` is null.
 
 **Why all four §4.1 conditions hold:**
 
-1. **3+ independent sources** — the property's own site, Apartments.com, and ApartmentRatings.com
-   are three distinct companies, not mirrors of one syndicated feed, and all three independently
-   describe the same single-owner, single-leasing-office operation.
+1. **3+ independent sources, with a confirmed name/address anchor** — the property's own site
+   names "Cross Creek Apartments" at the DB's address (the anchor tying name and address together);
+   Apartments.com and ApartmentRatings.com are two distinct additional companies, not mirrors of one
+   syndicated feed, independently describing the same single-owner, single-leasing-office operation
+   at that address.
 2. **Zero contradicting evidence** — Attempt 2's targeted searches (county recorder, tax assessor,
    state business registry for LaGrange/Troup County, GA) turned up no Declaration of Condominium,
    no HOA covenant, and no MLS or deed record of any individual unit ever selling separately.
