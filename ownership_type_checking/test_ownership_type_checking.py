@@ -288,7 +288,7 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "structural_edge_case": "none",
             "tier3_exception_invoked": "yes",
             "tier3_independent_source_count": 3,
-            "tier3_sources_match_name_and_address": "yes",
+            "tier3_name_address_anchor_confirmed": "yes",
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
@@ -312,7 +312,7 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "sources": ["https://crosscreekapts.com", "https://apartments.com/x", "https://apartmentratings.com/x"],
             "tier3_exception_invoked": "yes",
             "tier3_independent_source_count": 3,
-            "tier3_sources_match_name_and_address": "yes",
+            "tier3_name_address_anchor_confirmed": "yes",
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
@@ -380,21 +380,42 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
-    def test_sources_matching_address_but_not_name_fails_condition_one(self):
+    def test_no_name_address_anchor_fails_condition_one(self):
         # Real reported failure: "Dearlove Manor Apts" was overridden to APT because Tier 3
-        # sources confirmed real rental apartments at the DB's address -- but those sources
-        # describe a different, unrelated complex, not "Dearlove Manor Apts" itself. The DB's
-        # address was stale/wrong, so those sources are not evidence about this record at all.
+        # sources confirmed real rental apartments at the DB's address -- but none of those
+        # sources ever named "Dearlove Manor Apts" specifically; they describe a different,
+        # unrelated complex. With no anchor tying the name to the address, those address-only
+        # sources are not evidence about this record at all.
         row = self._large_row()
-        result = self._clean_override(tier3_sources_match_name_and_address="no")
+        result = self._clean_override(tier3_name_address_anchor_confirmed="no")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
-    def test_missing_name_and_address_confirmation_fails_condition_one(self):
+    def test_missing_name_address_anchor_confirmation_fails_condition_one(self):
         row = self._large_row()
-        result = self._clean_override(tier3_sources_match_name_and_address="not_applicable")
+        result = self._clean_override(tier3_name_address_anchor_confirmed="not_applicable")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_anchor_plus_address_only_sources_still_allows_override(self):
+        # The refined rule: not every source needs to match both name and address -- only ONE
+        # needs to (the anchor). Once that anchor exists, other sources describing only the
+        # address (without repeating the name) still count toward the 3+ source requirement.
+        # E.g. Zillow names the property at the DB address (the anchor); two other sites just
+        # describe apartments at that same address without using the name.
+        row = self._large_row()
+        result = self._clean_override(
+            tier3_name_address_anchor_confirmed="yes",
+            tier3_independent_source_count=3,
+            reasoning=(
+                "Zillow names the property at the DB's address (anchor); two other listing sites "
+                "separately describe apartments at that same address without repeating the name."
+            ),
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertEqual(fixed["confidence"], "Medium")
+        self.assertTrue(fixed["tier3_exception_used"])
 
     def test_contradicting_evidence_fails_condition_two(self):
         row = self._large_row()
