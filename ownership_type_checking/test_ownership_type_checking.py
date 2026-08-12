@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -202,17 +203,37 @@ class StructuralEdgeCaseGuardrailTests(unittest.TestCase):
             self.assertEqual(fixed["determined_type"], "HOA", msg=f"label={label}")
 
 
-class PropertyBuildYearTests(unittest.TestCase):
-    def test_uses_original_build_year_when_present(self):
-        row = {"Master_Original Build Year": "1990", "Master_Most Recent Build Year": "2020"}
-        self.assertEqual(otc._property_build_year(row), 1990)
+class CoopMentionGuardrailTests(unittest.TestCase):
+    def test_override_mentioning_cooperative_is_forced_confirmed(self):
+        # Real reported concern: reasoning raises a co-op possibility ("not enough evidence to
+        # confirm") without setting structural_edge_case, and a weak Override built on other
+        # evidence slips through. This backstop catches it directly from the reasoning text.
+        result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "structural_edge_case": "none",
+            "reasoning": "This may be a cooperative, but there wasn't enough evidence to confirm; leaning APT based on leasing activity.",
+        }
+        fixed = otc._enforce_coop_mention_guardrail("COA", result)
+        self.assertEqual(fixed["decision"], "Confirmed")
+        self.assertEqual(fixed["determined_type"], "COA")
 
-    def test_falls_back_to_most_recent_when_original_blank(self):
-        row = {"Master_Original Build Year": "", "Master_Most Recent Build Year": "2005"}
-        self.assertEqual(otc._property_build_year(row), 2005)
+    def test_override_mentioning_co_op_hyphenated_is_forced_confirmed(self):
+        result = {"determined_type": "APT", "decision": "Override", "reasoning": "Possibly a co-op structure here."}
+        fixed = otc._enforce_coop_mention_guardrail("HOA", result)
+        self.assertEqual(fixed["decision"], "Confirmed")
+        self.assertEqual(fixed["determined_type"], "HOA")
 
-    def test_none_when_both_missing(self):
-        self.assertIsNone(otc._property_build_year({}))
+    def test_override_with_no_coop_mention_is_left_alone(self):
+        result = {"determined_type": "APT", "decision": "Override", "reasoning": "County registry confirms rental apartments."}
+        fixed = otc._enforce_coop_mention_guardrail("HOA", result)
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_confirmed_mentioning_coop_is_left_alone(self):
+        # Already Confirmed -- nothing to force.
+        result = {"determined_type": "HOA", "decision": "Confirmed", "reasoning": "This is a housing cooperative."}
+        fixed = otc._enforce_coop_mention_guardrail("HOA", result)
+        self.assertEqual(fixed["decision"], "Confirmed")
 
 
 class ProcessPropertyIntegrationTests(unittest.TestCase):
@@ -238,7 +259,6 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_exception_invoked": "no",
             "tier3_independent_source_count": 0,
             "tier3_contradicting_evidence": "not_applicable",
-            "tier3_property_age_sufficient": "not_applicable",
             "tier3_internal_db_corroboration": "",
             "tier3_structural_edge_case_ruled_out": "not_applicable",
         }
@@ -255,7 +275,6 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "Master_Ownership Type": "HOA",
             "Master_Units_50+": "80",
             "Master_Building Count_50+": "40",
-            "Master_Original Build Year": str(otc._current_year() - 36),
             "Master_Monthly Association Fees": "",
             "Leasing Company": "Advanced Precision",
         }
@@ -264,14 +283,13 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "decision": "Override",
             "confidence": "High",
             "evidence_tier_used": "Tier 3",
-            "reasoning": "Tier-3 corroborated override: single owner, no sales in 36 years.",
+            "reasoning": "Tier-3 corroborated override: single owner, no sales history found.",
             "sources": ["https://crosscreekapts.com", "https://apartments.com/x", "https://apartmentratings.com/x"],
             "structural_edge_case": "none",
             "tier3_exception_invoked": "yes",
             "tier3_independent_source_count": 3,
             "tier3_contradicting_evidence": "no",
-            "tier3_property_age_sufficient": "yes",
-            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units and 36 years old",
+            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
@@ -289,42 +307,50 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "decision": "Override",
             "confidence": "High",
             "evidence_tier_used": "Tier 3",
-            "reasoning": "Single owner, single leasing office, no MLS sales in 36 years.",
+            "reasoning": "Single owner, single leasing office, no MLS sales history found.",
             "sources": ["https://crosscreekapts.com", "https://apartments.com/x", "https://apartmentratings.com/x"],
             "tier3_exception_invoked": "yes",
             "tier3_independent_source_count": 3,
             "tier3_contradicting_evidence": "no",
-            "tier3_property_age_sufficient": "yes",
-            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units and 36 years old",
+            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
         }
         result.update(overrides)
         return result
 
-    def _old_large_row(self, **overrides):
+    def _large_row(self, **overrides):
         row = {
-            "Master_Original Build Year": str(otc._current_year() - 36),
             "Master_Monthly Association Fees": "",
             "Master_Units_50+": "80",
         }
         row.update(overrides)
         return row
 
-    def test_all_five_conditions_hold_allows_override_capped_at_medium(self):
+    def test_all_four_conditions_hold_allows_override_capped_at_medium(self):
         # This is the Cross Creek Apartments worked example from spec §11.
-        row = self._old_large_row()
+        row = self._large_row()
         result = self._clean_override()
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
         self.assertEqual(fixed["confidence"], "Medium")
         self.assertTrue(fixed["tier3_exception_used"])
 
+    def test_newly_built_property_can_still_qualify(self):
+        # There is no minimum-age/build-year requirement for this exception -- a recently
+        # built investor-owned rental community should qualify exactly like an old one, as
+        # long as the four real conditions are met.
+        row = self._large_row(**{"Master_Original Build Year": str(int(time.strftime("%Y")) - 1)})
+        result = self._clean_override()
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertEqual(fixed["confidence"], "Medium")
+
     def test_fewer_listed_sources_than_claimed_count_still_allows_override(self):
         # Real reported failure: the model examined 3 independent sources and reported
         # tier3_independent_source_count=3, but only listed 2 URLs in `sources` (normal LLM
         # behavior -- it doesn't always enumerate every source it looked at). The guardrail
         # must trust the self-reported count, not reject based on the shorter `sources` list.
-        row = self._old_large_row()
+        row = self._large_row()
         result = self._clean_override(sources=["https://crosscreekapts.com", "https://apartments.com/x"])
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
@@ -334,48 +360,32 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
     def test_zero_listed_sources_fails_even_with_a_claimed_count(self):
         # The floor: a self-reported count with literally no sources cited at all is an
         # unsupported claim and should still fail, even though the bar is much lower than 3.
-        row = self._old_large_row()
+        row = self._large_row()
         result = self._clean_override(sources=[])
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
     def test_exception_not_invoked_is_downgraded_even_with_strong_evidence(self):
-        row = self._old_large_row()
+        row = self._large_row()
         result = self._clean_override(tier3_exception_invoked="no")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
         self.assertFalse(fixed["tier3_exception_used"])
 
     def test_fewer_than_three_sources_fails_condition_one(self):
-        row = self._old_large_row()
+        row = self._large_row()
         result = self._clean_override(sources=["https://crosscreekapts.com"], tier3_independent_source_count=1)
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
     def test_contradicting_evidence_fails_condition_two(self):
-        row = self._old_large_row()
+        row = self._large_row()
         result = self._clean_override(tier3_contradicting_evidence="yes")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
-    def test_self_reported_age_insufficient_fails_condition_three(self):
-        row = self._old_large_row()
-        result = self._clean_override(tier3_property_age_sufficient="no")
-        fixed = otc._enforce_tier3_override_guardrail(row, result)
-        self.assertEqual(fixed["decision"], "Not Enough Info")
-
-    def test_recent_build_year_backstop_overrides_a_false_age_claim(self):
-        # Model claims age is sufficient, but the row's own Master_Original Build Year says
-        # the property is only 2 years old -- the deterministic backstop must catch this even
-        # though every self-reported field looks clean.
-        row = self._old_large_row(**{"Master_Original Build Year": str(otc._current_year() - 2)})
-        result = self._clean_override()
-        fixed = otc._enforce_tier3_override_guardrail(row, result)
-        self.assertEqual(fixed["decision"], "Not Enough Info")
-        self.assertIn("years old", fixed["reasoning"])
-
-    def test_no_internal_corroboration_cited_fails_condition_four(self):
-        row = self._old_large_row()
+    def test_no_internal_corroboration_cited_fails_condition_three(self):
+        row = self._large_row()
         result = self._clean_override(tier3_internal_db_corroboration="")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
@@ -383,14 +393,14 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
     def test_fee_corroboration_contradicted_by_populated_fee_backstop(self):
         # Model claims a null fee corroborates single ownership, but the row's actual fee
         # field is populated -- direct contradiction the backstop must catch.
-        row = self._old_large_row(**{"Master_Monthly Association Fees": "350"})
+        row = self._large_row(**{"Master_Monthly Association Fees": "350"})
         result = self._clean_override()
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
         self.assertIn("populated", fixed["reasoning"])
 
-    def test_structural_edge_case_not_ruled_out_fails_condition_five(self):
-        row = self._old_large_row()
+    def test_structural_edge_case_not_ruled_out_fails_condition_four(self):
+        row = self._large_row()
         result = self._clean_override(tier3_structural_edge_case_ruled_out="no")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
@@ -398,7 +408,7 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
     def test_exception_never_applies_to_tier1_or_tier2_overrides(self):
         # The exception is specifically about the Tier-3-only case; a real Tier 1 override
         # shouldn't even look at the tier3_* fields.
-        row = self._old_large_row()
+        row = self._large_row()
         result = self._clean_override(evidence_tier_used="Tier 1", tier3_exception_invoked="no")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
