@@ -288,6 +288,7 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "structural_edge_case": "none",
             "tier3_exception_invoked": "yes",
             "tier3_independent_source_count": 3,
+            "tier3_sources_match_name_and_address": "yes",
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
@@ -311,6 +312,7 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "sources": ["https://crosscreekapts.com", "https://apartments.com/x", "https://apartmentratings.com/x"],
             "tier3_exception_invoked": "yes",
             "tier3_independent_source_count": 3,
+            "tier3_sources_match_name_and_address": "yes",
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
@@ -375,6 +377,22 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
     def test_fewer_than_three_sources_fails_condition_one(self):
         row = self._large_row()
         result = self._clean_override(sources=["https://crosscreekapts.com"], tier3_independent_source_count=1)
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_sources_matching_address_but_not_name_fails_condition_one(self):
+        # Real reported failure: "Dearlove Manor Apts" was overridden to APT because Tier 3
+        # sources confirmed real rental apartments at the DB's address -- but those sources
+        # describe a different, unrelated complex, not "Dearlove Manor Apts" itself. The DB's
+        # address was stale/wrong, so those sources are not evidence about this record at all.
+        row = self._large_row()
+        result = self._clean_override(tier3_sources_match_name_and_address="no")
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_missing_name_and_address_confirmation_fails_condition_one(self):
+        row = self._large_row()
+        result = self._clean_override(tier3_sources_match_name_and_address="not_applicable")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
