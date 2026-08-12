@@ -261,6 +261,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_contradicting_evidence": "not_applicable",
             "tier3_internal_db_corroboration": "",
             "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
             result = otc.process_property(None, "gpt-4o", row, {})
@@ -287,8 +289,11 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "sources": ["https://crosscreekapts.com", "https://apartments.com/x", "https://apartmentratings.com/x"],
             "structural_edge_case": "none",
             "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
             "tier3_independent_source_count": 3,
             "tier3_name_address_anchor_confirmed": "yes",
+            "tier3_partial_tier12_support": "not_applicable",
             "tier3_contradicting_evidence": "no",
             "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null despite 80 units",
             "tier3_structural_edge_case_ruled_out": "yes",
@@ -299,6 +304,73 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
         self.assertEqual(result["determined_type"], "APT")
         self.assertEqual(result["confidence"], "Medium")
         self.assertEqual(result["decision_display"], "Changed from HOA to APT")
+
+    def test_casa_gataway_style_property_with_populated_fee_can_override_to_hoa(self):
+        # Real reported failure: DB says APT, but multiple Tier-3 sources and a real, populated
+        # association fee corroborate HOA/COA. This is the reverse-direction §4.1 exception
+        # (to_coa_hoa) -- gated on a genuinely exhausted Attempt 2, not a parallel shortcut.
+        row = {
+            "RecordID": "912345",
+            "Master_Property Name": "Casa Gataway",
+            "Master_Ownership Type": "APT",
+            "Master_Monthly Association Fees": "461",
+        }
+        fake_result = {
+            "determined_type": "HOA",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": "Tier-3 corroborated reverse override: multiple listings describe this as an HOA community with a monthly association fee, and a thorough state business registry / county records search found no APT-supporting Tier 1/2 evidence.",
+            "sources": ["https://realtor.com/x", "https://zillow.com/x", "https://homes.com/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_coa_hoa",
+            "tier3_reverse_attempt2_exhausted": "yes",
+            "tier3_independent_source_count": 3,
+            "tier3_name_address_anchor_confirmed": "yes",
+            "tier3_partial_tier12_support": "not_applicable",
+            "tier3_contradicting_evidence": "no",
+            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is populated ($461), consistent with an HOA",
+            "tier3_structural_edge_case_ruled_out": "yes",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Override")
+        self.assertEqual(result["determined_type"], "HOA")
+        self.assertEqual(result["confidence"], "Medium")
+        self.assertEqual(result["decision_display"], "Changed from APT to HOA")
+
+    def test_reverse_direction_override_without_attempt2_exhausted_is_downgraded(self):
+        # The reverse direction requires an explicit, genuinely exhausted Attempt 2 -- if the
+        # model didn't actually exhaust it, the override must not be allowed to stand.
+        row = {
+            "RecordID": "912345",
+            "Master_Property Name": "Casa Gataway",
+            "Master_Ownership Type": "APT",
+            "Master_Monthly Association Fees": "461",
+        }
+        fake_result = {
+            "determined_type": "HOA",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": "Tier-3 sources describe this as an HOA community.",
+            "sources": ["https://realtor.com/x", "https://zillow.com/x", "https://homes.com/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_coa_hoa",
+            "tier3_reverse_attempt2_exhausted": "no",
+            "tier3_independent_source_count": 3,
+            "tier3_name_address_anchor_confirmed": "yes",
+            "tier3_partial_tier12_support": "not_applicable",
+            "tier3_contradicting_evidence": "no",
+            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is populated ($461), consistent with an HOA",
+            "tier3_structural_edge_case_ruled_out": "yes",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "APT")
 
 
 class Tier3ExceptionGuardrailTests(unittest.TestCase):
@@ -311,6 +383,8 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "reasoning": "Single owner, single leasing office, no MLS sales history found.",
             "sources": ["https://crosscreekapts.com", "https://apartments.com/x", "https://apartmentratings.com/x"],
             "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
             "tier3_independent_source_count": 3,
             "tier3_name_address_anchor_confirmed": "yes",
             "tier3_partial_tier12_support": "not_applicable",

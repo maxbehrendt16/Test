@@ -43,7 +43,8 @@ to counteract that tendency structurally, not just via a "be careful" instructio
 - **Default posture: confirm the DB label.** Only override it when Tier 1 or Tier 2 evidence (see
   §4) directly contradicts the DB label, corroborated by a second independent source.
 - **A single Tier 3 source (e.g., a leasing website) is never sufficient to override the DB label**,
-  regardless of how confident it sounds — except in the narrow, bounded case described in §4.1.
+  regardless of how confident it sounds — except in the narrow, bounded cases described in §4.1
+  (APT masquerading as HOA/COA) and §4.2 (the reverse: a genuine HOA/COA masquerading as APT).
 - **The trigger reason itself is never evidence.** The property was selected for review because of
   a naming pattern, unit ratio, floor count, fee presence, or leasing listing — that trigger
   explains *why we're looking*, not *what the answer is*. The model must not let the trigger bias
@@ -143,9 +144,10 @@ rather than two naming rules that likely share the same root cause).
 
 **Rule: an override requires at least one Tier 1 or Tier 2 source, corroborated by a second
 independent source of Tier 1 or 2.** Tier 3 evidence can support a decision already justified by
-Tier 1/2, but cannot drive one on its own — except in the narrow, bounded case described in §4.1.
+Tier 1/2, but cannot drive one on its own — except in the narrow, bounded cases described in §4.1
+and §4.2.
 
-### 4.1 Bounded exception: Tier-3-only override
+### 4.1 Bounded exception (forward direction, to APT): Tier-3-only override
 
 Real-world pattern driving this exception: **investor-owned single-family rental communities
 mislabeled as HOA.** A single owner (often an institutional investor or fund) holds every lot in a
@@ -254,6 +256,65 @@ or any at all without that supporting Tier 1/2 source — do not apply the excep
 the normal §6 decision process (which, absent sufficient Tier 1/2 evidence, lands on Not Enough
 Info). This exception is meant to be rare and tightly bounded, not a general-purpose lowering of
 the evidence bar for Tier 3 evidence.
+
+### 4.2 Bounded exception (reverse direction, to COA/HOA): last-resort Tier-3-corroborated override
+
+Real-world pattern driving this exception: a genuine COA/HOA is mislabeled APT in the DB, but
+multiple Tier 3 sources describe it as a condo/HOA community and a real, populated association fee
+on the row corroborates that. This is the mirror image of §4.1, but it is **not** symmetric with
+it, and is deliberately held to a stricter bar. §4.1 exists because an unregistered rental
+community structurally *cannot* produce Tier 1/2 evidence — there's no declaration, no deed, no
+registry entry, because no association exists. A genuine COA/HOA has the opposite property: it is
+normally a registered legal entity (a recorded declaration, a state-registered association) and
+*should* be discoverable in a state business registry or county recorder search. If a real
+association exists, targeted (Attempt 2) search failing to find it is a much bigger red flag here
+than it is in the §4.1 direction — it means either the search wasn't actually thorough, or the
+"association" doesn't have the legal registration a real one would.
+
+**Absolute gate: Attempt 2 must have been genuinely, thoroughly exhausted before this exception can
+even be considered.** This is not a formality — it means an actual state business registry search
+for a governing entity under this property's name (and plausible variants), an actual county
+recorder search for a Declaration of Condominium / CC&Rs / HOA covenant, and an actual county tax
+assessor / GIS parcel lookup, all specifically prompted by the Tier 3 signal plus the fee
+corroboration (see the strengthened §6 Attempt 2 guidance). This is tracked as its own required
+field, `tier3_reverse_attempt2_exhausted` — if it isn't `yes`, this exception does not apply,
+regardless of how strong the Tier 3 evidence looks, and the decision falls back to the normal §6
+process (Not Enough Info, absent sufficient Tier 1/2 evidence).
+
+**All four conditions required (adapted from §4.1, applied in the reverse direction) — with the
+gate above also required, and no 3-of-4 relaxation for this direction (see below):**
+
+1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the DB's
+   `Master_Property Name` and `Address` together (the "anchor")** — same corroboration-vs-
+   accumulation standard as §4.1's condition 1 and §5.9.
+2. **Zero contradicting evidence anywhere** — no lease/rental listing suggesting a single
+   corporate landlord, no county deed pattern suggesting single ownership, nothing in Attempt 2's
+   targeted searches pointing toward APT.
+3. **At least one internal DB field corroborates COA/HOA structure.** Unlike §4.1's condition 3
+   (which looks for a null fee), this direction looks for the fee actually being **populated** with
+   a real, recurring-looking amount — a real association fee on file is itself evidence an
+   association exists to charge one. A null or zero fee does not satisfy this condition in this
+   direction.
+4. **No structural edge case (§5.7) explains the pattern instead** — same check as §4.1's condition
+   4, ruled out explicitly before relying on the exception.
+
+**No 3-of-4 relaxation for this direction.** §4.1's "three of four with a supporting Tier 1/2
+source" relaxation does not apply here — this reverse direction is already the last-resort path per
+its own gate above, and stacking two leniency mechanisms on top of each other would compound risk
+beyond what this exception is meant to allow. All four conditions, plus the Attempt 2 gate, are
+required every time.
+
+**If the gate and all four conditions hold:**
+
+- The override is allowed, but **confidence is capped at Medium, never High**, for the same reason
+  as §4.1.
+- Tag the decision with the same **"Tier-3 Corroborated Override"** archetype flag as §4.1, and
+  record `tier3_exception_direction: to_coa_hoa` so these cases can be distinguished from the
+  forward direction in batch summaries. Like §4.1's cases, this is a highest-risk override path and
+  should be oversampled during the §9 QC pass.
+
+If the Attempt 2 gate isn't met, or any of the four conditions is unclear, unverified, or only
+partially met, do not apply the exception; fall back to the normal §6 decision process.
 
 ## 5. Known failure modes / pitfalls — be explicit about all of these
 
@@ -385,18 +446,30 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
    - County tax assessor / GIS parcel lookup for the specific address
    - County recorder search for a Declaration of Condominium / CC&Rs / HOA covenant
    - State business registry search for the governing entity name and type
+
+   **When the DB says APT but Attempt 1's Tier 3 evidence suggests COA/HOA and the row has a real,
+   populated association fee, Attempt 2 must be a genuine, thorough effort, not a token pass before
+   defaulting to "no Tier 1/2 evidence found."** Specifically try the state business registry search
+   under the property's name and plausible variants (an HOA/COA is normally a registered legal
+   entity and should turn up there if it genuinely exists) before concluding Attempt 2 is
+   inconclusive — this is the search most likely to surface the Tier 1/2 evidence this exact
+   scenario needs, and it's the one most likely to be skipped or rushed. This thoroughness is what
+   §4.2's `tier3_reverse_attempt2_exhausted` gate is checking for.
 3. **Decision:**
    - DB label confirmed by evidence found, or no contradicting evidence found → **Confirmed**
    - Tier 1/2 evidence contradicts DB label, corroborated by a second independent Tier 1/2 source →
      **Override — [correct type]**
    - The §4.1 bounded-exception conditions hold (all four, or three of four with a single
-     supporting-but-insufficient Tier 1/2 source) → **Override — [correct type]** on Tier 3
-     evidence, confidence capped at Medium, archetype flag "Tier-3 Corroborated Override"
-   - Evidence is mixed, thin, Tier 3-only (and the §4.1 exception does not apply), contradictory, or
-     genuinely ambiguous even after Attempt 2 (e.g., evidence points different directions, or the
-     property sits in a legitimately unclear situation like a mixed-use master development) →
-     **Not Enough Info — default to no change** (keep DB label, flagged low-confidence for optional
-     human review). **When in doubt, don't change the label.**
+     supporting-but-insufficient Tier 1/2 source) → **Override — APT** on Tier 3 evidence,
+     confidence capped at Medium, archetype flag "Tier-3 Corroborated Override"
+   - The §4.2 bounded-exception gate and all four conditions hold (reverse direction — DB says APT,
+     evidence says COA/HOA) → **Override — [COA or HOA]** on Tier 3 evidence, confidence capped at
+     Medium, archetype flag "Tier-3 Corroborated Override"
+   - Evidence is mixed, thin, Tier 3-only (and neither the §4.1 nor §4.2 exception applies),
+     contradictory, or genuinely ambiguous even after Attempt 2 (e.g., evidence points different
+     directions, or the property sits in a legitimately unclear situation like a mixed-use master
+     development) → **Not Enough Info — default to no change** (keep DB label, flagged
+     low-confidence for optional human review). **When in doubt, don't change the label.**
    - Property doesn't fit the three-way taxonomy → **Structural Edge Case — [description]**
 4. Every decision gets a **short, 1–2 sentence** plain-language reasoning and the specific evidence
    tier(s) relied on, plus source URLs. Keep it concise — this field is read at scale, not as a
@@ -417,7 +490,8 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
 | `evidence_tier_used` | Tier 1 / Tier 2 / Tier 3 / Mixed |
 | `reasoning` | **1–2 sentences**, plain language. Short enough to scan at scale — not a research memo. |
 | `sources` | List of source URLs |
-| `archetype_flag` | One of the failure-mode tags from §5 if applicable (e.g., "Marketing Language Trap," "Lease-Up Phase," "Investor Bulk Ownership," "Mixed-Use Development," "Stale/Renamed," "Structural Edge Case," "Fee Miscoding"), or "Tier-3 Corroborated Override" per §4.1 |
+| `archetype_flag` | One of the failure-mode tags from §5 if applicable (e.g., "Marketing Language Trap," "Lease-Up Phase," "Investor Bulk Ownership," "Mixed-Use Development," "Stale/Renamed," "Structural Edge Case," "Fee Miscoding"), or "Tier-3 Corroborated Override" per §4.1 or §4.2 |
+| `tier3_exception_direction` | For a "Tier-3 Corroborated Override": `to_apt` (§4.1, forward) or `to_coa_hoa` (§4.2, reverse) |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -469,12 +543,15 @@ the tool's calls before running the full ~25.8K. Track the override rate against
 it's very likely repeating the previous tool's mistake of over-trusting Tier 3 marketing evidence,
 and the prompt needs tightening before the full run.
 
-**Oversample "Tier-3 Corroborated Override" cases specifically.** Per §4.1, this is the one path
-where the tool changes a label without ever finding Tier 1/2 evidence, and it's new and unproven at
-scale. Pull every such case in the QC sample if the count is small enough, or a substantially
-higher proportion than its natural share of the batch otherwise — this archetype needs to
-demonstrate real-world accuracy before it's trusted at full volume, not just pass the general QC
-bar applied to the rest of the tool.
+**Oversample "Tier-3 Corroborated Override" cases specifically.** Per §4.1 and §4.2, this is the one
+path where the tool changes a label without ever finding Tier 1/2 evidence, and it's new and
+unproven at scale. Pull every such case in the QC sample if the count is small enough, or a
+substantially higher proportion than its natural share of the batch otherwise — this archetype
+needs to demonstrate real-world accuracy before it's trusted at full volume, not just pass the
+general QC bar applied to the rest of the tool. Within this sample, pay particular attention to
+§4.2 (reverse-direction, `to_coa_hoa`) cases specifically — they're the newer, stricter, and
+structurally higher-risk of the two directions (see §4.2's rationale), so their accuracy deserves
+independent scrutiny rather than being folded into the §4.1 track record.
 
 ## 10. Input file format
 
@@ -697,3 +774,36 @@ Because all four hold, this overrides to APT rather than falling back to Not Eno
 capped Medium confidence, and flagged "Tier-3 Corroborated Override" so it's isolated in the batch
 summary and specifically oversampled during the §9 QC pass before this exception is trusted at
 scale.
+
+### Casa Gataway Hoa (DB: APT) — the case that motivated §4.2
+
+The reverse-direction mirror of the Cross Creek case above. DB-listed as APT, but multiple Tier 3
+sources independently describe the property as an HOA community, and `Master_Monthly Association
+Fees` is populated ($461/month) — a real, recurring-looking fee, which corroborates rather than
+contradicts that description.
+
+| Field | Value |
+|---|---|
+| `determined_type` | **HOA** (changed from APT) |
+| `decision` | **Override — HOA**, via the §4.2 bounded reverse-direction exception |
+| `confidence` | **Medium** (capped — Tier 3 only; never High under §4.2) |
+| `evidence_tier_used` | Tier 3 (three independent sources; a thorough Attempt 2 — including a state business registry search — found no Tier 1/2 evidence either way) |
+| `tier3_exception_direction` | `to_coa_hoa` |
+| `tier3_reverse_attempt2_exhausted` | `yes` |
+| `archetype_flag` | Tier-3 Corroborated Override |
+
+**Why this is not simply "run §4.1 backwards":** before this exception existed, this case landed on
+Not Enough Info even though the Tier 3 evidence and the populated fee both corroborated HOA — the
+tool correctly recognized it lacked "authoritative evidence" to override, but had no path to credit
+Tier-3-plus-fee corroboration in this direction at all. §4.2 exists specifically to give this
+pattern a path — but a stricter one than §4.1's, because a real HOA (unlike an unregistered rental
+community) is normally a registered legal entity that a genuinely thorough Attempt 2, especially a
+state business registry search, should be able to find directly. The override only holds because
+`tier3_reverse_attempt2_exhausted` is `yes` — Attempt 2 specifically tried the state business
+registry under the property's name and plausible variants and came up empty, in addition to the
+county recorder and tax assessor searches — and all four §4.2 conditions hold on top of that gate:
+3+ independent, non-mirrored Tier 3 sources with a confirmed name/address anchor; zero contradicting
+evidence; the fee itself populated and corroborating (not null, which would point the other way);
+and no structural edge case (co-op, condo-hotel, senior/student housing) fitting better. Had Attempt
+2 not been genuinely exhausted, or had the fee been null instead of populated, this would fall back
+to Not Enough Info exactly as it did before §4.2 existed.
