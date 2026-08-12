@@ -155,12 +155,16 @@ sold — every source describing the property is necessarily Tier 3 (a leasing s
 management company's own portfolio page), because there is no deed, declaration, or registry entry
 for an association that doesn't exist. Under the strict §4 rule, a genuine APT masquerading as an
 HOA in the DB can never be corrected, because the very evidence that would prove it is structurally
-unavailable. This section defines a narrow, bounded path to override on Tier 3 evidence alone —
-**only** when every one of the following four conditions holds. If any one fails, there is no
-override; the property falls back to the §6 default of "Not Enough Info" or "Confirmed" (no
-change), per whichever normally applies.
+unavailable. The same gap also applies when there's real Tier 1/2 evidence but only **one**
+independent source of it — a normal override needs a second, corroborating Tier 1/2 source (§4),
+and one alone can't carry it. This section defines a narrow, bounded path to override on Tier 3
+evidence — **either alone, or alongside that one insufficient Tier 1/2 source** — when the
+following four conditions hold. Normally all four are required; if you also have that one
+supporting Tier 1/2 source, only three of the four are required (see below). Do not conclude "only
+one Tier 1/2 source was found, so no override is possible" without first checking whether this
+exception applies using your Tier 3 evidence — that's exactly the gap it exists to cover.
 
-**All four conditions required:**
+**All four conditions required (three, with one supporting Tier 1/2 source — see below):**
 
 1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the DB's
    `Master_Property Name` and `Address` together (the "anchor").** "Independent" means different
@@ -211,6 +215,17 @@ change), per whichever normally applies.
    of these plausibly fits at least as well as "no association ever existed," the exception does not
    apply.
 
+**Relaxed threshold with partial Tier 1/2 support.** If, in addition to the Tier 3 evidence above,
+one (not two) independent Tier 1 or Tier 2 source also points the same way, only **three** of the
+four conditions above need to hold, not all four — any one of the four can be the gap, as long as
+the other three genuinely hold. A single Tier 1/2 source is real, authoritative-tier evidence; it
+just can't carry a normal override alone (that needs a second independent one), and this exception's
+evidence bar reflects that it's still worth something. Without that extra source (pure Tier 3), all
+four conditions are still required — this relaxation exists specifically to credit the additional,
+real corroboration a lone Tier 1/2 source provides, not to generally loosen the bar. This is why
+`evidence_tier_used` should be `Mixed` rather than `Tier 3` for these cases in the tool's output
+schema.
+
 **There is no minimum-age or build-year requirement.** A recently-built investor-owned rental
 community qualifies exactly the same way an old one does, as long as conditions 1-4 above are
 otherwise met — absence of individual-sale history is meaningful for a genuinely single-owner
@@ -219,25 +234,26 @@ failure mode, which is about a genuine COA/HOA that HAS started individual sales
 that process — still a real pattern worth watching for in general research, just not a hard-coded
 age gate on this specific exception.)
 
-**If all four hold:**
+**If enough conditions hold (four normally, or three with a supporting Tier 1/2 source):**
 
 - The override is allowed, but **confidence is capped at Medium, never High** — High stays
-  reserved for cases resting on real Tier 1/2 evidence. Even a clean four-for-four Tier-3-only case
+  reserved for cases resting on two independently-corroborated Tier 1/2 sources. Even a clean case
   is inherently less certain than direct legal/structural confirmation, and the confidence field
-  must reflect that regardless of how consistent the Tier 3 picture looks.
+  must reflect that regardless of how consistent the picture looks.
 - Tag the decision with a new archetype flag, **"Tier-3 Corroborated Override,"** distinct from
   every other archetype in §5, so these cases are easy to isolate in batch summaries. This is the
   highest-risk override path in the whole tool — it's the one case where the tool changes a label
-  without ever finding a single Tier 1 or Tier 2 source — and it deserves to be trivially
+  without ever finding two independent Tier 1/2 sources — and it deserves to be trivially
   filterable for extra scrutiny. Specifically **oversample "Tier-3 Corroborated Override" cases
   during the §9 QC pass** relative to their share of the batch; if this archetype's real-world
   accuracy doesn't hold up under manual review, tighten or retire this exception before scaling up,
   rather than letting it run at the same trust level as the rest of the tool.
 
-If any of the four conditions is unclear, unverified, or only partially met, do not apply the
-exception — fall back to the normal §6 decision process (which, absent Tier 1/2 evidence, lands on
-Not Enough Info). This exception is meant to be rare and tightly bounded, not a general-purpose
-lowering of the evidence bar for Tier 3 evidence.
+If too many of the four conditions are unclear, unverified, or only partially met — more than one,
+or any at all without that supporting Tier 1/2 source — do not apply the exception; fall back to
+the normal §6 decision process (which, absent sufficient Tier 1/2 evidence, lands on Not Enough
+Info). This exception is meant to be rare and tightly bounded, not a general-purpose lowering of
+the evidence bar for Tier 3 evidence.
 
 ## 5. Known failure modes / pitfalls — be explicit about all of these
 
@@ -373,8 +389,9 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
    - DB label confirmed by evidence found, or no contradicting evidence found → **Confirmed**
    - Tier 1/2 evidence contradicts DB label, corroborated by a second independent Tier 1/2 source →
      **Override — [correct type]**
-   - All four §4.1 bounded-exception conditions hold → **Override — [correct type]** on Tier 3
-     evidence alone, confidence capped at Medium, archetype flag "Tier-3 Corroborated Override"
+   - The §4.1 bounded-exception conditions hold (all four, or three of four with a single
+     supporting-but-insufficient Tier 1/2 source) → **Override — [correct type]** on Tier 3
+     evidence, confidence capped at Medium, archetype flag "Tier-3 Corroborated Override"
    - Evidence is mixed, thin, Tier 3-only (and the §4.1 exception does not apply), contradictory, or
      genuinely ambiguous even after Attempt 2 (e.g., evidence points different directions, or the
      property sits in a legitimately unclear situation like a mixed-use master development) →
