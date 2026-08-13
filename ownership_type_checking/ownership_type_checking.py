@@ -164,10 +164,37 @@ no matter how few units that is.
 designation, but you can currently verify ALL THREE of: (a) 100% of units owned by a single \
 entity, (b) one centralized leasing/management contact for the whole building, and (c) no unit \
 currently individually owned or listed for individual sale -- classify as APT, regardless of the \
-legal declaration. This is enforced in code: set `ownership_concentration` to \
-`single_owner_full_bulk` and the code forces `determined_type` to APT regardless of what else you \
-submit, so don't also try to argue for keeping the legal COA/HOA label once you've verified all \
-three.
+legal declaration. Set `ownership_concentration` to `single_owner_full_bulk` -- but this alone is \
+NOT enough; the code also requires all of the following before it will actually apply Rule A \
+(otherwise it downgrades to Not Enough Info regardless of what you submit):
+
+- **`ownership_concentration_verified_externally` must be `yes`.** 100% single ownership must be \
+verified via EXTERNAL sources -- county parcel/deed records showing one owner name across ALL \
+units, a state business registry entry, or multiple independent Tier 3 sources with a confirmed \
+anchor. **The DB's own `Owner`/`Cleaned Owner` field is NEVER sufficient on its own, and must \
+never be used as evidence toward an APT designation** -- this data is not reliable enough: a \
+majority-but-not-full owner (e.g. an investor holding 39 of 40 units) is very often still the \
+DB's sole listed Owner, so a single Owner name in the DB tells you nothing about whether the \
+LAST unit is also owned by that same entity. A real, previously-mishandled failure: "The Falls of \
+Portofino" reasoning stated "DB 'Owner' is Prime Group, satisfying the criteria for functional \
+override to APT" -- that is exactly the mistake this field exists to catch. If your only \
+evidence for 100% ownership is the DB's own Owner field, set this to `no`, not `yes`.
+- **`ownership_concentration_contradicting_evidence` must be `no`.** Explicitly check for and \
+rule out any sign of genuine, operating HOA/COA governance -- a registered HOA/COA entity, HOA \
+governance documents or a declaration, a real association fee, or any individually owned/listed \
+unit -- despite the bulk-ownership appearance. A real, previously-mishandled failure: "Paradise \
+Gardens One" reasoning itself said "Conflicting evidence: a registered HOA exists ... Ownership \
+is bulk-held, but not enough for override" and was STILL corrected to APT, because the \
+contradicting evidence the model itself found was never cross-checked against the bare \
+`ownership_concentration` self-report. If your own reasoning describes conflicting or \
+contradicting evidence anywhere, set this to `yes`, and do not also try to invoke Rule A. Also \
+note: **a real, populated `Master_Monthly Association Fees` value on the row unconditionally \
+blocks Rule A in code, regardless of what you submit for this field** -- a genuinely bulk-owned \
+property with no operating association should have no fee on file at all.
+- **`tier3_sales_listing_search_performed` must be `yes`** -- the same absolute sales-listing- \
+search gate as the forward §4.1 exception below applies here too: you must have explicitly \
+searched for individual unit SALE listings (not just rental listings) before concluding no unit \
+is individually owned or listed.
 
 **Rule B -- any individual ownership keeps COA/HOA.** If even one unit is currently individually \
 owned (held by a party other than the bulk owner, whether occupied, rented, or vacant), the \
@@ -175,7 +202,11 @@ property stays COA or HOA, never APT -- regardless of what fraction of the build
 bulk-owned. Set `ownership_concentration` to `individual_owner_present` when you find this; the \
 code forces `determined_type` away from APT regardless of what else you submit. A single \
 individual owner means a real association relationship exists that we'd have to work through, no \
-matter how small a fraction of the building that unit represents.
+matter how small a fraction of the building that unit represents. **"Master associations"** -- an \
+overarching HOA/COA governing multiple sub-associations or phases within a larger development -- \
+are a common real-world pattern for this: even if one phase looks like a single-owner rental \
+block, if ANY phase or unit anywhere in the master association is individually owned, Rule B \
+applies to the whole thing.
 
 **This is a required check, not an optional one -- before finalizing any decision, explicitly \
 check current ownership concentration (single owner vs. any individual owners), not just legal \
@@ -283,16 +314,22 @@ name, nothing in Attempt 2's targeted searches pointing the other way, and (per 
 individual sale listing and nothing describing the property as planned/entitled for individual \
 sale. A single piece of sale-related evidence is disqualifying on its own -- it doesn't need to be \
 corroborated by anything else to sink this condition.
-3. **At least one internal DB field corroborates single ownership** -- e.g. a null `Master_Monthly \
-Association Fees` on a property large enough that a real HOA/COA of that size would almost always \
-have a fee on file. A concentrated `Owner`/`Cleaned Owner` value can also satisfy this. \
+3. **A null `Master_Monthly Association Fees` on a property large enough that a real HOA/COA of \
+that size would almost always have a fee on file.** **This must be a fee-based claim -- the DB's \
+own `Owner`/`Cleaned Owner` field is NOT valid corroboration for this condition and never was \
+reliable enough for it, even though earlier guidance said otherwise.** A single Owner name in the \
+DB tells you nothing about whether every last unit is owned by that same entity -- a majority-but- \
+not-full owner (e.g. an investor holding 39 of 40 units) is very often still the DB's sole listed \
+Owner. Citing "Owner is [X], no per-unit variation" as your `tier3_internal_db_corroboration` will \
+be caught in code and treated as a condition-3 failure regardless of what else you submit. \
 **A null/blank fee field, by itself, is sufficient for this condition** -- do not treat it as merely \
 "weak" or hold out for a second internal field on top of it; the point of this condition is that the \
 DB's own data is consistent with no association existing at all, and an absent fee on a sizeable \
 property is exactly that. **This condition asks for ONE corroborating field, not unanimous \
-agreement across every internal field.** Once you have one, stop -- do not go hunting through other, \
-unrelated DB columns for something that might complicate or contradict it; that is looking for a \
-reason NOT to override, which is exactly backwards for a condition that's already satisfied.
+agreement across every internal field.** Once you have the null fee, stop -- do not go hunting \
+through other, unrelated DB columns (like Owner) for a substitute or something that might \
+complicate or contradict it; that is looking for a reason NOT to override, which is exactly \
+backwards for a condition that's already satisfied by the fee alone.
 4. **No structural edge case explains the pattern instead** -- not a housing cooperative, \
 condo-hotel, senior/age-restricted community, master-planned mixed community (explicit "master \
 planned community" phrasing or explicit for-rent-and-for-sale housing in a cited source -- read the \
@@ -885,13 +922,50 @@ SUBMIT_SCHEMA = {
             "type": "string",
             "enum": YES_NO_NA_LABELS,
             "description": (
-                "Only meaningful when tier3_exception_direction is 'to_apt': 'yes' only if you "
-                "explicitly searched for individual unit SALE listings for this specific property "
-                "(MLS/Zillow/Redfin 'for sale' listings, county deed/sale records) -- not just "
-                "rental listings. This is an absolute gate for the forward exception: you cannot "
-                "claim tier3_contradicting_evidence is 'no' without having actually done this "
-                "search. 'not_applicable' for the reverse direction or when tier3_exception_invoked "
-                "is 'no'."
+                "Required whenever tier3_exception_direction is 'to_apt' OR ownership_concentration "
+                "is 'single_owner_full_bulk' (§2.1's Rule A): 'yes' only if you explicitly searched "
+                "for individual unit SALE listings for this specific property (MLS/Zillow/Redfin "
+                "'for sale' listings, county deed/sale records) -- not just rental listings. This is "
+                "an absolute gate for BOTH the forward Tier-3 exception and Rule A: you cannot claim "
+                "tier3_contradicting_evidence is 'no', or that no unit is individually owned/listed "
+                "for Rule A, without having actually done this search. 'not_applicable' for the "
+                "reverse direction, when tier3_exception_invoked is 'no', and ownership_concentration "
+                "is not 'single_owner_full_bulk'."
+            ),
+        },
+        "ownership_concentration_verified_externally": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when ownership_concentration is 'single_owner_full_bulk': 'yes' "
+                "only if 100% single ownership was verified via EXTERNAL sources -- county parcel/ "
+                "deed records showing one owner name across ALL units, a state business registry "
+                "entry, or multiple independent Tier 3 sources with a confirmed name/address anchor. "
+                "The DB's own `Owner`/`Cleaned Owner` field is NOT reliable enough to satisfy this "
+                "on its own: a majority-but-not-full owner is often still the DB's sole listed "
+                "Owner, so citing that field is not external verification. A real, previously-"
+                "mishandled failure: 'The Falls of Portofino' reasoning stated \"DB 'Owner' is Prime "
+                "Group, satisfying the criteria for functional override to APT\" -- that is exactly "
+                "the citation this field exists to catch; set this to 'no' in a case like that, not "
+                "'yes'. 'not_applicable' if ownership_concentration is not 'single_owner_full_bulk'."
+            ),
+        },
+        "ownership_concentration_contradicting_evidence": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when ownership_concentration is 'single_owner_full_bulk': 'no' "
+                "only if you specifically checked for and found zero evidence of genuine, operating "
+                "HOA/COA governance (a registered HOA/COA entity, HOA governance documents/"
+                "declaration, a real association fee, or any individually owned/listed unit) despite "
+                "the bulk-ownership appearance. 'yes' if any such evidence exists -- this blocks "
+                "Rule A regardless of how strong the bulk-ownership signal otherwise looks, mirroring "
+                "the §4.1 exception's own 'zero contradicting evidence' condition. A real, "
+                "previously-mishandled failure: 'Paradise Gardens One' reasoning itself stated "
+                "\"Conflicting evidence: a registered HOA exists ... Ownership is bulk-held, but not "
+                "enough for override\" and STILL got corrected to APT -- do not let a bulk-ownership "
+                "signal override your own finding of contradicting evidence like that. "
+                "'not_applicable' if ownership_concentration is not 'single_owner_full_bulk'."
             ),
         },
         "tier3_sales_evidence_found": {
@@ -928,14 +1002,18 @@ SUBMIT_SCHEMA = {
             "description": (
                 "Only meaningful when tier3_exception_invoked is 'yes': name the ONE specific "
                 "internal DB field and value that corroborates your direction. For 'to_apt' "
-                "(forward): corroborates single ownership, e.g. 'Master_Monthly Association Fees "
-                "is null despite 80 units'. For 'to_coa_hoa' (reverse): corroborates a real "
+                "(forward): this MUST be the null/blank Master_Monthly Association Fees field, "
+                "e.g. 'Master_Monthly Association Fees is null despite 80 units' -- the DB's own "
+                "Owner/Cleaned Owner field is never valid corroboration here, no matter how "
+                "concentrated it looks, since a majority-but-not-full owner is often still the "
+                "DB's sole listed Owner. For 'to_coa_hoa' (reverse): corroborates a real "
                 "association, e.g. 'Master_Monthly Association Fees is $461/month, a real recurring "
                 "fee'. One field is enough either way -- do not describe a search across multiple "
                 "fields for agreement. Must be truthful and specific -- this is cross-checked "
                 "against the property's own row data (direction-aware: a forward claim needs a "
-                "null/zero fee, a reverse claim needs a real non-zero one). Empty string if "
-                "tier3_exception_invoked is 'no'."
+                "null/zero fee, a reverse claim needs a real non-zero one) and, for the forward "
+                "direction, must actually mention 'fee' or it's treated as a condition-3 failure. "
+                "Empty string if tier3_exception_invoked is 'no'."
             ),
         },
         "tier3_structural_edge_case_ruled_out": {
@@ -960,6 +1038,7 @@ SUBMIT_SCHEMA = {
         "tier3_partial_tier12_support", "tier3_contradicting_evidence", "tier3_internal_db_corroboration",
         "tier3_structural_edge_case_ruled_out",
         "tier3_sales_listing_search_performed", "tier3_sales_evidence_found",
+        "ownership_concentration_verified_externally", "ownership_concentration_contradicting_evidence",
     ],
     "additionalProperties": False,
 }
@@ -1485,7 +1564,7 @@ def _enforce_master_planned_community_guardrail(row: dict, db_type: str, result:
     return result
 
 
-def _enforce_functional_ownership_guardrail(db_type: str, result: dict) -> dict:
+def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dict) -> dict:
     """§2.1's governing principle, restated as code: the correct DB label reflects who we'd
     actually have to sell to right now, not the legal condo/HOA declaration on file.
 
@@ -1495,6 +1574,34 @@ def _enforce_functional_ownership_guardrail(db_type: str, result: dict) -> dict:
     - Rule B ('individual_owner_present'): at least one unit is currently individually owned --
       forces determined_type away from APT, no matter how small a fraction of the building
       that unit is.
+
+    Rule A is gated by three real, deterministic checks -- a real failure showed the bare
+    self-reported 'single_owner_full_bulk' value alone isn't enough:
+    1. **A real, populated `Master_Monthly Association Fees` unconditionally blocks Rule A** --
+       a genuinely bulk-owned property with no operating association should have no fee on file
+       at all (the same logic as the §4.1 exception's own condition 3, just applied in reverse).
+       This is a hard, code-only check -- it does not depend on any self-reported field and
+       cannot be talked around. Real failure this catches: "Paradise Gardens One" was corrected
+       to APT via this rule despite a real $70/month fee on file and the model's OWN original
+       reasoning stating "a registered HOA exists" and "ownership is bulk-held, but not enough
+       for override" -- the self-reported ownership_concentration field alone let the override
+       through anyway.
+    2. **`ownership_concentration_verified_externally` must be 'yes'** -- 100% single ownership
+       must be verified via EXTERNAL sources (county parcel/deed records showing one owner name
+       across ALL units, state business registry, or multiple independent sources), never by
+       simply citing the DB's own `Owner`/`Cleaned Owner` field. That field is not reliable
+       enough for this: a majority-but-not-full owner is often still the DB's sole listed Owner.
+       Real failure this catches: "The Falls of Portofino" reasoning stated "DB 'Owner' is Prime
+       Group, satisfying the criteria for functional override to APT" -- citing the DB's own
+       field as if it were external verification.
+    3. **`ownership_concentration_contradicting_evidence` must be 'no'** -- mirrors the §4.1
+       exception's "zero contradicting evidence" condition: any sign of genuine HOA/COA
+       governance (a registered association entity, HOA governance documents, individually
+       owned/listed units) blocks Rule A regardless of the bulk-ownership appearance.
+    4. **`tier3_sales_listing_search_performed` must be 'yes'** -- Rule A shares the same
+       absolute sales-listing-search gate as the forward §4.1 exception (see
+       _enforce_tier3_override_guardrail); a genuine search for individual sale listings must
+       have been performed before concluding no individual owner exists.
 
     Skipped entirely for a structural edge case (housing co-op, condo-hotel, etc., whether
     flagged via structural_edge_case or caught by the co-op-mention backstop) -- those are their
@@ -1515,15 +1622,45 @@ def _enforce_functional_ownership_guardrail(db_type: str, result: dict) -> dict:
     result["reverse_conversion_used"] = False
 
     if concentration == "single_owner_full_bulk":
+        fee = _parse_number(row.get("Master_Monthly Association Fees"))
+        rule_a_failure = None
+        if fee is not None and fee != 0:
+            rule_a_failure = (
+                f"a real, populated Master_Monthly Association Fees ({fee:g}) contradicts "
+                f"'no operating association exists'"
+            )
+        elif result.get("ownership_concentration_verified_externally") != "yes":
+            rule_a_failure = (
+                "100% single ownership wasn't confirmed to be verified externally (county "
+                "parcel/deed records, state business registry, or multiple independent sources) "
+                "rather than by simply citing the DB's own Owner/Cleaned Owner field"
+            )
+        elif result.get("ownership_concentration_contradicting_evidence") == "yes":
+            rule_a_failure = "contradicting evidence of genuine HOA/COA governance was found"
+        elif result.get("tier3_sales_listing_search_performed") != "yes":
+            rule_a_failure = "an explicit search for individual sale listings wasn't confirmed"
+
+        if rule_a_failure:
+            if result.get("decision") == "Override" and result.get("determined_type") == "APT":
+                original = result.get("reasoning", "")
+                result["decision"] = "Not Enough Info"
+                result["determined_type"] = db_type
+                result["reasoning"] = (
+                    f"Automatically downgraded: the model invoked §2.1's Rule A (functional APT "
+                    f"override), but {rule_a_failure}. Original reasoning: {original}"
+                )
+            return result
+
         if result.get("determined_type") != "APT":
             original = result.get("reasoning", "")
             result["determined_type"] = "APT"
             result["decision"] = "Confirmed" if db_type == "APT" else "Override"
             result["reasoning"] = (
-                f"Automatically corrected to APT per §2.1: 100% single ownership, one centralized "
-                f"leasing/management contact, and no individually-owned or individually-listed "
-                f"unit means we'd only ever be selling to one entity, regardless of the legal "
-                f"condo/HOA declaration on file. Original reasoning: {original}"
+                f"Automatically corrected to APT per §2.1: 100% single ownership (verified "
+                f"externally), one centralized leasing/management contact, and no individually-"
+                f"owned or individually-listed unit means we'd only ever be selling to one "
+                f"entity, regardless of the legal condo/HOA declaration on file. Original "
+                f"reasoning: {original}"
             )
         if db_type != "APT":
             result["functional_apt_override_used"] = True
@@ -1574,8 +1711,16 @@ def _tier3_exception_condition_failures(row: dict, result: dict, direction: str)
     elif result.get("tier3_contradicting_evidence") != "no":
         failures.append("condition 2: contradicting evidence was found, or this wasn't explicitly ruled out")
 
-    if not _norm_text(result.get("tier3_internal_db_corroboration")):
+    corroboration_text = _norm_text(result.get("tier3_internal_db_corroboration"))
+    if not corroboration_text:
         failures.append("condition 3: no internal DB field corroboration was cited")
+    elif direction == "to_apt" and "fee" not in corroboration_text.lower():
+        failures.append(
+            "condition 3: forward-direction corroboration must be based on the null/blank "
+            "Master_Monthly Association Fees field -- the DB's Owner/Cleaned Owner field is not "
+            "reliable enough to use as evidence toward an APT designation (a majority-but-not-"
+            "full owner is often still the DB's sole listed Owner)"
+        )
     else:
         backstop_reason = _tier3_exception_backstop_failure(row, result, direction)
         if backstop_reason:
@@ -1825,10 +1970,20 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
             )
         if result.get("tier3_sales_evidence_found") not in YES_NO_NA_LABELS:
             raise ValueError(f"Model returned invalid tier3_sales_evidence_found: {result.get('tier3_sales_evidence_found')!r}")
+        if result.get("ownership_concentration_verified_externally") not in YES_NO_NA_LABELS:
+            raise ValueError(
+                f"Model returned invalid ownership_concentration_verified_externally: "
+                f"{result.get('ownership_concentration_verified_externally')!r}"
+            )
+        if result.get("ownership_concentration_contradicting_evidence") not in YES_NO_NA_LABELS:
+            raise ValueError(
+                f"Model returned invalid ownership_concentration_contradicting_evidence: "
+                f"{result.get('ownership_concentration_contradicting_evidence')!r}"
+            )
         result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_coop_mention_guardrail(db_type, result)
         result = _enforce_sales_evidence_guardrail(db_type, result)
-        result = _enforce_functional_ownership_guardrail(db_type, result)
+        result = _enforce_functional_ownership_guardrail(row, db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _reconcile_decision_and_type(db_type, result)
         result = _enforce_hoa_coa_naming_match(row, db_type, result)

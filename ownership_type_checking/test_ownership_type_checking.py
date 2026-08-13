@@ -268,6 +268,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -308,6 +310,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "yes",
             "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -349,6 +353,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -389,6 +395,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -420,6 +428,8 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "yes",
             "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         result.update(overrides)
         return result
@@ -652,6 +662,25 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
 
+    def test_forward_direction_owner_field_corroboration_fails_condition_three(self):
+        # Real reported concern ("Medley Johns Creek"): the DB's own Owner/Cleaned Owner field
+        # is not reliable enough to use as condition-3 corroboration -- a majority-but-not-full
+        # owner is often still the DB's sole listed Owner. Only a null/blank fee counts now.
+        row = self._large_row()
+        result = self._clean_override(
+            tier3_internal_db_corroboration="Owner is Ascentris, LLC with no per-unit variation"
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_forward_direction_fee_based_corroboration_still_works(self):
+        row = self._large_row()
+        result = self._clean_override(
+            tier3_internal_db_corroboration="Master_Monthly Association Fees is null despite 80 units"
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+
 
 class SalesEvidenceGuardrailTests(unittest.TestCase):
     """Absolute rule per a real reported failure ("Sky Nashville"): finding evidence of
@@ -665,6 +694,8 @@ class SalesEvidenceGuardrailTests(unittest.TestCase):
             "determined_type": "APT",
             "reasoning": "Marketed as a rental community.",
             "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         result.update(overrides)
         return result
@@ -728,6 +759,8 @@ class SalesEvidenceGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "yes",
             "tier3_sales_evidence_found": "yes",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -1078,6 +1111,8 @@ class HoaCoaNamingMatchTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -1100,10 +1135,12 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "not_applicable",
             "multi_name_all_agree": "not_applicable",
-            "tier3_sales_listing_search_performed": "not_applicable",
-            "tier3_sales_evidence_found": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "no",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "APT")
         self.assertEqual(fixed["decision"], "Override")
         self.assertTrue(fixed["functional_apt_override_used"])
@@ -1117,10 +1154,12 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "yes",
             "multi_name_all_agree": "not_applicable",
-            "tier3_sales_listing_search_performed": "not_applicable",
-            "tier3_sales_evidence_found": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("HOA", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "HOA", result)
         self.assertEqual(fixed["determined_type"], "APT")
         self.assertTrue(fixed["functional_apt_override_used"])
         self.assertTrue(fixed["reverse_conversion_used"])
@@ -1136,10 +1175,12 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "no",
             "multi_name_all_agree": "not_applicable",
-            "tier3_sales_listing_search_performed": "not_applicable",
-            "tier3_sales_evidence_found": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "no",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("HOA", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "HOA", result)
         self.assertEqual(fixed["determined_type"], "APT")
         self.assertTrue(fixed["functional_apt_override_used"])
         self.assertFalse(fixed["reverse_conversion_used"])
@@ -1155,8 +1196,10 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("APT", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
         self.assertEqual(fixed["determined_type"], "APT")
         self.assertFalse(fixed["functional_apt_override_used"])
 
@@ -1170,8 +1213,10 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
         self.assertEqual(fixed["decision"], "Confirmed")
 
@@ -1188,8 +1233,10 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("APT", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
         self.assertEqual(fixed["determined_type"], "APT")
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
@@ -1205,8 +1252,10 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "HOA")
         self.assertEqual(fixed["decision"], "Override")
 
@@ -1220,8 +1269,10 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
         self.assertEqual(fixed["decision"], "Confirmed")
 
@@ -1238,8 +1289,10 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
         self.assertEqual(fixed["decision"], "Confirmed")
         self.assertNotIn("functional_apt_override_used", fixed)
@@ -1256,10 +1309,119 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
-        fixed = otc._enforce_functional_ownership_guardrail("COA", result)
+        fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
         self.assertNotIn("functional_apt_override_used", fixed)
+
+    def test_real_populated_fee_unconditionally_blocks_rule_a(self):
+        # Real reported failure ("Paradise Gardens One"): the model's own reasoning stated "a
+        # registered HOA exists" and "ownership is bulk-held, but not enough for override," yet
+        # ownership_concentration was still set to single_owner_full_bulk and the override stood.
+        # A real, populated fee is a hard, code-only block -- it doesn't depend on any
+        # self-reported field and can't be talked around.
+        row = {"Master_Monthly Association Fees": "70"}
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "reasoning": "Conflicting evidence: a registered HOA exists, and a Tier 3 source shows a development with HOA fees, but assessor data contradicts the residential structure. Ownership is bulk-held, but not enough for override.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "no",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+        self.assertEqual(fixed["determined_type"], "HOA")
+
+    def test_zero_or_blank_fee_does_not_block_rule_a(self):
+        row = {"Master_Monthly Association Fees": ""}
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "COA",
+            "reasoning": "100% single-owned.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "no",
+            "tier3_sales_listing_search_performed": "yes",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "no",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail(row, "COA", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_db_owner_field_citation_is_not_external_verification(self):
+        # Real reported failure ("The Falls of Portofino"): reasoning cited "DB 'Owner' is Prime
+        # Group, satisfying the criteria for functional override to APT" -- the DB's own field is
+        # not external verification, and ownership_concentration_verified_externally must be
+        # explicitly 'yes' (never left at its default) for Rule A to apply.
+        row = {}
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "reasoning": "DB 'Owner' is Prime Group, satisfying the criteria for functional override to APT.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "ownership_concentration_verified_externally": "no",
+            "ownership_concentration_contradicting_evidence": "no",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+        self.assertEqual(fixed["determined_type"], "HOA")
+
+    def test_contradicting_evidence_blocks_rule_a(self):
+        row = {}
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "reasoning": "Bulk-owned, but a registered HOA entity was also found.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "yes",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+        self.assertEqual(fixed["determined_type"], "HOA")
+
+    def test_rule_a_without_sales_listing_search_is_blocked(self):
+        row = {}
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "reasoning": "Bulk-owned, no individual listings found.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+            "tier3_sales_listing_search_performed": "no",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "no",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_rule_a_gate_failure_does_not_disturb_a_decision_that_was_never_override(self):
+        # If the model's own decision already wasn't Override/APT (e.g. it agreed with its own
+        # "not enough for override" finding), a failing gate must not force anything -- there's
+        # nothing to downgrade.
+        row = {}
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "HOA",
+            "reasoning": "Bulk-held, but not enough for override.",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+            "tier3_sales_listing_search_performed": "no",
+            "ownership_concentration_verified_externally": "no",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Confirmed")
+        self.assertEqual(fixed["determined_type"], "HOA")
 
 
 class FunctionalOwnershipIntegrationTests(unittest.TestCase):
@@ -1295,8 +1457,10 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "no",
             "multi_name_all_agree": "not_applicable",
-            "tier3_sales_listing_search_performed": "not_applicable",
-            "tier3_sales_evidence_found": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "no",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -1336,6 +1500,8 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -1343,6 +1509,145 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
         self.assertEqual(result["decision"], "Confirmed")
         self.assertEqual(result["determined_type"], "COA")
         self.assertFalse(result["functional_apt_override_used"])
+
+    def test_paradise_gardens_one_end_to_end(self):
+        # Full regression, mirroring the exact reported failure: a real $70/month fee on file,
+        # and the model's own reasoning stating a registered HOA exists and "ownership is
+        # bulk-held, but not enough for override" -- yet ownership_concentration was still set to
+        # single_owner_full_bulk. The fee-based backstop alone must block this.
+        row = {
+            "RecordID": "19392336",
+            "Master_Property Name": "Paradise Gardens One",
+            "Master_Ownership Type": "HOA",
+            "Master_Monthly Association Fees": "70",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "Low",
+            "evidence_tier_used": "Mixed",
+            "reasoning": (
+                "Conflicting evidence: a registered HOA exists, and a Tier 3 source shows a "
+                "development with HOA fees, but assessor data contradicts the residential "
+                "structure. Ownership is bulk-held, but not enough for override."
+            ),
+            "sources": ["https://www.redfin.com/x", "https://search.sunbiz.org/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "no",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "HOA")
+        self.assertEqual(result["decision_display"], "Confirmed")
+
+    def test_falls_of_portofino_end_to_end(self):
+        # Full regression: reasoning cites the DB's own Owner field as if it were external
+        # verification of 100% single ownership -- ownership_concentration_verified_externally
+        # must be explicitly 'yes' and is not, so Rule A cannot apply.
+        row = {
+            "RecordID": "85213875",
+            "Master_Property Name": "The Falls of Portofino",
+            "Master_Ownership Type": "HOA",
+            "Master_Monthly Association Fees": "",
+            "Owner": "Prime Group",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 1",
+            "reasoning": (
+                "This property is legally structured as an HOA but operates as a single-owner, "
+                "centrally managed rental community with no units individually owned or listed. "
+                "DB 'Owner' is Prime Group, satisfying the criteria for functional override to APT."
+            ),
+            "sources": ["https://www.realtor.com/x", "https://www.apartments.com/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "no",
+            "ownership_concentration_contradicting_evidence": "no",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "HOA")
+
+    def test_medley_johns_creek_end_to_end(self):
+        # Full regression: the model's DB-Owner-derived corroboration ("owned by Ascentris, LLC")
+        # is no longer valid condition-3 evidence for the forward Tier-3 exception.
+        row = {
+            "RecordID": "24959331",
+            "Master_Property Name": "Medley Johns Creek",
+            "Master_Ownership Type": "HOA",
+            "Master_Monthly Association Fees": "",
+            "Owner": "Ascentris, LLC",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "Medium",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": (
+                "Medley Johns Creek is functionally an apartment complex with centralized "
+                "leasing, owned by Ascentris, LLC. No HOA governance evidence exists, and the DB "
+                "shows no association fee. Multiple Tier 3 sources confirm rental nature, meeting "
+                "all conditions for the Tier-3 exception."
+            ),
+            "sources": [
+                "https://johnscreekga.gov/news/x",
+                "https://www.ajc.com/business/x",
+                "https://apartments.com/x",
+            ],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 3,
+            "tier3_name_address_anchor_confirmed": "yes",
+            "tier3_partial_tier12_support": "not_applicable",
+            "tier3_contradicting_evidence": "no",
+            "tier3_internal_db_corroboration": "Owner is Ascentris, LLC with no per-unit variation",
+            "tier3_structural_edge_case_ruled_out": "yes",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "HOA")
 
     def test_missing_ownership_concentration_field_is_a_validation_error(self):
         row = {"RecordID": "555003", "Master_Ownership Type": "COA"}
@@ -1365,6 +1670,8 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
             # ownership_concentration deliberately omitted
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
@@ -1491,6 +1798,8 @@ class MasterPlannedCommunityGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "yes",
             "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         fetched_text = (
             "It is ICD's goal to provide a multitude of high quality housing options to meet "
@@ -1519,6 +1828,8 @@ class MultiNameGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "yes",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         result.update(overrides)
         return result
@@ -1598,6 +1909,8 @@ class MultiNameGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "no",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -1637,6 +1950,8 @@ class MultiNameGuardrailTests(unittest.TestCase):
             "multi_name_all_agree": "yes",
             "tier3_sales_listing_search_performed": "not_applicable",
             "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
