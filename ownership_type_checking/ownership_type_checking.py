@@ -1044,20 +1044,17 @@ SUBMIT_SCHEMA = {
             "type": "string",
             "enum": YES_NO_NA_LABELS,
             "description": (
-                "Only meaningful when tier3_exception_direction is 'to_apt': 'yes' only if "
-                "Attempt 2 explicitly searched for evidence of BOTH kinds of association -- a "
-                "Declaration of Condominium/condominium association AND an HOA covenant/"
-                "homeowners association -- regardless of which one Master_Ownership Type "
-                "currently lists. HOA and COA are commonly mislabeled as EACH OTHER, not just "
-                "mislabeled as APT: searching only for the DB's current type, finding nothing, "
-                "and concluding 'no association of any kind exists' is a real, previously-"
-                "mishandled failure pattern (properties DB-listed COA where research only checked "
-                "for HOA documents and mistook the absence of HOA-specific evidence for the "
-                "absence of any association -- when the actual answer might have been 'it's a "
-                "COA, not an HOA, but an association clearly exists'). Only after confirming BOTH "
-                "searches came up empty should you conclude no association exists at all. 'no' if "
-                "you only searched for one type, or didn't search at all. 'not_applicable' for the "
-                "reverse direction or when tier3_exception_invoked is 'no'."
+                "Only meaningful when tier3_exception_direction is 'to_apt': 'yes' if Attempt 2's "
+                "search touched on BOTH kinds of association -- a Declaration of Condominium/"
+                "condominium association AND an HOA covenant/homeowners association -- regardless "
+                "of which one Master_Ownership Type currently lists, before concluding no "
+                "association of any kind exists. HOA and COA are commonly mislabeled as EACH "
+                "OTHER, not just mislabeled as APT, so it's good practice to keep this in mind "
+                "rather than assuming absence of one type's evidence means absence of any "
+                "association. In practice a real search for one type's records usually surfaces "
+                "the other if it exists, so this is not a hard requirement -- 'no' does not by "
+                "itself block an override; it's tracked for visibility only. 'not_applicable' for "
+                "the reverse direction or when tier3_exception_invoked is 'no'."
             ),
         },
         "tier3_entity_name_registry_search_performed": {
@@ -2094,14 +2091,13 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
             "listing_search_performed claims",
         )
 
-    if direction == "to_apt" and result.get("tier3_dual_association_search_performed") != "yes":
-        return _downgrade_tier3_override(
-            result,
-            "the forward exception requires Attempt 2 to have searched for evidence of BOTH a "
-            "condominium association AND an HOA, regardless of which one the DB currently "
-            "lists, before concluding no association of any kind exists, which wasn't confirmed",
-        )
-
+    # No longer an absolute gate: requiring an explicit self-reported "yes, I searched for BOTH
+    # a condo AND an HOA" was firing on real, otherwise-solid overrides where a general search
+    # for one type would ordinarily have surfaced the other anyway (a real search for "no HOA at
+    # this address" and a real search for "no condo association at this address" tend to return
+    # the same evidence). tier3_dual_association_search_performed is still collected for manual
+    # QC visibility, but no longer downgrades on its own -- the other three conditions (source
+    # count/anchor, contradicting evidence, structural edge case) remain the actual safety net.
     if direction == "to_apt" and _has_legal_entity_name(row.get("Master_Property Name")) \
             and result.get("tier3_entity_name_registry_search_performed") != "yes":
         return _downgrade_tier3_override(

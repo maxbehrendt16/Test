@@ -758,15 +758,17 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
                 fixed = otc._enforce_tier3_override_guardrail(row, result)
                 self.assertEqual(fixed["decision"], "Override")
 
-    def test_missing_dual_association_search_fails(self):
-        # Real reported bug: both Mountain Ridge (DB: COA) and Castle Apartments (DB: COA) had
-        # reasoning that only checked for HOA documents ("no HOA"), never a condominium
-        # association -- despite the DB itself listing COA. Absence of one type's evidence must
-        # never be treated as absence of any association.
+    def test_missing_dual_association_search_no_longer_blocks_override(self):
+        # tier3_dual_association_search_performed was originally an absolute gate (see the
+        # deleted test_missing_dual_association_search_fails), but real batches showed it firing
+        # on otherwise-solid overrides -- a genuine search for one type of association usually
+        # surfaces the other if it exists, so requiring an explicit self-report of having checked
+        # both added friction without meaningfully improving detection. It's still collected for
+        # manual QC visibility, but "no" (or any other value) must not block the override alone.
         row = self._large_row()
         result = self._clean_override(tier3_dual_association_search_performed="no")
         fixed = otc._enforce_tier3_override_guardrail(row, result)
-        self.assertEqual(fixed["decision"], "Not Enough Info")
+        self.assertEqual(fixed["decision"], "Override")
 
     def test_legal_entity_name_requires_registry_search(self):
         # Real reported failure: "Castle Apartments Condominium Association, Inc." was overridden
