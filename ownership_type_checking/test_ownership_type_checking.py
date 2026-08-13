@@ -1102,9 +1102,9 @@ class ResearchPropertySaleSearchCorrectionLoopTests(unittest.TestCase):
         "Master_Property Name": "Stratford Crossing Flats",
     }
 
-    def _submit_item(self, result):
+    def _submit_item(self, result, call_id="call_fake_submit"):
         return self._FakeItem(
-            "function_call", name="submit_assessment", arguments=json.dumps(result)
+            "function_call", name="submit_assessment", arguments=json.dumps(result), call_id=call_id
         )
 
     def _bare_override_result(self):
@@ -1155,7 +1155,13 @@ class ResearchPropertySaleSearchCorrectionLoopTests(unittest.TestCase):
             ],
         )
         second_call_input = mock_call.call_args_list[1].kwargs["input"]
-        self.assertIn("sale", second_call_input[0]["content"].lower())
+        # Real, previously-mishandled bug: the correction loop must supply a function_call_output
+        # for the rejected submit_assessment call before adding a new user message -- otherwise
+        # the Responses API rejects the next turn with "No tool output found for function call
+        # <id>" since previous_response_id chaining requires every function_call to be answered.
+        self.assertEqual(second_call_input[0]["type"], "function_call_output")
+        self.assertEqual(second_call_input[0]["call_id"], "call_fake_submit")
+        self.assertIn("sale", second_call_input[1]["content"].lower())
 
     def test_correction_budget_is_bounded_then_falls_back_to_accepting_the_result(self):
         bare_query_response = self._FakeResponse(
