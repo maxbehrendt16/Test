@@ -309,6 +309,17 @@ address/name -- run at least one of these, not a paraphrase that avoids the actu
 would show up in the ownership/transfer history)
 - `"[address] deed"` or `"[address] parcel records"`
 
+**Your search query text itself must literally contain one of these words: "for sale," "sold," \
+"MLS," "Zillow," "Redfin," "listing," "resale," "deed," "parcel," "assessor," or "tax record."** A \
+real, previously-mishandled failure: reasoning concluded "no individual sale listings found," but \
+the ONLY query actually run was a bare `"[property name] [address] ownership"` search -- issued \
+TWICE, identically. That is a general ownership-structure search, not a sale-listing search, and \
+it does not satisfy this gate no matter how many times you repeat it or how confidently the \
+reasoning states no sale listings exist. A single generic "ownership" query is not a substitute \
+for actually searching for a listing, and running the same non-qualifying query again does not \
+make it qualify. If you already ran a search for ownership records, that's good for other \
+conditions, but it's not this one -- run a SEPARATE query using one of the words above.
+
 Set `tier3_sales_listing_search_performed` to `yes` only once you've actually run one of these (or \
 an equivalent, genuinely sale-targeted search) -- not because general research happened to not \
 surface a sale listing. Set `tier3_sales_evidence_found` to whatever that search actually found. \
@@ -684,6 +695,12 @@ state business registry for an incorporated homeowners/condo association matchin
 name or address, not just the county recorder. Don't default to Not Enough Info on this direction \
 without having made that real effort -- see the reverse-direction exception below for what to do \
 if you genuinely exhaust Attempt 2 and still find nothing.
+   **If you're heading toward an override to APT** (the forward Tier-3 exception, or §2.1's Rule \
+A), Attempt 2 must ALSO include a separate, dedicated search whose query text literally contains \
+one of: "for sale," "sold," "MLS," "Zillow," "Redfin," "listing," "resale," "deed," "parcel," \
+"assessor," or "tax record." A general "[name] [address] ownership" search does not count, no \
+matter how many times you run it -- see the full requirement and worked failure example in the \
+Tier-3 exception and Rule A sections below.
 3. **Required check, before finalizing anything -- current ownership concentration, per §2.1:** \
 regardless of legal declaration status, explicitly determine whether (a) 100% of units are \
 currently owned by a single entity with one centralized leasing/management contact and no \
@@ -703,9 +720,11 @@ COA/HOA). Remember that a past individual sale record alone doesn't settle this 
    - Evidence is mixed, thin, Tier-3-only (and neither exception applies), contradictory, or genuinely ambiguous even after Attempt 2 -> **Not Enough Info** (keep DB label, low confidence). When in doubt, don't change the label.
 5. Prefer a small number of well-targeted searches (2-4 is usually enough) over exhaustively \
 crawling many pages -- except per the Attempt 2 note above, where the situation specifically calls \
-for real effort before giving up. If a property still cannot be resolved with confidence after a \
-genuine Attempt 2, stop and label it Not Enough Info (or use the reverse-direction exception, if \
-its conditions hold) rather than digging indefinitely.
+for real effort before giving up, and except for the dedicated sale-listing-search query required \
+by the Tier-3 exception/Rule A gate above, which is never optional and never satisfied by folding \
+it into a broader, more general query. If a property still cannot be resolved with confidence \
+after a genuine Attempt 2, stop and label it Not Enough Info (or use the reverse-direction \
+exception, if its conditions hold) rather than digging indefinitely.
 
 **A structural edge case (condo-hotel/timeshare, manufactured home community, senior/student \
 housing, housing cooperative, etc. -- failure mode 7 above) always resolves to `decision: \
