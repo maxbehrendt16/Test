@@ -265,8 +265,10 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_reverse_attempt2_exhausted": "not_applicable",
             "ownership_concentration": "not_applicable",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
-        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Confirmed")
         self.assertEqual(result["determined_type"], "COA")
@@ -301,8 +303,10 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_structural_edge_case_ruled_out": "yes",
             "ownership_concentration": "not_applicable",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
-        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Override")
         self.assertEqual(result["determined_type"], "APT")
@@ -338,8 +342,10 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_structural_edge_case_ruled_out": "yes",
             "ownership_concentration": "not_applicable",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
-        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Override")
         self.assertEqual(result["determined_type"], "HOA")
@@ -374,8 +380,10 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "tier3_structural_edge_case_ruled_out": "yes",
             "ownership_concentration": "not_applicable",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
-        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertEqual(result["determined_type"], "APT")
@@ -401,6 +409,7 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "tier3_structural_edge_case_ruled_out": "yes",
             "ownership_concentration": "not_applicable",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         result.update(overrides)
         return result
@@ -936,8 +945,10 @@ class HoaCoaNamingMatchTests(unittest.TestCase):
             "tier3_structural_edge_case_ruled_out": "yes",
             "ownership_concentration": "not_applicable",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
-        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Override")
         self.assertEqual(result["determined_type"], "HOA")
@@ -956,6 +967,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "Legally a condo, but 100% single-owned with one leasing office.",
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("COA", result)
         self.assertEqual(fixed["determined_type"], "APT")
@@ -970,6 +982,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "Historical individual sales, but county records now show one owner.",
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "yes",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("HOA", result)
         self.assertEqual(fixed["determined_type"], "APT")
@@ -986,6 +999,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "100% single-owned, no individual sales.",
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "no",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("HOA", result)
         self.assertEqual(fixed["determined_type"], "APT")
@@ -1000,6 +1014,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "Single-owned APT, no association.",
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("APT", result)
         self.assertEqual(fixed["determined_type"], "APT")
@@ -1012,6 +1027,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "Mostly bulk-owned by one investor, but one unit was individually sold.",
             "ownership_concentration": "individual_owner_present",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -1027,6 +1043,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "One unit found individually owned.",
             "ownership_concentration": "individual_owner_present",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("APT", result)
         self.assertEqual(fixed["determined_type"], "APT")
@@ -1041,6 +1058,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "Individually owned units, governed as an HOA not a COA.",
             "ownership_concentration": "individual_owner_present",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("COA", result)
         self.assertEqual(fixed["determined_type"], "HOA")
@@ -1053,6 +1071,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "Ordinary case.",
             "ownership_concentration": "not_applicable",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -1068,6 +1087,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "structural_edge_case": "housing_cooperative",
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -1083,6 +1103,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "reasoning": "This may be a cooperative, though not fully confirmed.",
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail("COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -1121,8 +1142,10 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "tier3_structural_edge_case_ruled_out": "not_applicable",
             "ownership_concentration": "single_owner_full_bulk",
             "reverse_conversion_detected": "no",
+            "multi_name_all_agree": "not_applicable",
         }
-        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Override")
         self.assertEqual(result["determined_type"], "APT")
@@ -1156,8 +1179,10 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "tier3_structural_edge_case_ruled_out": "not_applicable",
             "ownership_concentration": "individual_owner_present",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
         }
-        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Confirmed")
         self.assertEqual(result["determined_type"], "COA")
@@ -1181,12 +1206,278 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "tier3_internal_db_corroboration": "",
             "tier3_structural_edge_case_ruled_out": "not_applicable",
             "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
             # ownership_concentration deliberately omitted
         }
-        with mock.patch("ownership_type_checking.research_property", return_value=fake_result):
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertTrue(result["is_error"])
+
+
+class MasterPlannedCommunityGuardrailTests(unittest.TestCase):
+    """A structural-edge-case backstop that doesn't rely on the model's self-report: it scans
+    the model's own reasoning, and independently re-fetches cited source URLs, for "master
+    planned community" phrasing or explicit for-rent-and-for-sale housing language -- the real
+    Baumgardner Ranch failure, where the cited source said exactly this but the model's summary
+    never engaged with it."""
+
+    def _override(self, **overrides):
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "reasoning": "Marketed as a rental apartment community with no HOA evidences.",
+            "sources": ["https://integratedcommunitydevelopment.com/baumgardner/"],
+        }
+        result.update(overrides)
+        return result
+
+    def test_master_planned_phrase_in_reasoning_blocks_override(self):
+        row = {"Master_Property Name": "Baumgardner Ranch"}
+        result = self._override(
+            reasoning="This is a master planned community with a single leasing office."
+        )
+        with mock.patch("ownership_type_checking.fetch_url_cached", return_value=None) as fetch:
+            fixed = otc._enforce_master_planned_community_guardrail(row, "HOA", result, {})
+        fetch.assert_not_called()  # already caught from reasoning text -- no need to fetch
+        self.assertEqual(fixed["decision"], "Confirmed")
+        self.assertEqual(fixed["determined_type"], "HOA")
+        self.assertTrue(fixed["master_planned_override_blocked"])
+
+    def test_for_rent_and_for_sale_phrase_in_reasoning_blocks_override(self):
+        row = {"Master_Property Name": "Baumgardner Ranch"}
+        result = self._override(reasoning="The community offers homes for rent and for sale.")
+        fixed = otc._enforce_master_planned_community_guardrail(row, "HOA", result, {})
+        self.assertEqual(fixed["decision"], "Confirmed")
+        self.assertEqual(fixed["determined_type"], "HOA")
+
+    def test_master_planned_phrase_only_in_cited_source_still_blocks_override(self):
+        # The real Baumgardner Ranch failure: the model's own reasoning never mentions it, but
+        # the cited source page does. Re-fetching sources.get() must catch this.
+        row = {"Master_Property Name": "Baumgardner Ranch"}
+        result = self._override()
+        fetched_text = (
+            "It is ICD's goal to provide a multitude of high quality housing options to meet "
+            "the needs of the community including for rent and for sale homes. Baumgardner "
+            "Ranch is a master planned community in Cloverdale, CA."
+        )
+        with mock.patch("ownership_type_checking.fetch_url_cached", return_value=fetched_text):
+            fixed = otc._enforce_master_planned_community_guardrail(row, "HOA", result, {})
+        self.assertEqual(fixed["decision"], "Confirmed")
+        self.assertEqual(fixed["determined_type"], "HOA")
+        self.assertTrue(fixed["master_planned_override_blocked"])
+
+    def test_clean_source_content_leaves_override_alone(self):
+        row = {"Master_Property Name": "Cross Creek Apartments"}
+        result = self._override()
+        fetched_text = "Cross Creek Apartments -- apply now, floor plans, leasing office on site."
+        with mock.patch("ownership_type_checking.fetch_url_cached", return_value=fetched_text):
+            fixed = otc._enforce_master_planned_community_guardrail(row, "HOA", result, {})
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertFalse(fixed["master_planned_override_blocked"])
+
+    def test_unfetchable_source_fails_soft_and_leaves_override_alone(self):
+        # fetch_url_cached() already fails soft (returns None) on network errors -- this
+        # guardrail must not treat that as a match, and must not crash.
+        row = {"Master_Property Name": "Cross Creek Apartments"}
+        result = self._override()
+        with mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            fixed = otc._enforce_master_planned_community_guardrail(row, "HOA", result, {})
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_confirmed_decision_is_left_alone_without_fetching(self):
+        row = {"Master_Property Name": "Baumgardner Ranch"}
+        result = self._override(decision="Confirmed", determined_type="HOA")
+        with mock.patch("ownership_type_checking.fetch_url_cached", return_value=None) as fetch:
+            fixed = otc._enforce_master_planned_community_guardrail(row, "HOA", result, {})
+        fetch.assert_not_called()
+        self.assertEqual(fixed["decision"], "Confirmed")
+
+    def test_baumgardner_ranch_end_to_end(self):
+        # Full regression, mocking research_property() and fetch_url_cached() together, mirroring
+        # the real reported failure exactly.
+        row = {
+            "RecordID": "46822730",
+            "Master_Property Name": "Baumgardner Ranch",
+            "Master_Ownership Type": "HOA",
+            "Master_Monthly Association Fees": "",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "Medium",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": (
+                "Tier-3 corroborated override: Baumgardner Ranch is marketed as a rental "
+                "apartment community with no HOA evidences. Development is by a single entity, "
+                "indicating functionally as APT."
+            ),
+            "sources": [
+                "https://integratedcommunitydevelopment.com/baumgardner/",
+                "https://www.apartmenthomeliving.com/apartment-finder/Baumgardner-Ranch",
+            ],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 3,
+            "tier3_name_address_anchor_confirmed": "yes",
+            "tier3_partial_tier12_support": "not_applicable",
+            "tier3_contradicting_evidence": "no",
+            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null",
+            "tier3_structural_edge_case_ruled_out": "yes",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+        }
+        fetched_text = (
+            "It is ICD's goal to provide a multitude of high quality housing options to meet "
+            "the needs of the community including for rent and for sale homes. Baumgardner "
+            "Ranch is a master planned community."
+        )
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=fetched_text):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Confirmed")
+        self.assertEqual(result["determined_type"], "HOA")
+        self.assertEqual(result["decision_display"], "Confirmed")
+        self.assertTrue(result["master_planned_override_blocked"])
+
+
+class MultiNameGuardrailTests(unittest.TestCase):
+    """Comma-separated combined-name records (e.g. "White Oak Villas, South Cottage Village")
+    need independent, agreeing evidence for EVERY sub-name before an override is allowed to
+    stand."""
+
+    def _override(self, **overrides):
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "reasoning": "Both sub-names confirmed as apartments.",
+            "multi_name_all_agree": "yes",
+        }
+        result.update(overrides)
+        return result
+
+    def test_single_name_property_is_a_no_op(self):
+        row = {"Master_Property Name": "Cross Creek Apartments"}
+        result = self._override(multi_name_all_agree="no")
+        fixed = otc._enforce_multi_name_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_multi_name_all_agree_yes_allows_override(self):
+        row = {"Master_Property Name": "White Oak Villas, South Cottage Village"}
+        result = self._override(multi_name_all_agree="yes")
+        fixed = otc._enforce_multi_name_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertEqual(fixed["determined_type"], "APT")
+
+    def test_multi_name_disagreement_blocks_override(self):
+        row = {"Master_Property Name": "White Oak Villas, South Cottage Village"}
+        result = self._override(
+            multi_name_all_agree="no",
+            reasoning="White Oak Villas confirmed apartments, but South Cottage Village is a genuine HOA.",
+        )
+        fixed = otc._enforce_multi_name_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+        self.assertEqual(fixed["determined_type"], "HOA")
+        self.assertTrue(fixed["multi_name_blocked"])
+
+    def test_multi_name_not_applicable_blocks_override(self):
+        # The model failed to even recognize this as a multi-name record (left the field at its
+        # default) -- must still be blocked, since agreement was never actually confirmed.
+        row = {"Master_Property Name": "White Oak Villas, South Cottage Village"}
+        result = self._override(multi_name_all_agree="not_applicable")
+        fixed = otc._enforce_multi_name_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_confirmed_decision_is_left_alone(self):
+        row = {"Master_Property Name": "White Oak Villas, South Cottage Village"}
+        result = self._override(decision="Confirmed", determined_type="HOA", multi_name_all_agree="no")
+        fixed = otc._enforce_multi_name_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Confirmed")
+
+    def test_three_way_combined_name_also_requires_agreement(self):
+        row = {"Master_Property Name": "Oak Villas, Cottage Village, Pine Terrace"}
+        result = self._override(multi_name_all_agree="no")
+        fixed = otc._enforce_multi_name_guardrail(row, "HOA", result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_white_oak_villas_end_to_end_disagreement_keeps_hoa(self):
+        row = {
+            "RecordID": "700100",
+            "Master_Property Name": "White Oak Villas, South Cottage Village",
+            "Master_Ownership Type": "HOA",
+            "Master_Monthly Association Fees": "175",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 2",
+            "reasoning": (
+                "White Oak Villas confirmed as a single-owner apartment complex via county "
+                "parcel records; South Cottage Village nearby is a legally distinct, individually "
+                "owned HOA and was not confirmed as apartments."
+            ),
+            "sources": ["https://county-assessor.example.gov/parcel/700100"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "no",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "HOA")
+        self.assertEqual(result["decision_display"], "Confirmed")
+        self.assertTrue(result["multi_name_blocked"])
+
+    def test_white_oak_villas_end_to_end_agreement_allows_apt(self):
+        row = {
+            "RecordID": "700101",
+            "Master_Property Name": "White Oak Villas, South Cottage Village",
+            "Master_Ownership Type": "HOA",
+            "Master_Monthly Association Fees": "",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 2",
+            "reasoning": (
+                "Both White Oak Villas and South Cottage Village independently confirmed as a "
+                "single-owner apartment complex via county parcel records."
+            ),
+            "sources": ["https://county-assessor.example.gov/parcel/700101"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "yes",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Override")
+        self.assertEqual(result["determined_type"], "APT")
+        self.assertEqual(result["decision_display"], "Changed from HOA to APT")
 
 
 if __name__ == "__main__":

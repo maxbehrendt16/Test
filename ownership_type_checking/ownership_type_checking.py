@@ -90,6 +90,7 @@ STRUCTURAL_EDGE_CASE_LABELS = [
     "condo_hotel_timeshare",
     "manufactured_home_community",
     "senior_or_student_housing",
+    "master_planned_mixed_community",
     "other",
 ]
 
@@ -276,7 +277,9 @@ agreement across every internal field.** Once you have one, stop -- do not go hu
 unrelated DB columns for something that might complicate or contradict it; that is looking for a \
 reason NOT to override, which is exactly backwards for a condition that's already satisfied.
 4. **No structural edge case explains the pattern instead** -- not a housing cooperative, \
-condo-hotel, senior/age-restricted community, or an investor bulk-owned COA/HOA (§4 above) where \
+condo-hotel, senior/age-restricted community, master-planned mixed community (explicit "master \
+planned community" phrasing or explicit for-rent-and-for-sale housing in a cited source -- read the \
+actual page text, not just your own summary), or an investor bulk-owned COA/HOA (§4 above) where \
 individual parcels still legally exist even though one owner holds most of them. If any of those \
 plausibly fits at least as well, this exception does not apply -- and if it's a genuine structural \
 edge case rather than a masquerading APT, use the `structural_edge_case` field per failure mode 7 \
@@ -405,8 +408,11 @@ image of the forward exception's condition 3: a **real, non-null, non-zero, recu
 one-time deposit or a data-entry artifact). A legitimate recurring fee, by itself, is sufficient -- \
 same "one field is enough, don't hunt for a reason to reject it" principle as the forward case.
 4. **No structural edge case explains the pattern instead** -- e.g. not a co-op being mistaken for \
-a "regular" COA/HOA in a way that would call for `structural_edge_case` instead of this exception \
-(co-ops still resolve to Confirmed per failure mode 7, regardless of this exception).
+a "regular" COA/HOA in a way that would call for `structural_edge_case` instead of this exception, \
+and not a master-planned mixed community (explicit "master planned community" phrasing or explicit \
+for-rent-and-for-sale housing in a cited source) where the specific component can't be cleanly \
+confirmed (co-ops and master-planned mixed communities still resolve to Confirmed per failure mode \
+7, regardless of this exception).
 
 If all four hold (this direction does not get the 3-of-4 partial-Tier-1/2-support relaxation -- \
 that relaxation is specifically for the forward direction): **Override -> COA or HOA (whichever the \
@@ -506,10 +512,50 @@ is a direct contradiction: either you've ruled it out (say so, and don't use tho
 haven't (in which case the answer is Confirmed, not Override). This is enforced in code as well -- \
 an Override whose `reasoning` mentions "co-op" or "cooperative" is forced back to Confirmed \
 regardless of what else you submit.
-8. **Fee field miscoding.** Before treating fee presence as COA/HOA evidence, sanity-check it isn't \
+8. **Master-planned mixed communities -- read your cited sources' actual text, not just your own \
+summary of them.** A "master planned community" that explicitly offers BOTH for-rent AND for-sale \
+housing isn't reliably resolvable to a single APT/COA/HOA label from thin evidence -- set \
+`structural_edge_case` to `master_planned_mixed_community` and leave the DB label as-is (same \
+never-override policy as the rest of failure mode 7) UNLESS you can cleanly confirm which specific \
+component/parcel the DB's address actually refers to (in which case it's ordinary failure-mode-5 \
+mixed-use handling instead -- decide normally for that confirmed component). \
+**A real, previously-mishandled failure:** "Baumgardner Ranch" (DB: HOA) was overridden to APT with \
+reasoning stating it's "marketed as a rental apartment community with no HOA evidences" -- but the \
+very page cited as evidence describes it as a master planned community whose stated goal is to \
+provide "a multitude of high quality housing options ... including for rent and for sale homes." \
+That phrase directly contradicts a pure-rental-APT conclusion, and the reasoning never engaged with \
+it -- it's easy to skim past "master planned community" while focused on rental-marketing language \
+like "apply now" or "leasing office," but it's exactly the kind of phrase that should stop you and \
+prompt a second, more careful read of the page before concluding Override. This is also enforced as \
+an independent, deterministic backstop in code: your cited source URLs are re-fetched afterward and \
+scanned for "master planned community" phrasing or explicit for-rent-and-for-sale language, and an \
+Override that survives despite it being present in the actual page text is caught and downgraded \
+back to Confirmed regardless of what you submit -- so there's no benefit to overriding here even if \
+you miss it in your own reasoning.
+9. **Fee field miscoding.** Before treating fee presence as COA/HOA evidence, sanity-check it isn't \
 a one-time deposit, a data-entry artifact, or a fee belonging to a different nearby property from a \
 prior dedup issue in the CLP DB. If the fee amount/structure looks legitimate and recurring, treat \
 it as Tier-2-ish supporting evidence, not decisive alone.
+
+## Multi-name properties (comma-separated records)
+
+Some DB records combine multiple distinct, separately-named communities under one \
+`Master_Property Name`, comma-separated -- e.g. "White Oak Villas, South Cottage Village." You'll \
+be told explicitly, with each sub-name listed, when a property you're researching has this pattern. \
+**Treat each sub-name as its own separate research target -- run Attempt 1/Attempt 2 for EACH one \
+independently -- and only conclude Override if ALL of them independently and separately support \
+the SAME conclusion.** If even one sub-name disagrees (e.g. it supports staying at the existing DB \
+label, or a different type than the others), or you simply can't confirm one of them at all, the \
+record must stay at the DB label -- set `multi_name_all_agree` to `no` in that case, not `yes`. \
+**The address on file may only directly correspond to ONE of the sub-names** -- for the other \
+sub-name(s), search in the same immediate vicinity/nearby address rather than assuming the exact \
+address applies to both. Example: if the DB lists "White Oak Villas, South Cottage Village" as HOA, \
+and your research finds White Oak Villas is apartments, that alone is NOT enough to override -- you \
+must also separately confirm South Cottage Village is apartments too (searching near the same \
+address if its own address isn't directly on file). If South Cottage Village turns out to be a \
+genuine HOA instead, the record stays HOA overall, even though White Oak Villas alone looked like a \
+clean APT case. This is enforced in code: an Override on a multi-name record is downgraded to Not \
+Enough Info unless `multi_name_all_agree` is `yes`, regardless of what else you submit.
 
 ## Multi-trigger properties
 
@@ -647,14 +693,31 @@ SUBMIT_SCHEMA = {
             "enum": STRUCTURAL_EDGE_CASE_LABELS,
             "description": (
                 "'none' unless this property is a housing cooperative, condo-hotel/timeshare, "
-                "manufactured home community, or senior/student housing where the naming convention "
-                "doesn't reflect true legal structure. Setting this to anything other than 'none' "
-                "forces decision to Confirmed and determined_type to the existing DB label in code, "
-                "REGARDLESS of what you submit for those two fields -- so if you identify one of "
-                "these, don't also try to change the label; it won't take effect. Do NOT use this "
-                "for mixed-use/multi-component developments (that's a different problem -- identify "
+                "manufactured home community, senior/student housing where the naming convention "
+                "doesn't reflect true legal structure, or a master-planned mixed community (see "
+                "below). Setting this to anything other than 'none' forces decision to Confirmed "
+                "and determined_type to the existing DB label in code, REGARDLESS of what you "
+                "submit for those two fields -- so if you identify one of these, don't also try to "
+                "change the label; it won't take effect. Do NOT use this for an ordinary mixed-use/"
+                "multi-component development where you CAN clearly confirm which specific "
+                "component/parcel the DB record refers to (that's a different problem -- identify "
                 "the right component and decide normally) or for a property you simply couldn't "
-                "resolve (that's Not Enough Info, not an edge case)."
+                "resolve (that's Not Enough Info, not an edge case). "
+                "'master_planned_mixed_community': set this when the development is explicitly "
+                "described as a 'master planned community' (or similar) that includes BOTH for-rent "
+                "and for-sale housing, and you can't cleanly confirm which specific component the "
+                "DB's address refers to -- read your cited sources' actual text carefully for this, "
+                "not just your own summary of them, since this phrasing is easy to skim past while "
+                "focused on rental-marketing language. A real failure this guards against: "
+                "'Baumgardner Ranch' (DB: HOA) was overridden to APT as 'marketed as a rental "
+                "apartment community with no HOA evidences,' but the very page cited as the source "
+                "explicitly describes it as a master planned community with a stated goal of "
+                "providing 'a multitude of high quality housing options ... including for rent and "
+                "for sale homes' -- direct evidence AGAINST a pure-rental APT conclusion that the "
+                "reasoning never engaged with. This is also enforced as a deterministic backstop in "
+                "code: your cited source URLs are independently re-fetched and scanned for this "
+                "phrasing, and an Override that survives despite it being present will be caught "
+                "and downgraded regardless of what you submit."
             ),
         },
         "ownership_concentration": {
@@ -688,6 +751,21 @@ SUBMIT_SCHEMA = {
                 "no such reverse-conversion pattern applies (either no historical individual sales "
                 "exist, or they remain current). 'not_applicable' if ownership_concentration is not "
                 "'single_owner_full_bulk'."
+            ),
+        },
+        "multi_name_all_agree": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when Master_Property Name combines multiple comma-separated "
+                "sub-names (you'll be told this explicitly, with each sub-name listed, when it "
+                "applies). 'yes' only if you researched EACH sub-name SEPARATELY, as its own "
+                "Attempt 1/2, and ALL of them independently support the SAME override conclusion. "
+                "'no' if you researched multiple sub-names but they disagree (even one supporting "
+                "the existing DB label, or a different type than the others), or if you couldn't "
+                "confirm one of them at all -- in either case the property stays at the DB label "
+                "regardless of what you submit for decision/determined_type; this is enforced in "
+                "code. 'not_applicable' if the property has only a single name."
             ),
         },
         "tier3_exception_invoked": {
@@ -803,14 +881,17 @@ SUBMIT_SCHEMA = {
             "description": (
                 "Only meaningful when tier3_exception_invoked is 'yes': 'yes' only if you explicitly "
                 "considered and ruled out a housing cooperative, condo-hotel, senior/age-restricted "
-                "community, and an investor bulk-owned COA/HOA (where individual parcels still "
-                "legally exist) as better explanations. 'not_applicable' otherwise."
+                "community, master-planned mixed community (explicit 'master planned community' "
+                "phrasing or explicit for-rent-and-for-sale housing in a cited source), and an "
+                "investor bulk-owned COA/HOA (where individual parcels still legally exist) as "
+                "better explanations. 'not_applicable' otherwise."
             ),
         },
     },
     "required": [
         "determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources",
         "structural_edge_case", "ownership_concentration", "reverse_conversion_detected",
+        "multi_name_all_agree",
         "tier3_exception_invoked", "tier3_exception_direction", "tier3_reverse_attempt2_exhausted",
         "tier3_independent_source_count", "tier3_name_address_anchor_confirmed",
         "tier3_partial_tier12_support", "tier3_contradicting_evidence", "tier3_internal_db_corroboration",
@@ -883,6 +964,16 @@ def _parse_number(value):
 def _contains_any(text: str, keywords) -> bool:
     lowered = text.lower()
     return any(kw in lowered for kw in keywords)
+
+
+def _property_name_parts(name: str) -> list:
+    """Some DB records combine two (or more) distinct, separately-named communities into one
+    `Master_Property Name` value, e.g. "White Oak Villas, South Cottage Village" -- comma-
+    separated. Returns the individual, stripped sub-names in order (empty segments dropped); a
+    single-name property returns a one-element list. Callers should treat len() >= 2 as "this
+    record covers multiple distinct communities that each need their own evidence" (see
+    _enforce_multi_name_guardrail)."""
+    return [part.strip() for part in (name or "").split(",") if part.strip()]
 
 
 def _first_present(row: dict, *keys):
@@ -1047,6 +1138,19 @@ def format_property(row: dict, triggers: list, url_cache: dict) -> str:
     _, ratio_note = compute_unit_building_ratio(row)
     if ratio_note:
         lines.append(f"- {ratio_note}")
+
+    name_parts = _property_name_parts(_norm_text(row.get("Master_Property Name")))
+    if len(name_parts) >= 2:
+        parts_list = "; ".join(f'"{p}"' for p in name_parts)
+        lines.append(
+            f"- NOTE: this record's name combines {len(name_parts)} distinct sub-names: "
+            f"{parts_list}. Research EACH one separately as its own Attempt 1/2 (the address on "
+            f"file may only directly correspond to one of them -- search for the other(s) in the "
+            f"same immediate vicinity/nearby address). Only conclude Override if ALL of them "
+            f"independently and separately support the SAME conclusion; if even one disagrees or "
+            f"can't be confirmed, this must stay Not Enough Info. Set `multi_name_all_agree` "
+            f"accordingly."
+        )
 
     lines.append("")
     lines.append(f"### Trigger rule(s) that flagged this property for review ({len(triggers)} total)")
@@ -1220,6 +1324,63 @@ def _enforce_coop_mention_guardrail(db_type: str, result: dict) -> dict:
         f"Automatically kept as-is: the model's own reasoning raised a housing-cooperative "
         f"possibility, and co-ops are never overridden regardless of how that possibility was "
         f"weighed against other evidence. Original reasoning: {original}"
+    )
+    return result
+
+
+MASTER_PLANNED_RE = re.compile(r"master[- ]planned communit", re.IGNORECASE)
+FOR_RENT_AND_SALE_RE = re.compile(
+    r"for rent and for sale|for sale and for rent|for-rent and for-sale|for-sale and for-rent",
+    re.IGNORECASE,
+)
+
+
+def _enforce_master_planned_community_guardrail(row: dict, db_type: str, result: dict, url_cache: dict) -> dict:
+    """A structural-edge-case backstop that doesn't rely on the model correctly setting
+    structural_edge_case, and doesn't rely on the model's own reasoning either: it independently
+    re-fetches the property's own cited source URLs and scans the actual fetched page text for
+    "master planned community" phrasing or an explicit mix of for-rent AND for-sale housing.
+
+    Real failure this guards against: "Baumgardner Ranch" (DB: HOA) was overridden to APT with
+    reasoning claiming it's "marketed as a rental apartment community with no HOA evidences" --
+    but the cited source page itself describes it as a master planned community whose stated goal
+    is to provide "a multitude of high quality housing options ... including for rent and for sale
+    homes." The model's own summary never engaged with this, even though it was right there in the
+    page it cited. A master-planned community mixing for-rent and for-sale housing isn't reliably
+    resolvable to a single APT/COA/HOA label from thin evidence -- the safe default is to leave the
+    DB label as-is, the same "never override" policy as the other structural edge cases in §5.7,
+    just reached via an independent content check rather than the model's self-report.
+
+    Checks the model's own `reasoning` first (cheap, no network call), then falls back to
+    re-fetching each URL in `sources` (via the same fetch_url_cached() used elsewhere, which
+    already fails soft on network errors) only if decision is actually "Override" -- there's no
+    reason to spend that cost on a property already Confirmed."""
+    if result.get("decision") != "Override":
+        return result
+
+    combined_text = result.get("reasoning", "") or ""
+    if not (MASTER_PLANNED_RE.search(combined_text) or FOR_RENT_AND_SALE_RE.search(combined_text)):
+        found = False
+        for url in result.get("sources", []) or []:
+            fetched = fetch_url_cached(url, url_cache)
+            if fetched and (MASTER_PLANNED_RE.search(fetched) or FOR_RENT_AND_SALE_RE.search(fetched)):
+                found = True
+                break
+        if not found:
+            result = dict(result)
+            result["master_planned_override_blocked"] = False
+            return result
+
+    result = dict(result)
+    original = result.get("reasoning", "")
+    result["decision"] = "Confirmed"
+    result["determined_type"] = db_type
+    result["master_planned_override_blocked"] = True
+    result["reasoning"] = (
+        f"Automatically kept as-is: 'master planned community' phrasing (or an explicit mix of "
+        f"for-rent and for-sale housing) was found in the reasoning or a cited source, and a "
+        f"development like that isn't reliably resolvable to a single APT/COA/HOA label from thin "
+        f"evidence -- per §5.7, defaulting to no change. Original reasoning: {original}"
     )
     return result
 
@@ -1436,6 +1597,36 @@ def _reconcile_decision_and_type(db_type: str, result: dict) -> dict:
     return result
 
 
+def _enforce_multi_name_guardrail(row: dict, db_type: str, result: dict) -> dict:
+    """Some DB records combine multiple distinct, separately-named communities under one
+    `Master_Property Name` (comma-separated, e.g. "White Oak Villas, South Cottage Village") --
+    only an Override where the model researched EVERY sub-name separately and they ALL
+    independently agree is allowed to stand. If even one sub-name disagrees, wasn't researched,
+    or couldn't be confirmed, the record stays at the DB label -- the address on file may only
+    directly correspond to one of the sub-names, so evidence for that one alone says nothing
+    about the other(s). Whether this record actually has multiple sub-names is determined here in
+    code (from the row's own data, via _property_name_parts()), not left to the model to notice on
+    its own -- format_property() also tells the model explicitly when this applies."""
+    if len(_property_name_parts(_norm_text(row.get("Master_Property Name")))) < 2:
+        return result
+    if result.get("decision") != "Override":
+        return result
+    if result.get("multi_name_all_agree") == "yes":
+        return result
+
+    result = dict(result)
+    original = result.get("reasoning", "")
+    result["decision"] = "Not Enough Info"
+    result["determined_type"] = db_type
+    result["multi_name_blocked"] = True
+    result["reasoning"] = (
+        f"Automatically downgraded: this record combines multiple distinct sub-names, and an "
+        f"override requires every sub-name to be researched separately and agree -- that wasn't "
+        f"confirmed (multi_name_all_agree was not 'yes'). Original reasoning: {original}"
+    )
+    return result
+
+
 def _enforce_hoa_coa_naming_match(row: dict, db_type: str, result: dict) -> dict:
     """Final tiebreaker, applied only once an Override from APT to COA/HOA already stands on its
     own merits: if the property's own name contains an HOA-specific or COA-specific keyword,
@@ -1512,12 +1703,16 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
             raise ValueError(f"Model returned invalid tier3_exception_direction: {result.get('tier3_exception_direction')!r}")
         if result.get("ownership_concentration") not in OWNERSHIP_CONCENTRATION_LABELS:
             raise ValueError(f"Model returned invalid ownership_concentration: {result.get('ownership_concentration')!r}")
+        if result.get("multi_name_all_agree") not in YES_NO_NA_LABELS:
+            raise ValueError(f"Model returned invalid multi_name_all_agree: {result.get('multi_name_all_agree')!r}")
         result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_coop_mention_guardrail(db_type, result)
         result = _enforce_functional_ownership_guardrail(db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _reconcile_decision_and_type(db_type, result)
         result = _enforce_hoa_coa_naming_match(row, db_type, result)
+        result = _enforce_multi_name_guardrail(row, db_type, result)
+        result = _enforce_master_planned_community_guardrail(row, db_type, result, url_cache)
         is_error = False
     except Exception as e:
         result = _default_error_result(db_type, e)
@@ -1539,6 +1734,8 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         "tier3_exception_used": result.get("tier3_exception_used", False),
         "functional_apt_override_used": result.get("functional_apt_override_used", False),
         "reverse_conversion_used": result.get("reverse_conversion_used", False),
+        "master_planned_override_blocked": result.get("master_planned_override_blocked", False),
+        "multi_name_blocked": result.get("multi_name_blocked", False),
         "is_error": is_error,
     }
 
@@ -1626,6 +1823,8 @@ def compute_summary(results_by_id: dict) -> dict:
     tier3_exception_overrides = 0
     functional_apt_overrides = 0
     reverse_conversion_overrides = 0
+    master_planned_blocked = 0
+    multi_name_blocked = 0
 
     for result in results_by_id.values():
         by_decision[result["decision"]] = by_decision.get(result["decision"], 0) + 1
@@ -1637,6 +1836,10 @@ def compute_summary(results_by_id: dict) -> dict:
             functional_apt_overrides += 1
         if result.get("reverse_conversion_used"):
             reverse_conversion_overrides += 1
+        if result.get("master_planned_override_blocked"):
+            master_planned_blocked += 1
+        if result.get("multi_name_blocked"):
+            multi_name_blocked += 1
 
         is_override = result["decision"] == "Override"
         for rule in result["trigger_rules"]:
@@ -1665,6 +1868,8 @@ def compute_summary(results_by_id: dict) -> dict:
         "tier3_exception_overrides": tier3_exception_overrides,
         "functional_apt_overrides": functional_apt_overrides,
         "reverse_conversion_overrides": reverse_conversion_overrides,
+        "master_planned_blocked": master_planned_blocked,
+        "multi_name_blocked": multi_name_blocked,
     }
 
 
@@ -1709,6 +1914,13 @@ def print_summary(label: str, summary: dict):
     reverse_conversions = summary.get("reverse_conversion_overrides", 0)
     print(f"    of which Reverse Conversion (formerly individually owned, now bulk-owned): "
           f"{_pct(reverse_conversions, functional_apt)}")
+
+    master_planned_blocked = summary.get("master_planned_blocked", 0)
+    print(f"  Master-Planned Mixed Community overrides blocked (§5.7 backstop): "
+          f"{_pct(master_planned_blocked, total)} of all properties")
+    multi_name_blocked = summary.get("multi_name_blocked", 0)
+    print(f"  Multi-name records blocked for lack of agreement across sub-names: "
+          f"{_pct(multi_name_blocked, total)} of all properties")
 
     print("  Override rate by trigger rule:")
     for rule, counts in sorted(summary["override_rate_by_rule"].items()):
