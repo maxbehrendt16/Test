@@ -252,6 +252,20 @@ condition 4 below, the bar drops to at least THREE of four -- one condition is t
 fail. Either way, if too many fail for whichever bar applies, fall back to the normal decision \
 process (Not Enough Info if there's no Tier 1/2 evidence sufficient on its own).
 
+**Absolute gate, checked before the four conditions: you must explicitly search for individual \
+unit SALE listings for this specific property (MLS/Zillow/Redfin "for sale" listings, county deed/ \
+sale records) before you can claim condition 2 below.** Set `tier3_sales_listing_search_performed` \
+to `yes` only once you've actually done this search (not skipped it), and `tier3_sales_evidence_ \
+found` to whatever it actually found. **This asymmetry matters: finding RENTAL listings at an HOA/ \
+COA does NOT rule out the HOA/COA designation** (plenty of genuine HOA/COA units are individually \
+owned and rented out by their owners) **-- but finding SALE listings, or a property described as \
+planned/entitled for individual sale, at what you're about to call an APT DOES rule out APT, full \
+stop, regardless of anything else you found.** If `tier3_sales_evidence_found` is `yes`, this \
+exception does not apply, and you should not conclude APT via any other path either -- go straight \
+to Confirmed/the DB label. Do not talk yourself out of this: "no *conflicting* evidence" is not \
+consistent with a property you've just described as planned for individual sale -- that description \
+IS the conflicting evidence.
+
 1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the property name and \
 address together (the "anchor")** -- different companies/platforms (the property's own site, an \
 aggregator, and a genuinely distinct third source), not mirrors of one syndicated feed. You need \
@@ -265,7 +279,10 @@ without using the name -- all three count. Per failure mode 6 below, if NO sourc
 name and address together, address-only sources don't count at all, no matter how many you find -- \
 they're evidence about whatever is actually at that address, not necessarily this named record.
 2. **Zero contradicting evidence anywhere** -- no MLS individual sale, no county deed in a different \
-name, nothing in Attempt 2's targeted searches pointing the other way.
+name, nothing in Attempt 2's targeted searches pointing the other way, and (per the gate above) no \
+individual sale listing and nothing describing the property as planned/entitled for individual \
+sale. A single piece of sale-related evidence is disqualifying on its own -- it doesn't need to be \
+corroborated by anything else to sink this condition.
 3. **At least one internal DB field corroborates single ownership** -- e.g. a null `Master_Monthly \
 Association Fees` on a property large enough that a real HOA/COA of that size would almost always \
 have a fee on file. A concentrated `Owner`/`Cleaned Owner` value can also satisfy this. \
@@ -359,6 +376,20 @@ the one gap. Because there's also that single Tier 2 source (`evidence_tier_used
 `tier3_partial_tier12_support`: `yes`), 3 of 4 is enough here: this resolves to **Override -> APT, \
 confidence Medium**, not Not Enough Info. Without that Tier 2 source, this same picture (3 of 4, \
 condition 4 unresolved) would NOT be enough -- it would need all four.
+
+**A fourth worked example, a real previously-mishandled case on condition 2's sale-listing gate \
+specifically -- get this one right:** "Sky Nashville," an HOA-typed property. Research found the \
+property "is an entitled development planned for for-sale condos/townhomes," and then concluded \
+"no conflicting evidence was found confirming APT" and overrode to APT anyway. **This is a direct \
+self-contradiction, not a valid override.** A development entitled/planned for individual SALE \
+units is exactly the kind of evidence condition 2 exists to catch -- it doesn't matter that no \
+*additional* contradicting evidence was found, because that one fact already IS the contradicting \
+evidence. The correct handling: `tier3_sales_evidence_found` should be `yes` here, which fails \
+condition 2 outright and means this exception cannot apply -- the correct answer is **Confirmed, \
+HOA**, not Override. Do not read "planned for for-sale condos/townhomes" as neutral or as \
+compatible with an APT conclusion just because you haven't separately found MLS listings or a \
+different disqualifying fact -- the planned-for-sale framing already settles condition 2 on its \
+own.
 
 If enough conditions hold (four normally, or three with partial Tier 1/2 support): the override is \
 allowed, but **confidence is capped at Medium, never High** -- \
@@ -850,6 +881,36 @@ SUBMIT_SCHEMA = {
                 "if tier3_exception_invoked is 'no'."
             ),
         },
+        "tier3_sales_listing_search_performed": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when tier3_exception_direction is 'to_apt': 'yes' only if you "
+                "explicitly searched for individual unit SALE listings for this specific property "
+                "(MLS/Zillow/Redfin 'for sale' listings, county deed/sale records) -- not just "
+                "rental listings. This is an absolute gate for the forward exception: you cannot "
+                "claim tier3_contradicting_evidence is 'no' without having actually done this "
+                "search. 'not_applicable' for the reverse direction or when tier3_exception_invoked "
+                "is 'no'."
+            ),
+        },
+        "tier3_sales_evidence_found": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when tier3_exception_direction is 'to_apt': 'yes' if your sales-"
+                "listing search (or anything else in your research) found ANY evidence of "
+                "individual units being sold, listed for sale, or planned/entitled for individual "
+                "sale -- even if the rest of the property otherwise looks like a rental. This is an "
+                "absolute disqualifier: finding SALE evidence at what you're about to call APT "
+                "rules out APT, full stop, regardless of anything else you found (unlike rental "
+                "listings at an HOA/COA, which do NOT rule out the HOA/COA designation -- the rule "
+                "is not symmetric). 'yes' here is forced in code to fail condition 2 and block the "
+                "override to APT regardless of what else you submit. 'no' only if you searched and "
+                "found none. 'not_applicable' for the reverse direction or when "
+                "tier3_exception_invoked is 'no'."
+            ),
+        },
         "tier3_contradicting_evidence": {
             "type": "string",
             "enum": YES_NO_NA_LABELS,
@@ -857,7 +918,9 @@ SUBMIT_SCHEMA = {
                 "Only meaningful when tier3_exception_invoked is 'yes': 'no' if you specifically "
                 "checked for and found zero contradicting evidence (MLS individual sale, a deed in "
                 "a different name, anything from Attempt 2's targeted searches pointing the other "
-                "way). 'yes' if any contradicting evidence exists. 'not_applicable' otherwise."
+                "way, and -- for the forward direction -- no individual sale listing or planned-"
+                "for-sale framing per tier3_sales_evidence_found). 'yes' if any contradicting "
+                "evidence exists. 'not_applicable' otherwise."
             ),
         },
         "tier3_internal_db_corroboration": {
@@ -896,6 +959,7 @@ SUBMIT_SCHEMA = {
         "tier3_independent_source_count", "tier3_name_address_anchor_confirmed",
         "tier3_partial_tier12_support", "tier3_contradicting_evidence", "tier3_internal_db_corroboration",
         "tier3_structural_edge_case_ruled_out",
+        "tier3_sales_listing_search_performed", "tier3_sales_evidence_found",
     ],
     "additionalProperties": False,
 }
@@ -1328,6 +1392,42 @@ def _enforce_coop_mention_guardrail(db_type: str, result: dict) -> dict:
     return result
 
 
+def _enforce_sales_evidence_guardrail(db_type: str, result: dict) -> dict:
+    """Absolute rule per a real reported failure ('Sky Nashville'): finding evidence of
+    individual unit sales, sale listings, or units planned/entitled for individual sale directly
+    rules out an APT conclusion, regardless of which mechanism (ordinary Tier 1/2 override, or
+    either §4.1/§4.2 Tier-3 exception direction) got there, and regardless of what else was
+    found. This is deliberately NOT symmetric: finding rental listings at an HOA/COA does NOT
+    rule out the HOA/COA designation (plenty of genuine HOA/COA units are individually owned and
+    rented out) -- only a sale signal at what's about to be called APT triggers this.
+
+    Real failure this guards against: reasoning stated a property "is an entitled development
+    planned for for-sale condos/townhomes" and then, in the same breath, concluded "no conflicting
+    evidence was found confirming APT" and overrode to APT anyway -- a direct self-contradiction
+    that stood because tier3_contradicting_evidence was trusted at face value instead of being
+    cross-checked against what the dedicated sales-listing search itself found. Runs before the
+    other override guardrails (structural_edge_case/coop-mention aside) so an Override this
+    clearly contradicted never even reaches the Tier-3 exception's condition evaluation."""
+    if result.get("decision") != "Override" or result.get("determined_type") != "APT":
+        return result
+    if result.get("tier3_sales_evidence_found") != "yes":
+        return result
+
+    result = dict(result)
+    original = result.get("reasoning", "")
+    result["decision"] = "Confirmed"
+    result["determined_type"] = db_type
+    result["sales_evidence_override_blocked"] = True
+    result["reasoning"] = (
+        f"Automatically downgraded: individual unit sale listings (or planned/entitled-for-sale "
+        f"framing) were found, which directly rules out an APT conclusion regardless of any other "
+        f"evidence -- finding rental listings at an HOA/COA doesn't rule out HOA/COA, but finding "
+        f"sale listings (or planned-for-sale framing) at an APT does rule out APT. Original "
+        f"reasoning: {original}"
+    )
+    return result
+
+
 MASTER_PLANNED_RE = re.compile(r"master[- ]planned communit", re.IGNORECASE)
 FOR_RENT_AND_SALE_RE = re.compile(
     r"for rent and for sale|for sale and for rent|for-rent and for-sale|for-sale and for-rent",
@@ -1466,7 +1566,12 @@ def _tier3_exception_condition_failures(row: dict, result: dict, direction: str)
     elif result.get("tier3_name_address_anchor_confirmed") != "yes":
         failures.append("condition 1: no source was confirmed to tie the property name and address together")
 
-    if result.get("tier3_contradicting_evidence") != "no":
+    if direction == "to_apt" and result.get("tier3_sales_evidence_found") == "yes":
+        failures.append(
+            "condition 2: individual unit sale listings (or planned/entitled-for-sale framing) "
+            "were found, which directly contradicts an APT conclusion regardless of what else was found"
+        )
+    elif result.get("tier3_contradicting_evidence") != "no":
         failures.append("condition 2: contradicting evidence was found, or this wasn't explicitly ruled out")
 
     if not _norm_text(result.get("tier3_internal_db_corroboration")):
@@ -1536,6 +1641,14 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
             result,
             "the reverse-direction exception requires a genuinely exhausted Attempt 2 (no Tier "
             "1/2 evidence found despite a real search attempt), which wasn't confirmed",
+        )
+
+    if direction == "to_apt" and result.get("tier3_sales_listing_search_performed") != "yes":
+        return _downgrade_tier3_override(
+            result,
+            "the forward exception requires an explicit search for individual unit SALE "
+            "listings (not just rental listings) before condition 2 can be claimed, which "
+            "wasn't confirmed",
         )
 
     failures = _tier3_exception_condition_failures(row, result, direction)
@@ -1705,8 +1818,16 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
             raise ValueError(f"Model returned invalid ownership_concentration: {result.get('ownership_concentration')!r}")
         if result.get("multi_name_all_agree") not in YES_NO_NA_LABELS:
             raise ValueError(f"Model returned invalid multi_name_all_agree: {result.get('multi_name_all_agree')!r}")
+        if result.get("tier3_sales_listing_search_performed") not in YES_NO_NA_LABELS:
+            raise ValueError(
+                f"Model returned invalid tier3_sales_listing_search_performed: "
+                f"{result.get('tier3_sales_listing_search_performed')!r}"
+            )
+        if result.get("tier3_sales_evidence_found") not in YES_NO_NA_LABELS:
+            raise ValueError(f"Model returned invalid tier3_sales_evidence_found: {result.get('tier3_sales_evidence_found')!r}")
         result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_coop_mention_guardrail(db_type, result)
+        result = _enforce_sales_evidence_guardrail(db_type, result)
         result = _enforce_functional_ownership_guardrail(db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _reconcile_decision_and_type(db_type, result)
@@ -1736,6 +1857,7 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         "reverse_conversion_used": result.get("reverse_conversion_used", False),
         "master_planned_override_blocked": result.get("master_planned_override_blocked", False),
         "multi_name_blocked": result.get("multi_name_blocked", False),
+        "sales_evidence_override_blocked": result.get("sales_evidence_override_blocked", False),
         "is_error": is_error,
     }
 
@@ -1825,6 +1947,7 @@ def compute_summary(results_by_id: dict) -> dict:
     reverse_conversion_overrides = 0
     master_planned_blocked = 0
     multi_name_blocked = 0
+    sales_evidence_blocked = 0
 
     for result in results_by_id.values():
         by_decision[result["decision"]] = by_decision.get(result["decision"], 0) + 1
@@ -1840,6 +1963,8 @@ def compute_summary(results_by_id: dict) -> dict:
             master_planned_blocked += 1
         if result.get("multi_name_blocked"):
             multi_name_blocked += 1
+        if result.get("sales_evidence_override_blocked"):
+            sales_evidence_blocked += 1
 
         is_override = result["decision"] == "Override"
         for rule in result["trigger_rules"]:
@@ -1870,6 +1995,7 @@ def compute_summary(results_by_id: dict) -> dict:
         "reverse_conversion_overrides": reverse_conversion_overrides,
         "master_planned_blocked": master_planned_blocked,
         "multi_name_blocked": multi_name_blocked,
+        "sales_evidence_blocked": sales_evidence_blocked,
     }
 
 
@@ -1921,6 +2047,9 @@ def print_summary(label: str, summary: dict):
     multi_name_blocked = summary.get("multi_name_blocked", 0)
     print(f"  Multi-name records blocked for lack of agreement across sub-names: "
           f"{_pct(multi_name_blocked, total)} of all properties")
+    sales_evidence_blocked = summary.get("sales_evidence_blocked", 0)
+    print(f"  Sale-listing overrides to APT blocked (sale evidence found): "
+          f"{_pct(sales_evidence_blocked, total)} of all properties")
 
     print("  Override rate by trigger rule:")
     for rule, counts in sorted(summary["override_rate_by_rule"].items()):

@@ -219,6 +219,18 @@ supporting Tier 1/2 source, only three of the four are required (see below). Do 
 one Tier 1/2 source was found, so no override is possible" without first checking whether this
 exception applies using your Tier 3 evidence — that's exactly the gap it exists to cover.
 
+**Absolute gate, checked before the four conditions below: an explicit search for individual unit
+SALE listings (not just rental listings) must actually be performed for this specific property
+before condition 2 can be claimed.** MLS/Zillow/Redfin "for sale" listings, county deed/sale
+records — this is a real, targeted search, not a byproduct of the general Attempt 1/2 research.
+**This rule is deliberately asymmetric: finding RENTAL listings at what's currently labeled
+HOA/COA does NOT rule out the HOA/COA designation** (a large share of genuine HOA/COA units are
+individually owned and rented out by their owners) **— but finding SALE listings, or a property
+described as planned/entitled for individual sale, at what you're about to call APT DOES rule out
+APT, full stop, regardless of any other evidence.** If this search finds any such evidence, this
+exception does not apply, and the correct answer is Confirmed/the DB label — not just a failure of
+condition 2 to be weighed against the other three, an absolute disqualifier on its own.
+
 **All four conditions required (three, with one supporting Tier 1/2 source — see below):**
 
 1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the DB's
@@ -241,8 +253,10 @@ exception applies using your Tier 3 evidence — that's exactly the gap it exist
 2. **Zero contradicting evidence anywhere.** No MLS record of an individual unit sale, no county
    deed showing a different owner name for any specific address within the property, nothing found
    in Attempt 2's targeted searches (county recorder, tax assessor, state business registry) that
-   points the other way. A single contradicting data point anywhere is disqualifying, regardless of
-   how much Tier 3 evidence agrees.
+   points the other way, and — per the gate above — no individual sale listing and nothing
+   describing the property as planned/entitled for individual sale. A single contradicting data
+   point anywhere is disqualifying, regardless of how much Tier 3 evidence agrees, and does not
+   need to be corroborated by anything else to sink this condition.
 3. **At least one internal DB field corroborates single ownership.** The clearest version of this:
    a null `Master_Monthly Association Fees` on a property large enough that a real HOA/COA of that
    size would almost always have a fee on file by now — a true association this size with no fee
@@ -645,6 +659,8 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
 | `tier3_exception_direction` | For a "Tier-3 Corroborated Override": `to_apt` (§4.1, forward) or `to_coa_hoa` (§4.2, reverse) |
 | `ownership_concentration` | Per §2.1: `single_owner_full_bulk` (Rule A), `individual_owner_present` (Rule B), or `not_applicable` |
 | `multi_name_all_agree` | Per §5.10, only meaningful when `Master_Property Name` has 2+ comma-separated sub-names: `yes` only if every sub-name was researched separately and all agree; otherwise the override is blocked in code |
+| `tier3_sales_listing_search_performed` | Per §4.1's absolute gate, only meaningful for the forward (`to_apt`) direction: `yes` only if an explicit search for individual unit SALE listings was actually performed |
+| `tier3_sales_evidence_found` | Per §4.1, only meaningful for the forward direction: `yes` if any evidence of individual sales or planned/entitled-for-sale units was found — an absolute disqualifier for APT, enforced in code regardless of `tier3_contradicting_evidence` |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -719,6 +735,13 @@ actually firing when they should.** Both are new, and both depend on real-world 
 than expected — pull a sample of properties whose `Master_Property Name` contains a comma, and
 confirm the tool is genuinely researching each sub-name rather than just defaulting to Not Enough
 Info out of caution or missing the pattern.
+
+**Spot-check every §4.1 forward-direction Tier-3 override against its own reasoning text for a
+self-contradiction like the Sky Nashville case** — a property described as planned/entitled for
+individual sale, or with a genuine MLS sale listing found, that still concluded APT. This is now
+blocked in code via `tier3_sales_evidence_found`, but that field is still a self-report; confirm in
+the QC sample that the model is actually performing the required sales-listing search
+(`tier3_sales_listing_search_performed`) rather than defaulting it to `yes` without really looking.
 
 ## 10. Input file format
 
@@ -974,3 +997,34 @@ evidence; the fee itself populated and corroborating (not null, which would poin
 and no structural edge case (co-op, condo-hotel, senior/student housing) fitting better. Had Attempt
 2 not been genuinely exhausted, or had the fee been null instead of populated, this would fall back
 to Not Enough Info exactly as it did before §4.2 existed.
+
+### Sky Nashville (DB: HOA) — the case that motivated §4.1's sales-listing gate
+
+DB-listed as HOA. Research described the property as "an entitled development planned for
+for-sale condos/townhomes," and then, in the same breath, concluded "no conflicting evidence was
+found confirming APT" and overrode to APT via the §4.1 exception.
+
+**This is a direct self-contradiction, not a valid override.** A development entitled/planned for
+individual SALE units is exactly the kind of evidence condition 2 exists to catch — the fact that
+no *additional* contradicting evidence was found doesn't matter, because "planned for for-sale
+condos/townhomes" already IS the contradicting evidence. The correct answer is **Confirmed, HOA**,
+not Override.
+
+| Field | Value |
+|---|---|
+| `determined_type` | **HOA** (no change) |
+| `decision` | **Confirmed** |
+| `tier3_sales_listing_search_performed` | `yes` |
+| `tier3_sales_evidence_found` | `yes` |
+| `tier3_contradicting_evidence` | Forced to fail condition 2 regardless of the model's own claim |
+
+This failure is why §4.1 now has an absolute, code-enforced gate: an explicit search for
+individual unit SALE listings must be performed before condition 2 can be claimed at all
+(`tier3_sales_listing_search_performed`), and if that search — or anything else in the research —
+turns up evidence of individual sales or planned/entitled-for-sale units
+(`tier3_sales_evidence_found: yes`), that alone fails condition 2 and blocks the override,
+overriding whatever the model separately claims for `tier3_contradicting_evidence`. This check is
+deliberately **not** symmetric: finding *rental* listings at an HOA/COA never rules out the
+HOA/COA designation the same way finding *sale* listings at an APT rules out APT — a genuine
+HOA/COA can have individually-owned units that their owners rent out, but a genuine APT cannot
+have individually-owned-and-sold units by definition.
