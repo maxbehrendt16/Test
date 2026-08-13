@@ -295,6 +295,22 @@ not apply, regardless of how clean the four conditions otherwise look:**
   so the gate only fires when a sale-oriented search genuinely never happened, not because of
   phrasing variance. The real fix for the underlying behavior is doing the search reliably in the
   first place — see the concrete query examples above.
+
+  **This is now also enforced in-conversation, not just after the fact.** Several real batches
+  ("Stratford Crossing Flats," "Pines Gardens Apartments," "Constance Lofts," "Dearlove Manor
+  Apartments") kept reaching this exact submit-without-a-sale-search state even after multiple
+  rounds of tightening the prompt wording above — the model's only search per property was a bare
+  `"[name] [address] ownership type"` query, never sale-oriented, regardless of how explicit the
+  instructions got. Prompt wording alone wasn't reliably fixing it, so the tool no longer only
+  relies on it: when the model tries to call `submit_assessment` with an Override to APT via this
+  forward exception (or via §2.1's Rule A) and no genuinely sale-oriented query is on record yet,
+  the code rejects that submission outright — it does not accept it and downgrade later — and
+  sends back a specific corrective instruction (naming the required keywords and a concrete query
+  to run against this property's own address/name) asking for a real search before resubmitting.
+  This can happen up to twice per property before the tool gives up correcting and falls back to
+  the after-the-fact guardrail described above as the final safety net. An ordinary Tier 1/2
+  override (never invoking this exception or Rule A's `single_owner_full_bulk` path) is not
+  affected by this — it was never subject to the sale-search requirement in the first place.
 - **Attempt 2 must search for evidence of BOTH a condominium association AND an HOA**, regardless
   of which one `Master_Ownership Type` currently lists. HOA and COA are commonly mislabeled as
   EACH OTHER, not just mislabeled as APT — both real failures above are DB-listed COA, but their

@@ -61,7 +61,11 @@ from openai import OpenAI
 
 DEFAULT_MODEL = "gpt-4o"
 MAX_SEARCHES_PER_PROPERTY = 8
-MAX_TURNS = 6
+# Bumped from 6: research_property()'s in-loop sale-search correction (see
+# MAX_SALE_SEARCH_CORRECTIONS below) can consume up to 2 extra turns rejecting a premature
+# APT-override submission and asking for a real sale-listing search before accepting it -- this
+# leaves room for that without starving the initial research itself of turns.
+MAX_TURNS = 8
 URL_FETCH_TIMEOUT = 10
 URL_FETCH_MAX_CHARS = 3000
 
@@ -1509,7 +1513,12 @@ def extract_openai_search_queries(output_items):
     looked at came back with nothing -- which meant the code-verified sale-listing-search gate
     (see _genuine_sale_search_performed()) failed even when the model genuinely ran the search,
     downgrading good overrides across an entire batch. Both fields are read now, and non-'search'
-    actions (open_page, find_in_page) are skipped since they don't carry a query at all."""
+    actions (open_page, find_in_page) are skipped since they don't carry a query at all.
+
+    De-duplicates (preserving first-seen order) because a single search action can populate BOTH
+    `query` and `queries` with the SAME text -- without de-duping, one real search shows up twice
+    in `_searched_queries`, which is confusing in diagnostics (looks like the model ran the same
+    query twice on purpose) even though it doesn't affect whether the sale-search gate passes."""
     queries = []
     for item in output_items:
         if getattr(item, "type", None) != "web_search_call":
@@ -1523,7 +1532,55 @@ def extract_openai_search_queries(output_items):
         for query in getattr(action, "queries", None) or []:
             if query:
                 queries.append(query)
-    return queries
+    return list(dict.fromkeys(queries))
+
+
+# Real, repeated failures across multiple batches ("Stratford Crossing Flats," "Pines Gardens
+# Apartments," "Constance Lofts," "Dearlove Manor Apartments," and others) all concluded an
+# override to APT via the forward §4.1 exception or §2.1's Rule A while the ONLY search queries
+# actually issued were generic ("[name] [address] ownership type") -- never anything sale-
+# oriented. Prompt wording alone (examples, an explicit literal-keyword requirement, a named
+# non-example) did not reliably fix this across several rounds of tightening. This is the code-
+# enforced version instead of continuing to argue with the model in the prompt: when the model
+# tries to submit exactly this kind of override without a qualifying search on record,
+# research_property() rejects that submission, tells it specifically what's missing and what
+# query to run, and gives it a bounded number of extra turns to actually run it and resubmit. The
+# existing after-the-fact guardrails (_enforce_tier3_override_guardrail,
+# _enforce_functional_ownership_guardrail) remain the ultimate failsafe if the model still hasn't
+# complied once the correction budget or turn budget runs out -- this just makes that failsafe
+# fire far less often by giving the model a real chance to fix it mid-conversation instead of
+# silently downgrading after the fact.
+MAX_SALE_SEARCH_CORRECTIONS = 2
+
+
+def _submission_requires_sale_search(result: dict) -> bool:
+    """Mirrors the exact scoping _enforce_tier3_override_guardrail() (forward direction) and
+    _enforce_functional_ownership_guardrail() (Rule A) apply after the fact: an Override to APT
+    via either of those two paths needs a genuine sale-listing search on record. An ordinary
+    Tier 1/2 override (never invoking either bounded path) is not scoped by this -- two
+    independently-corroborated Tier 1/2 sources are already strong enough evidence on their own."""
+    if result.get("decision") != "Override" or result.get("determined_type") != "APT":
+        return False
+    if result.get("tier3_exception_invoked") == "yes" and result.get("tier3_exception_direction") == "to_apt":
+        return True
+    return result.get("ownership_concentration") == "single_owner_full_bulk"
+
+
+def _sale_search_correction_message(row: dict) -> str:
+    address = _norm_text(row.get("Address"))
+    name = _norm_text(row.get("Master_Property Name"))
+    subject = address or name
+    return (
+        "Before I can accept that conclusion: you're overriding to APT via a path that requires "
+        "an actual, dedicated search for individual unit SALE listings, and none of your search "
+        "queries so far contain a sale-oriented term (\"for sale,\" \"sold,\" \"MLS,\" \"Zillow,\" "
+        "\"Redfin,\" \"listing,\" \"resale,\" \"deed,\" \"parcel,\" \"assessor,\" or \"tax record\"). "
+        "A general ownership or rental-operation search does not satisfy this, no matter how "
+        f"thorough it was otherwise. Run one more search now, e.g. \"{subject} for sale\", "
+        f"\"{subject} sold\", or \"{name} MLS listing\" -- then call submit_assessment again with "
+        "your final answer (Confirmed/the DB label if that search finds nothing supporting APT, "
+        "or updated if it changes your conclusion)."
+    )
 
 
 def research_property(client, row: dict, triggers: list, url_cache: dict, model: str) -> dict:
@@ -1532,6 +1589,7 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
     previous_response_id = None
     searched_sources = []
     searched_queries = []
+    sale_search_corrections_used = 0
 
     for turn in range(MAX_TURNS):
         is_last_turn = turn == MAX_TURNS - 1
@@ -1553,11 +1611,22 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
         submit_call = find_function_call(response.output, "submit_assessment")
         if submit_call:
             result = json.loads(submit_call.arguments)
+
+            if (
+                not is_last_turn
+                and sale_search_corrections_used < MAX_SALE_SEARCH_CORRECTIONS
+                and _submission_requires_sale_search(result)
+                and not _genuine_sale_search_performed(row, {"_searched_queries": searched_queries})
+            ):
+                sale_search_corrections_used += 1
+                input_items = [{"role": "user", "content": _sale_search_correction_message(row)}]
+                continue
+
             if not result.get("sources"):
                 result["sources"] = sorted(set(searched_sources))
             # Internal-only, not part of SUBMIT_SCHEMA -- lets guardrails verify a genuinely
             # targeted search actually happened rather than trusting a self-reported field.
-            result["_searched_queries"] = searched_queries
+            result["_searched_queries"] = list(dict.fromkeys(searched_queries))
             return result
 
         input_items = [{
