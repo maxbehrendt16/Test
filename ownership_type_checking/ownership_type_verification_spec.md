@@ -70,11 +70,42 @@ centralized leasing/management contact for the whole building, and (c) no unit i
 individually owned or listed for individual sale — classify as APT, regardless of the legal
 declaration. Tag this with the archetype flag **"Legally Condo, Functionally Apartment."**
 
+**Rule A requires real, gated verification, not a bare self-report — two real failures showed the
+`ownership_concentration` field alone isn't enough:**
+
+- **100% single ownership must be verified via EXTERNAL sources** — county parcel/deed records
+  showing one owner name across ALL units, a state business registry entry, or multiple
+  independent Tier 3 sources with a confirmed anchor. **The DB's own `Owner`/`Cleaned Owner`
+  field must never be used as evidence toward an APT designation.** This data is not reliable
+  enough on its own: a majority-but-not-full owner (e.g. an investor holding 39 of 40 units) is
+  very often still the DB's sole listed Owner, so a single Owner name tells you nothing about
+  whether the last unit is also owned by that same entity. Real failure: **"The Falls of
+  Portofino"** was overridden to APT with reasoning stating "DB 'Owner' is Prime Group,
+  satisfying the criteria for functional override to APT" — citing the DB's own field as if it
+  were external verification.
+- **Zero contradicting evidence of genuine, operating HOA/COA governance** — a registered
+  HOA/COA entity, HOA governance documents/declaration, a real association fee, or any
+  individually owned/listed unit all block Rule A regardless of how strong the bulk-ownership
+  signal looks. **A real, populated `Master_Monthly Association Fees` value on the row
+  unconditionally blocks Rule A**, independent of any self-reported field — a genuinely
+  bulk-owned property with no operating association should have no fee on file at all. Real
+  failure: **"Paradise Gardens One"** was corrected to APT despite a real $70/month fee on file
+  and the model's OWN reasoning stating "Conflicting evidence: a registered HOA exists ...
+  Ownership is bulk-held, but not enough for override" — the model's own finding of contradicting
+  evidence was never cross-checked against the bare `ownership_concentration` value that let the
+  override through anyway.
+- **An explicit search for individual unit SALE listings must have been performed** — the same
+  absolute gate as §4.1's forward-direction exception below (see `tier3_sales_listing_search_
+  performed`).
+
 **Rule B — Any individual ownership keeps COA/HOA.** If even one unit is currently individually
 owned (i.e., held by a party other than the bulk owner, whether or not it's currently occupied,
 rented, or vacant), the property stays COA or HOA, never APT — regardless of what fraction of the
 building is bulk-owned. A single individual owner means an association relationship exists that
-we'd have to work through.
+we'd have to work through. **"Master associations"** — an overarching HOA/COA governing multiple
+sub-associations or phases within a larger development — are a common real-world pattern for
+this: even if one phase looks like a single-owner rental block, if ANY phase or unit anywhere in
+the master association is individually owned, Rule B applies to the whole thing.
 
 **This is a required verification step, not an optional one:** before finalizing any decision,
 explicitly check current ownership concentration (single owner vs. any individual owners), not
@@ -257,23 +288,27 @@ condition 2 to be weighed against the other three, an absolute disqualifier on i
    describing the property as planned/entitled for individual sale. A single contradicting data
    point anywhere is disqualifying, regardless of how much Tier 3 evidence agrees, and does not
    need to be corroborated by anything else to sink this condition.
-3. **At least one internal DB field corroborates single ownership.** The clearest version of this:
-   a null `Master_Monthly Association Fees` on a property large enough that a real HOA/COA of that
-   size would almost always have a fee on file by now — a true association this size with no fee
-   ever recorded anywhere in the DB is itself a signal that no association actually exists to charge
-   one. **A null/blank fee field, by itself, is sufficient for this condition** — it does not need a
-   second internal field on top of it; the condition stands on its own evidence. A single
-   `Owner`/`Cleaned Owner` value with no per-unit variation can also satisfy this condition — the
-   point is that the DB's own data, not just external search results, independently points toward
-   single ownership.
-   **This condition asks for ONE corroborating field, not an audit of every internal DB field for
-   agreement.** Once you have one (most commonly the blank fee field), the condition is met — stop
-   there. Do not go hunting through unrelated columns looking for something that might complicate or
-   contradict it. In particular, `Bulk Flag`, `Bulk Package Type`, and `% Bulk Overall` describe a
-   **bulk internet/TV/phone service contract with an ISP** (this is a broadband-competition dataset)
-   — they have nothing to do with real-estate ownership concentration and must never be read as "X%
-   bulk-owned" or used as evidence for or against single ownership. A property showing "50% bulk"
-   telecom service is not evidence of 50%-bulk real-estate ownership; it is simply not a real-estate
+3. **A null `Master_Monthly Association Fees` on a property large enough that a real HOA/COA of
+   that size would almost always have a fee on file by now** — a true association this size with
+   no fee ever recorded anywhere in the DB is itself a signal that no association actually exists
+   to charge one. **A null/blank fee field, by itself, is sufficient for this condition** — it
+   does not need a second internal field on top of it; the condition stands on its own evidence.
+   **The DB's own `Owner`/`Cleaned Owner` field is NOT valid corroboration for this condition,
+   even though earlier guidance said a concentrated Owner value could satisfy it — that guidance
+   was wrong and has been retracted.** A single Owner name in the DB tells you nothing about
+   whether every last unit is owned by that same entity: a majority-but-not-full owner (e.g. an
+   investor holding 39 of 40 units) is very often still the DB's sole listed Owner. Citing "Owner
+   is [X], no per-unit variation" as internal corroboration is caught in code and treated as a
+   condition-3 failure regardless of what else is submitted.
+   **This condition asks for ONE corroborating field — the fee — not an audit of every internal DB
+   field for agreement.** Once you have the null fee, the condition is met — stop there. Do not go
+   hunting through unrelated columns (including Owner) for a substitute or for something that
+   might complicate or contradict it. In particular, `Bulk Flag`, `Bulk Package Type`, and `%
+   Bulk Overall` describe a **bulk internet/TV/phone service contract with an ISP** (this is a
+   broadband-competition dataset) — they have nothing to do with real-estate ownership
+   concentration and must never be read as "X% bulk-owned" or used as evidence for or against
+   single ownership. A property showing "50% bulk" telecom service is not evidence of 50%-bulk
+   real-estate ownership; it is simply not a real-estate
    signal at all and should be ignored for this condition.
 4. **No structural edge case (§5.7) explains the pattern instead.** Rule this out explicitly before
    relying on the exception: a housing cooperative, a condo-hotel/timeshare, a senior/age-restricted
@@ -659,8 +694,10 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
 | `tier3_exception_direction` | For a "Tier-3 Corroborated Override": `to_apt` (§4.1, forward) or `to_coa_hoa` (§4.2, reverse) |
 | `ownership_concentration` | Per §2.1: `single_owner_full_bulk` (Rule A), `individual_owner_present` (Rule B), or `not_applicable` |
 | `multi_name_all_agree` | Per §5.10, only meaningful when `Master_Property Name` has 2+ comma-separated sub-names: `yes` only if every sub-name was researched separately and all agree; otherwise the override is blocked in code |
-| `tier3_sales_listing_search_performed` | Per §4.1's absolute gate, only meaningful for the forward (`to_apt`) direction: `yes` only if an explicit search for individual unit SALE listings was actually performed |
+| `tier3_sales_listing_search_performed` | Per §4.1's and §2.1's absolute gate, required for the forward (`to_apt`) Tier-3 direction AND for Rule A (`ownership_concentration`: `single_owner_full_bulk`): `yes` only if an explicit search for individual unit SALE listings was actually performed |
 | `tier3_sales_evidence_found` | Per §4.1, only meaningful for the forward direction: `yes` if any evidence of individual sales or planned/entitled-for-sale units was found — an absolute disqualifier for APT, enforced in code regardless of `tier3_contradicting_evidence` |
+| `ownership_concentration_verified_externally` | Per §2.1's Rule A: `yes` only if 100% single ownership was verified via EXTERNAL sources (county parcel/deed records, state business registry) — the DB's own `Owner`/`Cleaned Owner` field is never sufficient on its own |
+| `ownership_concentration_contradicting_evidence` | Per §2.1's Rule A: `yes` if any evidence of genuine, operating HOA/COA governance was found despite the bulk-ownership appearance — blocks Rule A in code regardless of the bulk-ownership signal |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -742,6 +779,15 @@ individual sale, or with a genuine MLS sale listing found, that still concluded 
 blocked in code via `tier3_sales_evidence_found`, but that field is still a self-report; confirm in
 the QC sample that the model is actually performing the required sales-listing search
 (`tier3_sales_listing_search_performed`) rather than defaulting it to `yes` without really looking.
+
+**Spot-check every §2.1 Rule A override for a Paradise-Gardens-style self-contradiction, and for
+DB-Owner-field misuse in either mechanism.** Rule A is enforced by real gates now
+(`ownership_concentration_verified_externally`, `ownership_concentration_contradicting_evidence`,
+the fee-based backstop), but pull a sample of Rule A cases specifically and confirm: the model's
+own reasoning doesn't describe conflicting/contradicting evidence that contradicts its own
+`ownership_concentration_contradicting_evidence` self-report, and neither Rule A nor the §4.1
+forward exception's `tier3_internal_db_corroboration` is leaning on the DB's `Owner`/`Cleaned
+Owner` field as if it were external verification.
 
 ## 10. Input file format
 
@@ -1028,3 +1074,63 @@ deliberately **not** symmetric: finding *rental* listings at an HOA/COA never ru
 HOA/COA designation the same way finding *sale* listings at an APT rules out APT — a genuine
 HOA/COA can have individually-owned units that their owners rent out, but a genuine APT cannot
 have individually-owned-and-sold units by definition.
+
+### Paradise Gardens One (DB: HOA) — the case that motivated Rule A's contradicting-evidence gate
+
+DB-listed as HOA, with a real $70/month `Master_Monthly Association Fees` on file. Research's own
+reasoning stated "Conflicting evidence: a registered HOA exists, and a Tier 3 source shows a
+development with HOA fees, but assessor data contradicts the residential structure. Ownership is
+bulk-held, but not enough for override" — and then was corrected to APT via §2.1's Rule A anyway,
+because `ownership_concentration` was set to `single_owner_full_bulk` regardless of that finding.
+
+**The model's own conclusion ("not enough for override") should have been the final answer.**
+Rule A is not a way to override a decision the model itself already determined wasn't justified —
+the `ownership_concentration` self-report has to be checked against everything else the model
+found, not trusted as an independent, overriding signal. The correct answer is **Confirmed, HOA
+(or Not Enough Info)**, not Override.
+
+| Field | Value |
+|---|---|
+| `determined_type` | **HOA** (no change) |
+| `decision` | **Not Enough Info** |
+| `ownership_concentration_contradicting_evidence` | Should have been `yes` — the reasoning itself found a registered HOA and HOA fees |
+
+This is why Rule A now has a hard, code-only backstop independent of any self-reported field: **a
+real, populated `Master_Monthly Association Fees` value on the row unconditionally blocks Rule A**
+— a genuinely bulk-owned property with no operating association should have no fee on file at
+all. The $70 fee here blocks the override regardless of what `ownership_concentration` or
+`ownership_concentration_contradicting_evidence` claim, closing exactly the gap that let this
+failure through.
+
+### The Falls of Portofino & Medley Johns Creek (DB: HOA) — the DB Owner field is not evidence
+
+Both properties are legally structured as "master associations" (an overarching HOA/COA governing
+multiple sub-associations/phases) and were overridden to APT citing the DB's own `Owner` field as
+proof of 100% single ownership — "The Falls of Portofino" reasoning stated "DB 'Owner' is Prime
+Group, satisfying the criteria for functional override to APT" (§2.1's Rule A); "Medley Johns
+Creek" reasoning cited the property as "owned by Ascentris, LLC" as part of its §4.1 Tier-3
+exception corroboration. Medley Johns Creek also has properties both for rent and for sale within
+the same master association — a fact the research should have surfaced as sale-listing evidence
+disqualifying APT, but didn't.
+
+**The DB's `Owner`/`Cleaned Owner` field must never be used as evidence toward an APT
+designation, in either mechanism.** This data is not reliable enough: a majority-but-not-full
+owner (e.g. an investor holding most, but not all, units in a master association) is very often
+still the DB's sole listed Owner, so a single Owner name proves nothing about full ownership. The
+correct answer for both is **Confirmed, HOA**, not Override.
+
+| Field | Value |
+|---|---|
+| `determined_type` | **HOA** (no change) for both |
+| `decision` | **Confirmed** / **Not Enough Info** for both |
+| `ownership_concentration_verified_externally` (Falls of Portofino) | Should have been `no` — the DB Owner field is not external verification |
+| `tier3_internal_db_corroboration` (Medley Johns Creek) | "Owner is Ascentris, LLC" is not valid condition-3 corroboration — see §4.1 condition 3 |
+
+This is now blocked on both paths: Rule A requires `ownership_concentration_verified_externally`
+to be explicitly `yes` (never satisfied by citing the DB's own Owner field), and the §4.1 forward
+exception's condition 3 now requires the corroboration to actually reference the null/blank fee
+field — an Owner-based claim like "Owner is Ascentris, LLC, no per-unit variation" is caught and
+treated as a condition-3 failure in code, regardless of what else is submitted. For master
+associations specifically, remember that a "single owner" surface appearance in one phase doesn't
+rule out individual ownership elsewhere in the same association — always look diligently for sale
+listings across the whole property before concluding APT.
