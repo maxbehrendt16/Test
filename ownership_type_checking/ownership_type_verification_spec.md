@@ -311,14 +311,6 @@ not apply, regardless of how clean the four conditions otherwise look:**
   the after-the-fact guardrail described above as the final safety net. An ordinary Tier 1/2
   override (never invoking this exception or Rule A's `single_owner_full_bulk` path) is not
   affected by this — it was never subject to the sale-search requirement in the first place.
-- **Attempt 2 must search for evidence of BOTH a condominium association AND an HOA**, regardless
-  of which one `Master_Ownership Type` currently lists. HOA and COA are commonly mislabeled as
-  EACH OTHER, not just mislabeled as APT — both real failures above are DB-listed COA, but their
-  reasoning only mentions checking for HOA ("no HOA documents," "no HOA"). Searching only for the
-  DB's current type, finding nothing, and concluding "no association of any kind exists" mistakes
-  the absence of one type's evidence for the absence of any — when the actual answer might be
-  "it's a COA, not an HOA, but an association clearly exists." Only after both searches come up
-  empty should you conclude no association exists at all.
 - **If `Master_Property Name` contains a full formal legal-entity string** — specifically
   "Condominium Association, Inc.," "Owners Association, Inc.," or "Condominium, Inc." (not casual
   use of "condo" or "apartments" in a name, which is never evidence either way per §5.2) — **a
@@ -327,6 +319,21 @@ not apply, regardless of how clean the four conditions otherwise look:**
   doesn't block an override on its own — it just requires that specific, cheap, high-value check
   to actually run. Real failure: "Castle Apartments Condominium Association, Inc." was overridden
   to APT straight through its own explicit legal-entity name, without this search ever running.
+
+**Recommended practice, not an absolute gate: Attempt 2 should look for evidence of BOTH a
+condominium association AND an HOA**, regardless of which one `Master_Ownership Type` currently
+lists — HOA and COA are commonly mislabeled as EACH OTHER, not just mislabeled as APT (two real
+failures, both DB-listed COA, had reasoning that only mentioned checking for HOA). This was
+originally an absolute gate (`tier3_dual_association_search_performed` had to be `yes`), but that
+was firing on real, otherwise-solid overrides where a genuine search for one type ordinarily would
+have surfaced the other anyway if it existed — a real search for "no HOA at this address" and a
+real search for "no condo association at this address" tend to turn up the same underlying
+evidence, so requiring an explicit second search on top of a genuinely thorough Attempt 2 added
+friction without catching meaningfully more. `tier3_dual_association_search_performed` is still
+collected in `submit_assessment` for manual QC visibility, but a `no` no longer blocks the
+override on its own — the other three conditions (source count/anchor, contradicting evidence,
+structural edge case) remain the actual safety net, along with the model's own judgment call that
+it's confident no association of any kind exists.
 
 **All four conditions required (three, with one supporting Tier 1/2 source — see below):**
 
@@ -774,7 +781,7 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
 | `tier3_sales_evidence_found` | Per §4.1, only meaningful for the forward direction: `yes` if any evidence of individual sales or planned/entitled-for-sale units was found — an absolute disqualifier for APT, enforced in code regardless of `tier3_contradicting_evidence` |
 | `ownership_concentration_verified_externally` | Per §2.1's Rule A: `yes` only if 100% single ownership was verified via EXTERNAL sources (county parcel/deed records, state business registry) — the DB's own `Owner`/`Cleaned Owner` field is never sufficient on its own |
 | `ownership_concentration_contradicting_evidence` | Per §2.1's Rule A: `yes` if any evidence of genuine, operating HOA/COA governance was found despite the bulk-ownership appearance — blocks Rule A in code regardless of the bulk-ownership signal |
-| `tier3_dual_association_search_performed` | Per §4.1's absolute gate: `yes` only if Attempt 2 searched for evidence of BOTH a condominium association AND an HOA, regardless of which one the DB currently lists |
+| `tier3_dual_association_search_performed` | Per §4.1's recommended practice (not an absolute gate): `yes` if Attempt 2 touched on evidence of BOTH a condominium association AND an HOA, regardless of which one the DB currently lists; tracked for manual QC visibility only, does not block an override on its own |
 | `tier3_entity_name_registry_search_performed` | Per §4.1's absolute gate, required whenever `Master_Property Name` contains a full formal legal-entity string: `yes` only if a state business registry search for that exact entity name was run; `not_applicable` for ordinary names |
 
 ## 8. Architecture (mirroring the prior dedup tool)
@@ -1248,13 +1255,13 @@ the exception's own stated conditions on inspection:
 | `decision` | **Not Enough Info** for both |
 | `sources` (Mountain Ridge) | 1 URL — fails the 3-distinct-URL absolute gate |
 | `sources` (Castle Apartments) | 2 URLs — fails the 3-distinct-URL absolute gate |
-| `tier3_dual_association_search_performed` | Should have been `no` for both — only HOA was checked, never condo |
+| `tier3_dual_association_search_performed` | Was `no` for both — only HOA was checked, never condo (tracked for visibility; no longer an absolute gate on its own, see §4.1) |
 | `tier3_entity_name_registry_search_performed` (Castle Apartments) | Should not have been left unconfirmed given the explicit legal-entity name in `Master_Property Name` |
 
-This is why §4.1 now has four absolute, code-enforced gates rather than relying on the model's own
-self-report of what it found: `sources` must itself contain 3+ distinct URLs (not just a
+This is why §4.1 now has absolute, code-enforced gates rather than relying entirely on the model's
+own self-report of what it found: `sources` must itself contain 3+ distinct URLs (not just a
 self-reported count); a genuinely targeted sale-listing search query must actually appear among
-the real search queries issued during research; Attempt 2 must search for BOTH condo and HOA
-governance evidence, regardless of the DB's current type; and a property whose own name is a
-formal legal-entity string requires a state business registry search for that exact name. All four
-gates failed here, and none of them depend on trusting the model's reasoning text at face value.
+the real search queries issued during research; and a property whose own name is a formal
+legal-entity string requires a state business registry search for that exact name. Both cases here
+also fail the 3+ distinct-URL gate on their own, so removing the dual-association check from the
+absolute-gate list (see §4.1) doesn't change the outcome for either of these two real cases.
