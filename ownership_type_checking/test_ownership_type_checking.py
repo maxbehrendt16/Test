@@ -1104,6 +1104,59 @@ class MountainRidgeAndCastleApartmentsRegressionTests(unittest.TestCase):
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertEqual(result["determined_type"], "COA")
 
+    def test_stratford_crossing_flats_bare_ownership_query_does_not_qualify(self):
+        # Real reported regression: the model's only search was a bare "[name] [address]
+        # ownership" query, issued twice, identically -- a general ownership-structure search,
+        # not a sale-listing search. The failsafe must still correctly catch this (it's not a
+        # detection bug this time), even though the sale-search phrase list is now broad.
+        row = {
+            "RecordID": "10",
+            "Master_Property Name": "Stratford Crossing Flats",
+            "Address": "1035 Northwest Lexi Lane, Waukee, IA",
+            "Master_Ownership Type": "COA",
+            "Master_Monthly Association Fees": "",
+        }
+        fake_result = {
+            "determined_type": "APT",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": (
+                "Multiple independent rental listings explicitly name 'Stratford Crossing Flats "
+                "Townhomes' with 126 units available only for rent -- no individual sale listings "
+                "found."
+            ),
+            "sources": ["https://homes.com/x", "https://apartmentfinder.com/x", "https://apartments.com/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 3,
+            "tier3_name_address_anchor_confirmed": "yes",
+            "tier3_partial_tier12_support": "not_applicable",
+            "tier3_contradicting_evidence": "no",
+            "tier3_internal_db_corroboration": "Master_Monthly Association Fees is null",
+            "tier3_structural_edge_case_ruled_out": "yes",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "tier3_sales_evidence_found": "no",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "yes",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "_searched_queries": [
+                "Stratford Crossing Flats 1035 Northwest Lexi Lane Waukee IA ownership",
+                "Stratford Crossing Flats 1035 Northwest Lexi Lane Waukee IA ownership",
+            ],
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "COA")
+
 
 class DecisionDisplayTests(unittest.TestCase):
     def test_confirmed_displays_as_confirmed(self):

@@ -269,15 +269,21 @@ not apply, regardless of how clean the four conditions otherwise look:**
   actually running a search built for this purpose — e.g. `"[address] for sale"`, `"[address]
   sold"`, `"[property name] MLS listing"`, `"[property name] Zillow"`/`"Redfin"`, `"[county]
   property appraiser [address]"`, or `"[address] deed"`/`"parcel records"` — not a byproduct of
-  general Attempt 1/2 research that happens to not surface a sale listing. This is checked against
-  the actual search queries issued during research, not just a self-reported field. Two real,
+  general Attempt 1/2 research that happens to not surface a sale listing. **The query text itself
+  must literally contain one of: "for sale," "sold," "MLS," "Zillow," "Redfin," "listing,"
+  "resale," "deed," "parcel," "assessor," or "tax record."** This is checked against the actual
+  search queries issued during research, not just a self-reported field. Multiple real,
   previously-mishandled batches asserted "no sale listings found" (or similar) without any
-  evidence a real sale-oriented search (as opposed to rental-site browsing) ever ran. **This rule
-  is deliberately asymmetric: finding RENTAL listings at what's currently labeled HOA/COA does NOT
-  rule out the HOA/COA designation** (a large share of genuine HOA/COA units are individually
-  owned and rented out by their owners) **— but finding SALE listings, or a property described as
-  planned/entitled for individual sale, at what you're about to call APT DOES rule out APT, full
-  stop, regardless of any other evidence.**
+  evidence a real sale-oriented search (as opposed to rental-site browsing, or a general ownership
+  search) ever ran — one batch's only search for "Stratford Crossing Flats" was a bare
+  `"[property name] [address] ownership"` query, issued twice, identically; that's a
+  general ownership-structure search, not a sale-listing search, and does not satisfy this
+  requirement no matter how many times it's repeated. **This rule is deliberately asymmetric:
+  finding RENTAL listings at what's currently labeled HOA/COA does NOT rule out the HOA/COA
+  designation** (a large share of genuine HOA/COA units are individually owned and rented out by
+  their owners) **— but finding SALE listings, or a property described as planned/entitled for
+  individual sale, at what you're about to call APT DOES rule out APT, full stop, regardless of
+  any other evidence.**
 
   **This check is meant to be a rarely-firing failsafe, not a routine occurrence** — a second real
   batch showed the code-side detection itself being too strict (requiring the query to share
@@ -678,6 +684,13 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
    inconclusive — this is the search most likely to surface the Tier 1/2 evidence this exact
    scenario needs, and it's the one most likely to be skipped or rushed. This thoroughness is what
    §4.2's `tier3_reverse_attempt2_exhausted` gate is checking for.
+
+   **If heading toward an override to APT (the forward §4.1 exception, or §2.1's Rule A), Attempt
+   2 must also include a separate, dedicated search whose query text literally contains a
+   sale-listing term** ("for sale," "sold," "MLS," "Zillow," "Redfin," "listing," "resale," "deed,"
+   "parcel," "assessor," or "tax record") — see §4.1's absolute gate below for the full
+   requirement and a real worked failure example. A general ownership-structure search does not
+   satisfy this, no matter how many times it's run.
 3. **Required check, before finalizing anything — current ownership concentration, per §2.1:**
    regardless of legal declaration status, explicitly determine whether (a) 100% of units are
    currently owned by a single entity with one centralized leasing/management contact and no
