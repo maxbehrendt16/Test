@@ -171,16 +171,23 @@ NOT enough; the code also requires all of the following before it will actually 
 (otherwise it downgrades to Not Enough Info regardless of what you submit):
 
 - **`ownership_concentration_verified_externally` must be `yes`.** 100% single ownership must be \
-verified via EXTERNAL sources -- county parcel/deed records showing one owner name across ALL \
-units, a state business registry entry, or multiple independent Tier 3 sources with a confirmed \
-anchor. **The DB's own `Owner`/`Cleaned Owner` field is NEVER sufficient on its own, and must \
-never be used as evidence toward an APT designation** -- this data is not reliable enough: a \
-majority-but-not-full owner (e.g. an investor holding 39 of 40 units) is very often still the \
-DB's sole listed Owner, so a single Owner name in the DB tells you nothing about whether the \
-LAST unit is also owned by that same entity. A real, previously-mishandled failure: "The Falls of \
-Portofino" reasoning stated "DB 'Owner' is Prime Group, satisfying the criteria for functional \
-override to APT" -- that is exactly the mistake this field exists to catch. If your only \
-evidence for 100% ownership is the DB's own Owner field, set this to `no`, not `yes`.
+verified via EXTERNAL sources -- and this is a DIFFERENT question from "is it operated as a \
+rental?", which rental platforms and property-management sites answer just fine but which says \
+nothing about who legally owns every last unit. Run a search actually aimed at ownership records, \
+e.g. `"[county] property appraiser [address] owner"`, `"[county] recorder [address] deed"`, or a \
+state business registry search (Sunbiz-style) for the owning entity's name -- not just a rental- \
+listing or property-management search that happens to mention an owner in passing. Multiple \
+independent Tier 3 sources with a confirmed anchor can also satisfy this, but they need to \
+actually corroborate ownership, not just rental operation. **The DB's own `Owner`/`Cleaned Owner` \
+field is NEVER sufficient on its own, and must never be used as evidence toward an APT \
+designation** -- this data is not reliable enough: a majority-but-not-full owner (e.g. an investor \
+holding 39 of 40 units) is very often still the DB's sole listed Owner, so a single Owner name in \
+the DB tells you nothing about whether the LAST unit is also owned by that same entity. A real, \
+previously-mishandled failure: "The Falls of Portofino" reasoning stated "DB 'Owner' is Prime \
+Group, satisfying the criteria for functional override to APT" -- that is exactly the mistake this \
+field exists to catch. If your only evidence for 100% ownership is the DB's own Owner field, or is \
+evidence that the property is rented out rather than evidence of who owns it, set this to `no`, \
+not `yes`.
 - **`ownership_concentration_contradicting_evidence` must be `no`.** Explicitly check for and \
 rule out any sign of genuine, operating HOA/COA governance -- a registered HOA/COA entity, HOA \
 governance documents or a declaration, a real association fee, or any individually owned/listed \
@@ -194,9 +201,11 @@ note: **a real, populated `Master_Monthly Association Fees` value on the row unc
 blocks Rule A in code, regardless of what you submit for this field** -- a genuinely bulk-owned \
 property with no operating association should have no fee on file at all.
 - **`tier3_sales_listing_search_performed` must be `yes`** -- the same absolute sales-listing- \
-search gate as the forward §4.1 exception below applies here too: you must have explicitly \
-searched for individual unit SALE listings (not just rental listings) before concluding no unit \
-is individually owned or listed.
+search gate as the forward §4.1 exception below applies here too: you must have actually RUN a \
+dedicated search for individual unit SALE listings (e.g. `"[address] for sale"`, `"[property \
+name] MLS listing"` -- see §4.1's gate below for the full list of example queries), not just \
+concluded "no unit is individually owned or listed" from general rental-focused research that \
+never specifically looked for a sale.
 
 **Rule B -- any individual ownership keeps COA/HOA.** If even one unit is currently individually \
 owned (held by a party other than the bulk owner, whether occupied, rented, or vacant), the \
@@ -285,17 +294,34 @@ condition 4 below, the bar drops to at least THREE of four -- one condition is t
 fail. Either way, if too many fail for whichever bar applies, fall back to the normal decision \
 process (Not Enough Info if there's no Tier 1/2 evidence sufficient on its own).
 
-**Absolute gate, checked before the four conditions: you must explicitly search for individual \
-unit SALE listings for this specific property (MLS/Zillow/Redfin "for sale" listings, county deed/ \
-sale records) before you can claim condition 2 below.** Set `tier3_sales_listing_search_performed` \
-to `yes` only once you've actually done this search (not skipped it), and `tier3_sales_evidence_ \
-found` to whatever it actually found. **This asymmetry matters: finding RENTAL listings at an HOA/ \
-COA does NOT rule out the HOA/COA designation** (plenty of genuine HOA/COA units are individually \
-owned and rented out by their owners) **-- but finding SALE listings, or a property described as \
-planned/entitled for individual sale, at what you're about to call an APT DOES rule out APT, full \
-stop, regardless of anything else you found.** If `tier3_sales_evidence_found` is `yes`, this \
-exception does not apply, and you should not conclude APT via any other path either -- go straight \
-to Confirmed/the DB label. Do not talk yourself out of this: "no *conflicting* evidence" is not \
+**Absolute gate, checked before the four conditions: you must actually RUN a dedicated, explicit \
+web search for individual unit SALE listings for this specific property before you can claim \
+condition 2 below.** This is a real failure mode: general Attempt 1/2 research (rental sites, \
+county records about rental operation) can come back clean and STILL never have actually searched \
+for a sale listing -- "I looked at rental platforms and didn't see a sale" is not the same as "I \
+searched for a sale and found none." **You must issue at least one search query built specifically \
+to surface an individual sale, not just browse whatever rental-focused sources happen to come up.** \
+Use the property's actual address or name in the query. Concrete examples, adapt to the real \
+address/name -- run at least one of these, not a paraphrase that avoids the actual search terms:
+- `"[address] for sale"` or `"[address] sold"`
+- `"[property name] MLS listing"` or `"[property name] Zillow"` / `"[property name] Redfin"`
+- `"[county] property appraiser [address]"` or `"[county] tax assessor [address]"` (a real sale \
+would show up in the ownership/transfer history)
+- `"[address] deed"` or `"[address] parcel records"`
+
+Set `tier3_sales_listing_search_performed` to `yes` only once you've actually run one of these (or \
+an equivalent, genuinely sale-targeted search) -- not because general research happened to not \
+surface a sale listing. Set `tier3_sales_evidence_found` to whatever that search actually found. \
+This is also verified in code against your actual search history, independent of what you \
+self-report -- so there's no benefit to marking it `yes` without really having run the search; \
+doing so will just get the override downgraded anyway, and running the real search is no more \
+costly than one extra query. **This asymmetry matters: finding RENTAL listings at an HOA/COA does \
+NOT rule out the HOA/COA designation** (plenty of genuine HOA/COA units are individually owned and \
+rented out by their owners) **-- but finding SALE listings, or a property described as planned/ \
+entitled for individual sale, at what you're about to call an APT DOES rule out APT, full stop, \
+regardless of anything else you found.** If `tier3_sales_evidence_found` is `yes`, this exception \
+does not apply, and you should not conclude APT via any other path either -- go straight to \
+Confirmed/the DB label. Do not talk yourself out of this: "no *conflicting* evidence" is not \
 consistent with a property you've just described as planned for individual sale -- that description \
 IS the conflicting evidence.
 
@@ -1186,37 +1212,33 @@ def _has_legal_entity_name(name: str) -> bool:
 # evidence") without evidence that a genuine, targeted individual-unit sale-listing search
 # actually ran -- reasoning just asserted "no sale listings found" while only having looked at
 # rental sites. This checks the model's ACTUAL issued search queries (extracted from the OpenAI
-# response, not self-reported) for one that's both sale-oriented and about this specific property.
+# response, not self-reported) for one that's sale-oriented. Deliberately broad: real model
+# phrasing for "look for a sale listing" varies a lot (site names, "MLS," "resale," "tax record"
+# lookups, etc.), and a second real-world batch showed the narrower original list ("for sale,"
+# "sold," "assessor," "deed," "parcel," "county record," "recorder") missing plenty of genuine
+# searches -- this check is meant to be a rarely-firing failsafe, not a routine occurrence, so it
+# errs toward recall over precision. The real fix for the underlying behavior is the explicit,
+# example-driven prompt guidance below (search for this project's SYSTEM_PROMPT text); this regex
+# is the backstop for when that guidance still isn't followed.
 SALE_SEARCH_QUERY_RE = re.compile(
-    r"for sale|\bsold\b|\bassessor\b|\bdeed\b|\bparcel\b|county record|\brecorder\b",
+    r"for sale|\bsale\b|\bsold\b|\bresale\b|\bassessor\b|\bdeed\b|\bparcel\b|county record"
+    r"|\brecorder\b|\bmls\b|\bzillow\b|\bredfin\b|realtor\.?com|\blisting|tax record"
+    r"|ownership record|property record",
     re.IGNORECASE,
 )
 
 
-def _relevant_search_tokens(row: dict) -> set:
-    text = f"{_norm_text(row.get('Address'))} {_norm_text(row.get('Master_Property Name'))}".lower()
-    return {t for t in re.findall(r"[a-z0-9]+", text) if len(t) > 2}
-
-
 def _genuine_sale_search_performed(row: dict, result: dict) -> bool:
     """True only if at least one of the ACTUAL search queries issued during research (see
-    research_property()'s `_searched_queries`) is both sale-oriented and about this specific
-    property. When the row provides no Address/Master_Property Name to match against (e.g. an
-    isolated unit test), the token-overlap check is skipped and a bare sale-oriented query is
-    enough -- in real batch runs Address is always present, so the stricter check always applies
-    there."""
+    research_property()'s `_searched_queries`) is sale-oriented. Deliberately does NOT also
+    require the query to share tokens with the row's Address/Master_Property Name: every
+    research_property() call is already scoped to researching this one property (see
+    build_user_message()), so any search issued during it is already about this property --
+    requiring token overlap on top of that only produced false negatives from address-formatting
+    mismatches in two real-world batches, exactly the kind of failsafe-firing-too-often problem
+    this check exists to avoid."""
     queries = result.get("_searched_queries") or []
-    relevant_tokens = _relevant_search_tokens(row)
-    for query in queries:
-        query_lower = query.lower()
-        if not SALE_SEARCH_QUERY_RE.search(query_lower):
-            continue
-        if not relevant_tokens:
-            return True
-        query_tokens = set(re.findall(r"[a-z0-9]+", query_lower))
-        if query_tokens & relevant_tokens:
-            return True
-    return False
+    return any(SALE_SEARCH_QUERY_RE.search(query) for query in queries)
 
 
 def _first_present(row: dict, *keys):
@@ -1787,10 +1809,11 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
         elif result.get("tier3_sales_listing_search_performed") != "yes":
             rule_a_failure = "an explicit search for individual sale listings wasn't confirmed"
         elif not _genuine_sale_search_performed(row, result):
+            queries = result.get("_searched_queries") or []
             rule_a_failure = (
                 "no genuinely targeted individual-unit sale-listing search was found among the "
-                "actual search queries issued, regardless of what tier3_sales_listing_search_"
-                "performed claims"
+                f"actual search queries issued ({queries!r}), regardless of what tier3_sales_"
+                "listing_search_performed claims"
             )
 
         if rule_a_failure:
@@ -1955,12 +1978,13 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
         )
 
     if direction == "to_apt" and not _genuine_sale_search_performed(row, result):
+        queries = result.get("_searched_queries") or []
         return _downgrade_tier3_override(
             result,
             "no genuinely targeted individual-unit sale-listing search (an address-specific "
             "'for sale'/'sold' query, or a county assessor/deed lookup) was found among the "
-            "actual search queries issued, regardless of what tier3_sales_listing_search_"
-            "performed claims",
+            f"actual search queries issued ({queries!r}), regardless of what tier3_sales_"
+            "listing_search_performed claims",
         )
 
     if direction == "to_apt" and result.get("tier3_dual_association_search_performed") != "yes":
