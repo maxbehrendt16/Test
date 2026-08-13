@@ -118,12 +118,14 @@ OWNERSHIP_CONCENTRATION_LABELS = ["single_owner_full_bulk", "individual_owner_pr
 # four must hold, but the bar relaxes to 3-of-4 when a single (insufficient-alone) Tier 1/2
 # source also supports the conclusion (tier3_partial_tier12_support).
 TIER3_EXCEPTION_MIN_SOURCES = 3
-# The `sources` field only asks for "specific URLs or named sources used" -- real model behavior
-# is to often list 2 representative URLs even when it examined 3+ independent sources, so
-# requiring len(sources) >= TIER3_EXCEPTION_MIN_SOURCES rejected genuinely valid overrides. This
-# lower floor just guards against a fully unsupported self-report (claiming 3 independent sources
-# while citing literally none); the real count-of-3 check is tier3_independent_source_count below.
-TIER3_EXCEPTION_MIN_LISTED_SOURCES = 1
+# Real, previously-mishandled failures ("Mountain Ridge Garden Homes Apartments," "Castle
+# Apartments Condominium Association, Inc.") had `sources` listing only 1-2 URLs while the
+# model's self-reported tier3_independent_source_count claimed 3+ ("multiple independent listing
+# platforms") -- an earlier version of this tool deliberately allowed that gap (on the theory
+# that the model might legitimately examine more sources than it bothers to list), but that gap
+# is exactly what let these self-reports go unverified. `sources` is now the authoritative,
+# code-checked floor for condition 1: it must itself contain TIER3_EXCEPTION_MIN_SOURCES distinct
+# URLs, not just a self-reported count claiming that many.
 
 SYSTEM_PROMPT = """You are a research assistant verifying property ownership-type records in a \
 Community Lending Portfolio (CLP) database.
@@ -438,13 +440,17 @@ override built on Tier 3 evidence alone, and a claim that doesn't hold up agains
 data (e.g. citing a null fee when the row's fee field is actually populated) will be caught and \
 downgraded regardless of what the rest of your answer says.
 
-**`tier3_independent_source_count` is the actual test for condition 1, not the length of the \
-`sources` list.** `sources` only asks for specific URLs used -- it's fine (and normal) to list just \
-2 representative URLs there even when you examined 3 or more independent sources; don't pad it out \
-artificially, and don't treat listing fewer URLs as a reason to lower your `tier3_independent_source_count` \
-answer or decline the exception. If you genuinely found and examined 3+ independent, non-syndicated \
-sources agreeing, set `tier3_independent_source_count` to that real number regardless of how many \
-you chose to list as URLs.
+**`sources` must actually list every one of the 3+ independent sources you're counting toward \
+condition 1 -- `tier3_independent_source_count` is no longer allowed to claim more than `sources` \
+actually shows.** An earlier version of this tool let you list fewer URLs than your claimed count \
+(on the theory you might legitimately examine more sources than you bother to list); two real \
+failures ("Mountain Ridge Garden Homes Apartments," "Castle Apartments Condominium Association, \
+Inc.") exploited exactly that gap -- reasoning claimed "multiple independent listing platforms" \
+while `sources` listed only 1-2 URLs, and the override went through anyway. **This is enforced in \
+code now: `sources` itself must contain 3+ distinct URLs before condition 1 can be satisfied at \
+all**, regardless of what `tier3_independent_source_count` says. If you genuinely found 3+ \
+independent, non-syndicated sources agreeing, list all of them as URLs in `sources` -- don't \
+summarize or truncate the list.
 
 ## Bounded exception (reverse direction, to COA/HOA): last-resort Tier-3-corroborated override
 
@@ -985,6 +991,45 @@ SUBMIT_SCHEMA = {
                 "tier3_exception_invoked is 'no'."
             ),
         },
+        "tier3_dual_association_search_performed": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when tier3_exception_direction is 'to_apt': 'yes' only if "
+                "Attempt 2 explicitly searched for evidence of BOTH kinds of association -- a "
+                "Declaration of Condominium/condominium association AND an HOA covenant/"
+                "homeowners association -- regardless of which one Master_Ownership Type "
+                "currently lists. HOA and COA are commonly mislabeled as EACH OTHER, not just "
+                "mislabeled as APT: searching only for the DB's current type, finding nothing, "
+                "and concluding 'no association of any kind exists' is a real, previously-"
+                "mishandled failure pattern (properties DB-listed COA where research only checked "
+                "for HOA documents and mistook the absence of HOA-specific evidence for the "
+                "absence of any association -- when the actual answer might have been 'it's a "
+                "COA, not an HOA, but an association clearly exists'). Only after confirming BOTH "
+                "searches came up empty should you conclude no association exists at all. 'no' if "
+                "you only searched for one type, or didn't search at all. 'not_applicable' for the "
+                "reverse direction or when tier3_exception_invoked is 'no'."
+            ),
+        },
+        "tier3_entity_name_registry_search_performed": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Required whenever Master_Property Name contains a full formal legal-entity "
+                "string -- specifically 'Condominium Association, Inc.', 'Owners Association, "
+                "Inc.', or 'Condominium, Inc.' (you'll be told explicitly when this applies; this "
+                "is NOT about casual use of 'condo' or 'apartments' in a name, which is never "
+                "evidence either way): 'yes' only if you ran a state business registry search "
+                "(Sunbiz-style) for that EXACT entity name as part of Attempt 2. This doesn't "
+                "decide the outcome on its own -- if the registry search comes back empty or shows "
+                "the entity dissolved, an override can still happen -- it just requires that "
+                "specific, cheap, high-value check to actually run before you lean on Tier 3 "
+                "evidence alone. A real, previously-mishandled failure: 'Castle Apartments "
+                "Condominium Association, Inc.' was overridden to APT without ever running this "
+                "search. 'not_applicable' if the name doesn't contain one of those legal-entity "
+                "strings."
+            ),
+        },
         "tier3_contradicting_evidence": {
             "type": "string",
             "enum": YES_NO_NA_LABELS,
@@ -1039,6 +1084,7 @@ SUBMIT_SCHEMA = {
         "tier3_structural_edge_case_ruled_out",
         "tier3_sales_listing_search_performed", "tier3_sales_evidence_found",
         "ownership_concentration_verified_externally", "ownership_concentration_contradicting_evidence",
+        "tier3_dual_association_search_performed", "tier3_entity_name_registry_search_performed",
     ],
     "additionalProperties": False,
 }
@@ -1117,6 +1163,60 @@ def _property_name_parts(name: str) -> list:
     record covers multiple distinct communities that each need their own evidence" (see
     _enforce_multi_name_guardrail)."""
     return [part.strip() for part in (name or "").split(",") if part.strip()]
+
+
+# Real, previously-mishandled failure: "CASTLE APARTMENTS CONDOMINIUM ASSOCIATION, INC." was
+# overridden straight through its own explicit legal-entity name. This is deliberately narrow --
+# it matches a full formal entity string, not casual use of "condo" or "apartments" in a name
+# (naming alone is never evidence per §5.2/the bottom of the evidence hierarchy). Detected here in
+# code, not left to the model, so the required registry-search gate can't be skipped by simply
+# not noticing the pattern.
+LEGAL_ENTITY_NAME_RE = re.compile(
+    r"condominium\s+association,?\s*inc\.?|owners\s+association,?\s*inc\.?|condominium,?\s*inc\.?",
+    re.IGNORECASE,
+)
+
+
+def _has_legal_entity_name(name: str) -> bool:
+    return bool(LEGAL_ENTITY_NAME_RE.search(name or ""))
+
+
+# Real, previously-mishandled failures ("Mountain Ridge Garden Homes Apartments," "Castle
+# Apartments Condominium Association, Inc.") both claimed condition 2 ("zero contradicting
+# evidence") without evidence that a genuine, targeted individual-unit sale-listing search
+# actually ran -- reasoning just asserted "no sale listings found" while only having looked at
+# rental sites. This checks the model's ACTUAL issued search queries (extracted from the OpenAI
+# response, not self-reported) for one that's both sale-oriented and about this specific property.
+SALE_SEARCH_QUERY_RE = re.compile(
+    r"for sale|\bsold\b|\bassessor\b|\bdeed\b|\bparcel\b|county record|\brecorder\b",
+    re.IGNORECASE,
+)
+
+
+def _relevant_search_tokens(row: dict) -> set:
+    text = f"{_norm_text(row.get('Address'))} {_norm_text(row.get('Master_Property Name'))}".lower()
+    return {t for t in re.findall(r"[a-z0-9]+", text) if len(t) > 2}
+
+
+def _genuine_sale_search_performed(row: dict, result: dict) -> bool:
+    """True only if at least one of the ACTUAL search queries issued during research (see
+    research_property()'s `_searched_queries`) is both sale-oriented and about this specific
+    property. When the row provides no Address/Master_Property Name to match against (e.g. an
+    isolated unit test), the token-overlap check is skipped and a bare sale-oriented query is
+    enough -- in real batch runs Address is always present, so the stricter check always applies
+    there."""
+    queries = result.get("_searched_queries") or []
+    relevant_tokens = _relevant_search_tokens(row)
+    for query in queries:
+        query_lower = query.lower()
+        if not SALE_SEARCH_QUERY_RE.search(query_lower):
+            continue
+        if not relevant_tokens:
+            return True
+        query_tokens = set(re.findall(r"[a-z0-9]+", query_lower))
+        if query_tokens & relevant_tokens:
+            return True
+    return False
 
 
 def _first_present(row: dict, *keys):
@@ -1295,6 +1395,18 @@ def format_property(row: dict, triggers: list, url_cache: dict) -> str:
             f"accordingly."
         )
 
+    property_name = _norm_text(row.get("Master_Property Name"))
+    if _has_legal_entity_name(property_name):
+        lines.append(
+            f"- NOTE: this record's own name, \"{property_name}\", contains a full formal "
+            f"legal-entity string. If you're considering the Tier-3-only exception (to APT), you "
+            f"must run a state business registry search (Sunbiz-style) for this EXACT entity "
+            f"name as part of Attempt 2 before that exception can apply -- set "
+            f"`tier3_entity_name_registry_search_performed` accordingly. This doesn't decide the "
+            f"outcome by itself (an empty or dissolved registry result doesn't block an override "
+            f"on its own), it just requires that specific, cheap, high-value check to actually run."
+        )
+
     lines.append("")
     lines.append(f"### Trigger rule(s) that flagged this property for review ({len(triggers)} total)")
     if triggers:
@@ -1343,11 +1455,27 @@ def extract_openai_sources(output_items):
     return sources
 
 
+def extract_openai_search_queries(output_items):
+    """Pulls the actual query text out of each web_search_call item in the response -- this is
+    what lets guardrails verify a targeted search genuinely happened (e.g. a real sale-listing
+    query), rather than trusting a self-reported field claiming it did."""
+    queries = []
+    for item in output_items:
+        if getattr(item, "type", None) != "web_search_call":
+            continue
+        action = getattr(item, "action", None)
+        query = getattr(action, "query", None) if action else None
+        if query:
+            queries.append(query)
+    return queries
+
+
 def research_property(client, row: dict, triggers: list, url_cache: dict, model: str) -> dict:
     input_items = [{"role": "user", "content": build_user_message(row, triggers, url_cache)}]
     tools = [OPENAI_WEB_SEARCH_TOOL, OPENAI_SUBMIT_TOOL]
     previous_response_id = None
     searched_sources = []
+    searched_queries = []
 
     for turn in range(MAX_TURNS):
         is_last_turn = turn == MAX_TURNS - 1
@@ -1364,12 +1492,16 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
         response = call_openai_with_backoff(client, **kwargs)
         previous_response_id = response.id
         searched_sources.extend(extract_openai_sources(response.output))
+        searched_queries.extend(extract_openai_search_queries(response.output))
 
         submit_call = find_function_call(response.output, "submit_assessment")
         if submit_call:
             result = json.loads(submit_call.arguments)
             if not result.get("sources"):
                 result["sources"] = sorted(set(searched_sources))
+            # Internal-only, not part of SUBMIT_SCHEMA -- lets guardrails verify a genuinely
+            # targeted search actually happened rather than trusting a self-reported field.
+            result["_searched_queries"] = searched_queries
             return result
 
         input_items = [{
@@ -1639,6 +1771,12 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
             rule_a_failure = "contradicting evidence of genuine HOA/COA governance was found"
         elif result.get("tier3_sales_listing_search_performed") != "yes":
             rule_a_failure = "an explicit search for individual sale listings wasn't confirmed"
+        elif not _genuine_sale_search_performed(row, result):
+            rule_a_failure = (
+                "no genuinely targeted individual-unit sale-listing search was found among the "
+                "actual search queries issued, regardless of what tier3_sales_listing_search_"
+                "performed claims"
+            )
 
         if rule_a_failure:
             if result.get("decision") == "Override" and result.get("determined_type") == "APT":
@@ -1696,8 +1834,13 @@ def _tier3_exception_condition_failures(row: dict, result: dict, direction: str)
     same as any other)."""
     failures = []
 
-    if len(result.get("sources", [])) < TIER3_EXCEPTION_MIN_LISTED_SOURCES:
-        failures.append("condition 1: no sources were listed at all, so the independent-source claim is unsupported")
+    distinct_sources = set(result.get("sources", []) or [])
+    if len(distinct_sources) < TIER3_EXCEPTION_MIN_SOURCES:
+        failures.append(
+            f"condition 1: only {len(distinct_sources)} distinct URL(s) were actually listed in "
+            f"`sources` -- the exception requires {TIER3_EXCEPTION_MIN_SOURCES}+ actually-listed "
+            f"sources, not just a self-reported count claiming that many"
+        )
     elif (_parse_number(result.get("tier3_independent_source_count")) or 0) < TIER3_EXCEPTION_MIN_SOURCES:
         failures.append("condition 1: self-reported independent source count is below 3")
     elif result.get("tier3_name_address_anchor_confirmed") != "yes":
@@ -1794,6 +1937,32 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
             "the forward exception requires an explicit search for individual unit SALE "
             "listings (not just rental listings) before condition 2 can be claimed, which "
             "wasn't confirmed",
+        )
+
+    if direction == "to_apt" and not _genuine_sale_search_performed(row, result):
+        return _downgrade_tier3_override(
+            result,
+            "no genuinely targeted individual-unit sale-listing search (an address-specific "
+            "'for sale'/'sold' query, or a county assessor/deed lookup) was found among the "
+            "actual search queries issued, regardless of what tier3_sales_listing_search_"
+            "performed claims",
+        )
+
+    if direction == "to_apt" and result.get("tier3_dual_association_search_performed") != "yes":
+        return _downgrade_tier3_override(
+            result,
+            "the forward exception requires Attempt 2 to have searched for evidence of BOTH a "
+            "condominium association AND an HOA, regardless of which one the DB currently "
+            "lists, before concluding no association of any kind exists, which wasn't confirmed",
+        )
+
+    if direction == "to_apt" and _has_legal_entity_name(row.get("Master_Property Name")) \
+            and result.get("tier3_entity_name_registry_search_performed") != "yes":
+        return _downgrade_tier3_override(
+            result,
+            "the property's own name contains a formal legal-entity string, which requires a "
+            "state business registry search for that exact entity name before the forward "
+            "exception can be considered, and that search wasn't confirmed",
         )
 
     failures = _tier3_exception_condition_failures(row, result, direction)
@@ -1979,6 +2148,16 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
             raise ValueError(
                 f"Model returned invalid ownership_concentration_contradicting_evidence: "
                 f"{result.get('ownership_concentration_contradicting_evidence')!r}"
+            )
+        if result.get("tier3_dual_association_search_performed") not in YES_NO_NA_LABELS:
+            raise ValueError(
+                f"Model returned invalid tier3_dual_association_search_performed: "
+                f"{result.get('tier3_dual_association_search_performed')!r}"
+            )
+        if result.get("tier3_entity_name_registry_search_performed") not in YES_NO_NA_LABELS:
+            raise ValueError(
+                f"Model returned invalid tier3_entity_name_registry_search_performed: "
+                f"{result.get('tier3_entity_name_registry_search_performed')!r}"
             )
         result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_coop_mention_guardrail(db_type, result)
