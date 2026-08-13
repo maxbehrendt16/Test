@@ -997,6 +997,258 @@ class SearchQueryExtractionTests(unittest.TestCase):
         self.assertEqual(result["_searched_queries"], ["109 Indigo Road condo for sale"])
 
 
+class SubmissionRequiresSaleSearchTests(unittest.TestCase):
+    """_submission_requires_sale_search() must mirror the exact scoping the after-the-fact
+    guardrails apply: only an Override-to-APT via the forward Tier-3 exception or Rule A's
+    single_owner_full_bulk path needs a genuine sale-listing search on record."""
+
+    def test_forward_tier3_exception_to_apt_requires_it(self):
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+        }
+        self.assertTrue(otc._submission_requires_sale_search(result))
+
+    def test_rule_a_single_owner_full_bulk_requires_it(self):
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "tier3_exception_invoked": "no",
+            "ownership_concentration": "single_owner_full_bulk",
+        }
+        self.assertTrue(otc._submission_requires_sale_search(result))
+
+    def test_ordinary_tier12_override_does_not_require_it(self):
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "tier3_exception_invoked": "no",
+            "ownership_concentration": "not_applicable",
+        }
+        self.assertFalse(otc._submission_requires_sale_search(result))
+
+    def test_reverse_direction_tier3_exception_does_not_require_it(self):
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_hoa",
+        }
+        self.assertFalse(otc._submission_requires_sale_search(result))
+
+    def test_non_override_decision_does_not_require_it(self):
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "APT",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+        }
+        self.assertFalse(otc._submission_requires_sale_search(result))
+
+    def test_override_to_non_apt_does_not_require_it(self):
+        result = {
+            "decision": "Override",
+            "determined_type": "HOA",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+        }
+        self.assertFalse(otc._submission_requires_sale_search(result))
+
+
+class SaleSearchCorrectionMessageTests(unittest.TestCase):
+    def test_message_uses_address_and_name_and_lists_required_keywords(self):
+        row = {"Address": "109 Indigo Road, Hackettstown, NJ 07840-4541, USA", "Master_Property Name": "Mountain Ridge Garden Homes Apartments"}
+        message = otc._sale_search_correction_message(row)
+        self.assertIn("109 Indigo Road, Hackettstown, NJ 07840-4541, USA", message)
+        self.assertIn("Mountain Ridge Garden Homes Apartments MLS listing", message)
+        for keyword in ["for sale", "sold", "MLS", "Zillow", "Redfin", "listing", "resale", "deed", "parcel", "assessor", "tax record"]:
+            self.assertIn(keyword, message)
+
+    def test_falls_back_to_name_when_address_is_missing(self):
+        row = {"Address": "", "Master_Property Name": "Stratford Crossing Flats"}
+        message = otc._sale_search_correction_message(row)
+        self.assertIn("Stratford Crossing Flats for sale", message)
+
+
+class ResearchPropertySaleSearchCorrectionLoopTests(unittest.TestCase):
+    """research_property() must not accept a premature Override-to-APT submission (via the
+    forward Tier-3 exception or Rule A) that lacks a genuine sale-listing search -- it should
+    reject it, ask for a real search, and give the model bounded extra turns before falling back
+    to the after-the-fact guardrails as the final failsafe."""
+
+    class _FakeAction:
+        def __init__(self, query=None, queries=None, type="search", **kwargs):
+            self.type = type
+            self.query = query
+            self.queries = queries
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    class _FakeItem:
+        def __init__(self, type_, **kwargs):
+            self.type = type_
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    class _FakeResponse:
+        def __init__(self, output, id_):
+            self.output = output
+            self.id = id_
+
+    ROW = {
+        "Address": "1035 Northwest Lexi Lane, Waukee, IA 50263",
+        "Master_Property Name": "Stratford Crossing Flats",
+    }
+
+    def _submit_item(self, result):
+        return self._FakeItem(
+            "function_call", name="submit_assessment", arguments=json.dumps(result)
+        )
+
+    def _bare_override_result(self):
+        return {
+            "decision": "Override",
+            "determined_type": "APT",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+            "sources": [],
+        }
+
+    def test_premature_submission_without_sale_search_is_rejected_and_corrected(self):
+        bare_query_response = self._FakeResponse(
+            output=[
+                self._FakeItem(
+                    "web_search_call",
+                    action=self._FakeAction("Stratford Crossing Flats 1035 Northwest Lexi Lane ownership type"),
+                ),
+                self._submit_item(self._bare_override_result()),
+            ],
+            id_="resp_1",
+        )
+        corrected_result = dict(self._bare_override_result())
+        corrected_result["decision"] = "Confirmed"
+        corrected_response = self._FakeResponse(
+            output=[
+                self._FakeItem(
+                    "web_search_call",
+                    action=self._FakeAction("Stratford Crossing Flats 1035 Northwest Lexi Lane for sale"),
+                ),
+                self._submit_item(corrected_result),
+            ],
+            id_="resp_2",
+        )
+        with mock.patch(
+            "ownership_type_checking.call_openai_with_backoff",
+            side_effect=[bare_query_response, corrected_response],
+        ) as mock_call:
+            result = otc.research_property(None, self.ROW, [], {}, "gpt-4o")
+
+        self.assertEqual(mock_call.call_count, 2)
+        self.assertEqual(result["decision"], "Confirmed")
+        self.assertEqual(
+            result["_searched_queries"],
+            [
+                "Stratford Crossing Flats 1035 Northwest Lexi Lane ownership type",
+                "Stratford Crossing Flats 1035 Northwest Lexi Lane for sale",
+            ],
+        )
+        second_call_input = mock_call.call_args_list[1].kwargs["input"]
+        self.assertIn("sale", second_call_input[0]["content"].lower())
+
+    def test_correction_budget_is_bounded_then_falls_back_to_accepting_the_result(self):
+        bare_query_response = self._FakeResponse(
+            output=[
+                self._FakeItem("web_search_call", action=self._FakeAction("Stratford Crossing Flats ownership type")),
+                self._submit_item(self._bare_override_result()),
+            ],
+            id_="resp_n",
+        )
+        responses = [bare_query_response] * (otc.MAX_SALE_SEARCH_CORRECTIONS + 1)
+        with mock.patch(
+            "ownership_type_checking.call_openai_with_backoff", side_effect=responses
+        ) as mock_call:
+            result = otc.research_property(None, self.ROW, [], {}, "gpt-4o")
+
+        # MAX_SALE_SEARCH_CORRECTIONS rejections, then accepted as-is on the next attempt --
+        # the after-the-fact guardrail is the final failsafe from here, not this loop.
+        self.assertEqual(mock_call.call_count, otc.MAX_SALE_SEARCH_CORRECTIONS + 1)
+        self.assertEqual(result["decision"], "Override")
+
+    def test_no_correction_attempted_on_the_final_forced_submission_turn(self):
+        # If the model only complies right at the last turn, is_last_turn already forces
+        # tool_choice, and the correction loop must not consume that turn trying to reject it --
+        # there'd be no turn left to actually resubmit with.
+        responses = [
+            self._FakeResponse(
+                output=[
+                    self._FakeItem("web_search_call", action=self._FakeAction("Stratford Crossing Flats ownership type")),
+                ],
+                id_=f"resp_{i}",
+            )
+            for i in range(otc.MAX_TURNS - 1)
+        ]
+        final_response = self._FakeResponse(
+            output=[self._submit_item(self._bare_override_result())],
+            id_="resp_final",
+        )
+        responses.append(final_response)
+        with mock.patch(
+            "ownership_type_checking.call_openai_with_backoff", side_effect=responses
+        ) as mock_call:
+            result = otc.research_property(None, self.ROW, [], {}, "gpt-4o")
+
+        self.assertEqual(mock_call.call_count, otc.MAX_TURNS)
+        self.assertEqual(result["decision"], "Override")
+
+    def test_compliant_submission_is_accepted_on_the_first_try(self):
+        compliant_result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "tier3_exception_invoked": "yes",
+            "tier3_exception_direction": "to_apt",
+            "sources": [],
+        }
+        response = self._FakeResponse(
+            output=[
+                self._FakeItem("web_search_call", action=self._FakeAction("Stratford Crossing Flats for sale")),
+                self._submit_item(compliant_result),
+            ],
+            id_="resp_1",
+        )
+        with mock.patch(
+            "ownership_type_checking.call_openai_with_backoff", return_value=response
+        ) as mock_call:
+            result = otc.research_property(None, self.ROW, [], {}, "gpt-4o")
+
+        self.assertEqual(mock_call.call_count, 1)
+        self.assertEqual(result["decision"], "Override")
+
+    def test_ordinary_tier12_override_is_never_subject_to_correction(self):
+        tier12_result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "tier3_exception_invoked": "no",
+            "ownership_concentration": "not_applicable",
+            "sources": [],
+        }
+        response = self._FakeResponse(
+            output=[
+                self._FakeItem("web_search_call", action=self._FakeAction("Stratford Crossing Flats reviews")),
+                self._submit_item(tier12_result),
+            ],
+            id_="resp_1",
+        )
+        with mock.patch(
+            "ownership_type_checking.call_openai_with_backoff", return_value=response
+        ) as mock_call:
+            result = otc.research_property(None, self.ROW, [], {}, "gpt-4o")
+
+        self.assertEqual(mock_call.call_count, 1)
+        self.assertEqual(result["decision"], "Override")
+
+
 class MountainRidgeAndCastleApartmentsRegressionTests(unittest.TestCase):
     """End-to-end regressions replaying the two exact reported false positives: both DB-listed
     COA, both overridden to APT via §4.1 despite failing multiple of its own conditions."""
