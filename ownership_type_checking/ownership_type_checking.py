@@ -1619,7 +1619,26 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
                 and not _genuine_sale_search_performed(row, {"_searched_queries": searched_queries})
             ):
                 sale_search_corrections_used += 1
-                input_items = [{"role": "user", "content": _sale_search_correction_message(row)}]
+                # A function_call (submit_assessment) MUST be followed by a matching
+                # function_call_output before the conversation can continue via
+                # previous_response_id -- the Responses API rejects the next turn with
+                # "No tool output found for function call <id>" otherwise. This is a real,
+                # previously-mishandled bug: the correction loop used to send only the corrective
+                # user message and skip this, since returning immediately after a submit_call
+                # (the only thing this loop did before the correction mechanism existed) never
+                # needed one.
+                input_items = [
+                    {
+                        "type": "function_call_output",
+                        "call_id": submit_call.call_id,
+                        "output": (
+                            "Rejected: this submission requires a genuine sale-listing search "
+                            "that hasn't been performed yet. See the following message for what "
+                            "to do next."
+                        ),
+                    },
+                    {"role": "user", "content": _sale_search_correction_message(row)},
+                ]
                 continue
 
             if not result.get("sources"):
