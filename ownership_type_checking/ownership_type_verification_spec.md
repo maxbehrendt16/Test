@@ -219,6 +219,18 @@ supporting Tier 1/2 source, only three of the four are required (see below). Do 
 one Tier 1/2 source was found, so no override is possible" without first checking whether this
 exception applies using your Tier 3 evidence — that's exactly the gap it exists to cover.
 
+**Absolute gate, checked before the four conditions below: an explicit search for individual unit
+SALE listings (not just rental listings) must actually be performed for this specific property
+before condition 2 can be claimed.** MLS/Zillow/Redfin "for sale" listings, county deed/sale
+records — this is a real, targeted search, not a byproduct of the general Attempt 1/2 research.
+**This rule is deliberately asymmetric: finding RENTAL listings at what's currently labeled
+HOA/COA does NOT rule out the HOA/COA designation** (a large share of genuine HOA/COA units are
+individually owned and rented out by their owners) **— but finding SALE listings, or a property
+described as planned/entitled for individual sale, at what you're about to call APT DOES rule out
+APT, full stop, regardless of any other evidence.** If this search finds any such evidence, this
+exception does not apply, and the correct answer is Confirmed/the DB label — not just a failure of
+condition 2 to be weighed against the other three, an absolute disqualifier on its own.
+
 **All four conditions required (three, with one supporting Tier 1/2 source — see below):**
 
 1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the DB's
@@ -241,8 +253,10 @@ exception applies using your Tier 3 evidence — that's exactly the gap it exist
 2. **Zero contradicting evidence anywhere.** No MLS record of an individual unit sale, no county
    deed showing a different owner name for any specific address within the property, nothing found
    in Attempt 2's targeted searches (county recorder, tax assessor, state business registry) that
-   points the other way. A single contradicting data point anywhere is disqualifying, regardless of
-   how much Tier 3 evidence agrees.
+   points the other way, and — per the gate above — no individual sale listing and nothing
+   describing the property as planned/entitled for individual sale. A single contradicting data
+   point anywhere is disqualifying, regardless of how much Tier 3 evidence agrees, and does not
+   need to be corroborated by anything else to sink this condition.
 3. **At least one internal DB field corroborates single ownership.** The clearest version of this:
    a null `Master_Monthly Association Fees` on a property large enough that a real HOA/COA of that
    size would almost always have a fee on file by now — a true association this size with no fee
@@ -469,6 +483,11 @@ Some properties won't cleanly fit APT/COA/HOA:
   structure independently.
 - **Age-restricted or master-planned communities with a name like "The Apartments at [Community]"**
   used purely as a marketing brand for what's legally a COA — check the actual declaration.
+- **Master-planned mixed communities** — a development explicitly described as a "master planned
+  community" that offers BOTH for-rent and for-sale housing. This is distinct from the naming-brand
+  case above: it's not that "Apartments" is a misleading marketing label for a single legal COA, but
+  that the development genuinely contains housing under more than one ownership model, and the
+  specific record's address often can't be cleanly tied to one of them. See the third amendment below.
 
 **Amendment: structural edge cases are never overridden, full stop.** (Housing cooperatives,
 condo-hotels/timeshares, manufactured home communities, and senior/student housing where the naming
@@ -498,6 +517,26 @@ forced back to `Confirmed`/the DB label, regardless of whether `structural_edge_
 this exists because relying on that field alone assumes the model always remembers to set it
 when a co-op possibility comes up, and it doesn't always.
 
+**Third amendment, for master-planned mixed communities: read cited sources' actual text, not
+just your own summary of them, and default to no change when both for-rent and for-sale housing
+are described.** Set `structural_edge_case` to `master_planned_mixed_community` and leave the DB
+label as-is — same never-override policy as the rest of this section — UNLESS the specific
+component/parcel the DB record refers to can be cleanly confirmed (in which case this is ordinary
+§5.5 mixed-use handling instead: decide normally for that confirmed component).
+
+A real failure this guards against: **"Baumgardner Ranch"** (DB: HOA) was overridden to APT with
+reasoning stating it's "marketed as a rental apartment community with no HOA evidences" — but the
+very page cited as the source describes it as a master planned community whose stated goal is to
+provide "a multitude of high quality housing options ... including for rent and for sale homes."
+That sentence is direct evidence *against* a pure-rental-APT conclusion, and the model's reasoning
+never engaged with it — it's easy to skim past "master planned community" while focused on the
+rental-marketing language ("apply now," "leasing office") that dominates the rest of the page. This
+is enforced by a second, independent code backstop that doesn't rely on the model noticing this on
+its own: the property's cited source URLs are re-fetched after the fact and the actual page text is
+scanned for "master planned community" phrasing or an explicit for-rent-and-for-sale mix. An
+Override that survives despite this phrasing being present in the real page content is caught and
+downgraded back to `Confirmed`/the DB label, regardless of what the model's own reasoning said.
+
 ### 5.8 Fee field miscoding
 "Has Fees" as a trigger assumes the fee field is populated correctly. Before treating fee presence
 as evidence of COA/HOA structure, sanity-check that the fee isn't a miscoded value (e.g., a
@@ -512,6 +551,32 @@ corroboration means two *different kinds* of source (e.g., a county registry ent
 GIS parcel record) — not multiple restatements of the same marketing claim. §4.1 applies this same
 principle at a stricter threshold (3+ sources, from genuinely different companies/platforms) for
 the one case where Tier 3 evidence alone is asked to carry an override decision.
+
+### 5.10 Combined/multi-name records
+
+Some DB records combine multiple distinct, separately-named communities under one
+`Master_Property Name`, comma-separated — e.g. **"White Oak Villas, South Cottage Village."**
+Treat each comma-separated sub-name as its own separate research target — run Attempt 1/Attempt 2
+for EACH one independently — and **only conclude Override if ALL of the sub-names independently
+and separately support the SAME conclusion.** If even one sub-name disagrees (supports staying at
+the existing DB label, or a different type than the others), or simply can't be confirmed at all,
+the record must stay at the DB label.
+
+**The address on file may only directly correspond to ONE of the sub-names.** For the other
+sub-name(s), search in the same immediate vicinity/nearby address rather than assuming the exact
+address on file applies to all of them. Worked example: the DB lists "White Oak Villas, South
+Cottage Village" as HOA. Research finds White Oak Villas is a genuine single-owner apartment
+complex — but that alone is **not** sufficient to override. A second, separate research pass must
+also confirm South Cottage Village (searching nearby, since the file's address is White Oak
+Villas') independently supports APT too. If South Cottage Village turns out to be a genuine,
+individually-owned HOA instead, the record stays HOA overall — even though White Oak Villas alone
+looked like a clean APT case.
+
+This is enforced in code via a required field, `multi_name_all_agree`: whether a given record's
+name is a combined, multi-part name is determined deterministically from the row's own data (a
+comma split on `Master_Property Name`), not left to the model to notice on its own. An Override on
+a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in code unless
+`multi_name_all_agree` is explicitly `yes`, regardless of what else the model submits.
 
 ## 6. Verification process (per property)
 
@@ -539,7 +604,14 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
    record alone doesn't settle this — check recency first (see the reverse-conversion note in §4)
    before concluding either way. Skip this check only if you genuinely can't establish either
    pattern, or the property's legal type and functional reality already agree.
-4. **Decision:**
+4. **Required check — master-planned mixed communities and combined/multi-name records:**
+   - Read cited sources' actual text, not just your own summary of them, for "master planned
+     community" phrasing or an explicit mix of for-rent and for-sale housing (§5.7's third
+     amendment). If found and the specific component can't be cleanly confirmed, this defaults to
+     no change — do not override.
+   - If `Master_Property Name` combines multiple comma-separated sub-names (§5.10), research each
+     one separately and only override if ALL of them independently agree.
+5. **Decision:**
    - §2.1's Rule A applies (100% single-owned, centrally managed, no individual owner/listing) →
      **Override — APT** (or **Confirmed** if the DB already says APT), regardless of a legal
      condo/HOA declaration, archetype flag "Legally Condo, Functionally Apartment" (plus "Reverse
@@ -547,6 +619,8 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
      correction per §4)
    - §2.1's Rule B applies (even one unit currently individually owned) → stays **COA/HOA**, never
      APT, regardless of what fraction of the building is bulk-owned
+   - A master-planned mixed community (§5.7) or a combined/multi-name record without agreement
+     across all sub-names (§5.10) → **Not Enough Info / Confirmed — default to no change**
    - DB label confirmed by evidence found, or no contradicting evidence found → **Confirmed**
    - Tier 1/2 evidence contradicts DB label, corroborated by a second independent Tier 1/2 source →
      **Override — [correct type]**
@@ -562,7 +636,7 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
      development) → **Not Enough Info — default to no change** (keep DB label, flagged
      low-confidence for optional human review). **When in doubt, don't change the label.**
    - Property doesn't fit the three-way taxonomy → **Structural Edge Case — [description]**
-5. Every decision gets a **short, 1–2 sentence** plain-language reasoning and the specific evidence
+6. Every decision gets a **short, 1–2 sentence** plain-language reasoning and the specific evidence
    tier(s) relied on, plus source URLs. Keep it concise — this field is read at scale, not as a
    research memo.
 
@@ -581,9 +655,12 @@ the one case where Tier 3 evidence alone is asked to carry an override decision.
 | `evidence_tier_used` | Tier 1 / Tier 2 / Tier 3 / Mixed |
 | `reasoning` | **1–2 sentences**, plain language. Short enough to scan at scale — not a research memo. |
 | `sources` | List of source URLs |
-| `archetype_flag` | One of the failure-mode tags from §5 if applicable (e.g., "Marketing Language Trap," "Lease-Up Phase," "Investor Bulk Ownership," "Mixed-Use Development," "Stale/Renamed," "Structural Edge Case," "Fee Miscoding"), or "Tier-3 Corroborated Override" per §4.1 or §4.2, or "Legally Condo, Functionally Apartment" / "Reverse Conversion — Formerly Individually Owned, Now Bulk-Owned" per §2.1/§4 |
+| `archetype_flag` | One of the failure-mode tags from §5 if applicable (e.g., "Marketing Language Trap," "Lease-Up Phase," "Investor Bulk Ownership," "Mixed-Use Development," "Stale/Renamed," "Structural Edge Case," "Fee Miscoding," "Master-Planned Mixed Community," "Combined/Multi-Name Record"), or "Tier-3 Corroborated Override" per §4.1 or §4.2, or "Legally Condo, Functionally Apartment" / "Reverse Conversion — Formerly Individually Owned, Now Bulk-Owned" per §2.1/§4 |
 | `tier3_exception_direction` | For a "Tier-3 Corroborated Override": `to_apt` (§4.1, forward) or `to_coa_hoa` (§4.2, reverse) |
 | `ownership_concentration` | Per §2.1: `single_owner_full_bulk` (Rule A), `individual_owner_present` (Rule B), or `not_applicable` |
+| `multi_name_all_agree` | Per §5.10, only meaningful when `Master_Property Name` has 2+ comma-separated sub-names: `yes` only if every sub-name was researched separately and all agree; otherwise the override is blocked in code |
+| `tier3_sales_listing_search_performed` | Per §4.1's absolute gate, only meaningful for the forward (`to_apt`) direction: `yes` only if an explicit search for individual unit SALE listings was actually performed |
+| `tier3_sales_evidence_found` | Per §4.1, only meaningful for the forward direction: `yes` if any evidence of individual sales or planned/entitled-for-sale units was found — an absolute disqualifier for APT, enforced in code regardless of `tier3_contradicting_evidence` |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -651,6 +728,20 @@ ownership concentration, and needs to demonstrate real-world accuracy on its own
 trusted at full volume. Give particular scrutiny to any case also tagged "Reverse Conversion" —
 those rest on correctly distinguishing a stale individual-sale record from current ownership,
 which is the part of this rule most likely to be gotten wrong.
+
+**Spot-check that the master-planned-mixed-community and multi-name backstops (§5.7, §5.10) are
+actually firing when they should.** Both are new, and both depend on real-world data patterns
+(specific phrasing in cited sources, comma-separated DB names) that may be more or less common
+than expected — pull a sample of properties whose `Master_Property Name` contains a comma, and
+confirm the tool is genuinely researching each sub-name rather than just defaulting to Not Enough
+Info out of caution or missing the pattern.
+
+**Spot-check every §4.1 forward-direction Tier-3 override against its own reasoning text for a
+self-contradiction like the Sky Nashville case** — a property described as planned/entitled for
+individual sale, or with a genuine MLS sale listing found, that still concluded APT. This is now
+blocked in code via `tier3_sales_evidence_found`, but that field is still a self-report; confirm in
+the QC sample that the model is actually performing the required sales-listing search
+(`tier3_sales_listing_search_performed`) rather than defaulting it to `yes` without really looking.
 
 ## 10. Input file format
 
@@ -906,3 +997,34 @@ evidence; the fee itself populated and corroborating (not null, which would poin
 and no structural edge case (co-op, condo-hotel, senior/student housing) fitting better. Had Attempt
 2 not been genuinely exhausted, or had the fee been null instead of populated, this would fall back
 to Not Enough Info exactly as it did before §4.2 existed.
+
+### Sky Nashville (DB: HOA) — the case that motivated §4.1's sales-listing gate
+
+DB-listed as HOA. Research described the property as "an entitled development planned for
+for-sale condos/townhomes," and then, in the same breath, concluded "no conflicting evidence was
+found confirming APT" and overrode to APT via the §4.1 exception.
+
+**This is a direct self-contradiction, not a valid override.** A development entitled/planned for
+individual SALE units is exactly the kind of evidence condition 2 exists to catch — the fact that
+no *additional* contradicting evidence was found doesn't matter, because "planned for for-sale
+condos/townhomes" already IS the contradicting evidence. The correct answer is **Confirmed, HOA**,
+not Override.
+
+| Field | Value |
+|---|---|
+| `determined_type` | **HOA** (no change) |
+| `decision` | **Confirmed** |
+| `tier3_sales_listing_search_performed` | `yes` |
+| `tier3_sales_evidence_found` | `yes` |
+| `tier3_contradicting_evidence` | Forced to fail condition 2 regardless of the model's own claim |
+
+This failure is why §4.1 now has an absolute, code-enforced gate: an explicit search for
+individual unit SALE listings must be performed before condition 2 can be claimed at all
+(`tier3_sales_listing_search_performed`), and if that search — or anything else in the research —
+turns up evidence of individual sales or planned/entitled-for-sale units
+(`tier3_sales_evidence_found: yes`), that alone fails condition 2 and blocks the override,
+overriding whatever the model separately claims for `tier3_contradicting_evidence`. This check is
+deliberately **not** symmetric: finding *rental* listings at an HOA/COA never rules out the
+HOA/COA designation the same way finding *sale* listings at an APT rules out APT — a genuine
+HOA/COA can have individually-owned units that their owners rent out, but a genuine APT cannot
+have individually-owned-and-sold units by definition.
