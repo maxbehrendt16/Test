@@ -1458,15 +1458,30 @@ def extract_openai_sources(output_items):
 def extract_openai_search_queries(output_items):
     """Pulls the actual query text out of each web_search_call item in the response -- this is
     what lets guardrails verify a targeted search genuinely happened (e.g. a real sale-listing
-    query), rather than trusting a self-reported field claiming it did."""
+    query), rather than trusting a self-reported field claiming it did.
+
+    A real, previously-mishandled bug: the OpenAI SDK's `ActionSearch` type exposes the query
+    text on TWO separate optional fields -- singular `query: Optional[str]` and plural
+    `queries: Optional[List[str]]` -- and the live API can populate either one (a single-query
+    search often comes back on `query`, but not always). An earlier version of this function only
+    read `query`, so on any response using `queries` instead, every single search this function
+    looked at came back with nothing -- which meant the code-verified sale-listing-search gate
+    (see _genuine_sale_search_performed()) failed even when the model genuinely ran the search,
+    downgrading good overrides across an entire batch. Both fields are read now, and non-'search'
+    actions (open_page, find_in_page) are skipped since they don't carry a query at all."""
     queries = []
     for item in output_items:
         if getattr(item, "type", None) != "web_search_call":
             continue
         action = getattr(item, "action", None)
-        query = getattr(action, "query", None) if action else None
+        if action is None or getattr(action, "type", None) != "search":
+            continue
+        query = getattr(action, "query", None)
         if query:
             queries.append(query)
+        for query in getattr(action, "queries", None) or []:
+            if query:
+                queries.append(query)
     return queries
 
 

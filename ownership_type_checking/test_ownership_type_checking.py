@@ -888,8 +888,15 @@ class SearchQueryExtractionTests(unittest.TestCase):
     genuinely targeted search happened."""
 
     class _FakeAction:
-        def __init__(self, query):
+        # Mirrors the real OpenAI SDK's ActionSearch/ActionOpenPage/ActionFind union -- action
+        # type defaults to "search" since that's the case this module cares about; query/queries
+        # default to None/[] like the real (mostly-optional) fields.
+        def __init__(self, query=None, queries=None, type="search", **kwargs):
+            self.type = type
             self.query = query
+            self.queries = queries
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
     class _FakeItem:
         def __init__(self, type_, **kwargs):
@@ -899,12 +906,45 @@ class SearchQueryExtractionTests(unittest.TestCase):
 
     def test_extract_openai_search_queries_pulls_query_text(self):
         items = [
-            self._FakeItem("web_search_call", action=self._FakeAction("109 Indigo Road condo for sale")),
-            self._FakeItem("web_search_call", action=self._FakeAction("Mountain Ridge Garden Homes reviews")),
+            self._FakeItem("web_search_call", action=self._FakeAction(query="109 Indigo Road condo for sale")),
+            self._FakeItem("web_search_call", action=self._FakeAction(query="Mountain Ridge Garden Homes reviews")),
             self._FakeItem("message", content=[]),
         ]
         queries = otc.extract_openai_search_queries(items)
         self.assertEqual(queries, ["109 Indigo Road condo for sale", "Mountain Ridge Garden Homes reviews"])
+
+    def test_extract_openai_search_queries_reads_the_plural_queries_field_too(self):
+        # Real, previously-mishandled bug: the OpenAI SDK's ActionSearch type exposes query text
+        # on EITHER `query` (singular) or `queries` (plural list) -- the live API populated
+        # `queries` here, and an earlier version of this function only read `query`, so it saw
+        # nothing at all and every sale-listing-search gate downgraded regardless of what the
+        # model actually searched for.
+        items = [
+            self._FakeItem(
+                "web_search_call",
+                action=self._FakeAction(queries=["109 Indigo Road condo for sale", "109 Indigo Road sold"]),
+            ),
+        ]
+        queries = otc.extract_openai_search_queries(items)
+        self.assertEqual(queries, ["109 Indigo Road condo for sale", "109 Indigo Road sold"])
+
+    def test_extract_openai_search_queries_reads_both_fields_if_both_are_populated(self):
+        items = [
+            self._FakeItem(
+                "web_search_call",
+                action=self._FakeAction(query="109 Indigo Road reviews", queries=["109 Indigo Road for sale"]),
+            ),
+        ]
+        queries = otc.extract_openai_search_queries(items)
+        self.assertEqual(queries, ["109 Indigo Road reviews", "109 Indigo Road for sale"])
+
+    def test_extract_openai_search_queries_ignores_non_search_action_types(self):
+        # open_page and find_in_page actions don't carry a search query at all.
+        items = [
+            self._FakeItem("web_search_call", action=self._FakeAction(type="open_page", url="https://x.com")),
+            self._FakeItem("web_search_call", action=self._FakeAction(type="find_in_page", pattern="for sale", url="https://x.com")),
+        ]
+        self.assertEqual(otc.extract_openai_search_queries(items), [])
 
     def test_extract_openai_search_queries_ignores_non_search_items(self):
         items = [self._FakeItem("message", content=[]), self._FakeItem("function_call", name="submit_assessment")]
