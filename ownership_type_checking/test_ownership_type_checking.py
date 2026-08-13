@@ -722,17 +722,41 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
-    def test_genuine_sale_query_for_a_different_property_does_not_count(self):
-        row = self._large_row(**{"Address": "100 Main St", "Master_Property Name": "Cross Creek Apartments"})
-        result = self._clean_override(_searched_queries=["456 Oak Ave condo for sale"])
-        fixed = otc._enforce_tier3_override_guardrail(row, result)
-        self.assertEqual(fixed["decision"], "Not Enough Info")
-
     def test_genuine_sale_query_matching_the_address_satisfies_the_gate(self):
         row = self._large_row(**{"Address": "100 Main St", "Master_Property Name": "Cross Creek Apartments"})
         result = self._clean_override(_searched_queries=["100 Main St condo for sale"])
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
+
+    def test_sale_oriented_query_satisfies_the_gate_even_without_matching_row_tokens(self):
+        # Real reported regressions: two consecutive real batches came back with mass
+        # downgrades ("model is not looking for sales listings") that turned out to be caused by
+        # the gate itself being too strict, not by a genuine absence of search -- an earlier
+        # version of this check also required the query to share tokens with the row's Address/
+        # Master_Property Name, which produced false negatives from address-formatting
+        # mismatches. Every research_property() call is already scoped to one property, so any
+        # sale-oriented query issued during it counts, regardless of exact address phrasing.
+        row = self._large_row(**{"Address": "100 Main St", "Master_Property Name": "Cross Creek Apartments"})
+        result = self._clean_override(_searched_queries=["Zillow listing history for this unit"])
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_broadened_sale_query_regex_catches_realistic_phrasing(self):
+        realistic_queries = [
+            "Cross Creek Apartments MLS",
+            "Cross Creek Apartments Redfin",
+            "Cross Creek Apartments realtor.com",
+            "Cross Creek Apartments tax record",
+            "Cross Creek Apartments ownership record",
+            "unit 4B resale history",
+            "Cross Creek Apartments recent listing",
+        ]
+        for query in realistic_queries:
+            with self.subTest(query=query):
+                row = self._large_row()
+                result = self._clean_override(_searched_queries=[query])
+                fixed = otc._enforce_tier3_override_guardrail(row, result)
+                self.assertEqual(fixed["decision"], "Override")
 
     def test_missing_dual_association_search_fails(self):
         # Real reported bug: both Mountain Ridge (DB: COA) and Castle Apartments (DB: COA) had

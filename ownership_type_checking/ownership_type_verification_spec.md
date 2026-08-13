@@ -73,14 +73,18 @@ declaration. Tag this with the archetype flag **"Legally Condo, Functionally Apa
 **Rule A requires real, gated verification, not a bare self-report — two real failures showed the
 `ownership_concentration` field alone isn't enough:**
 
-- **100% single ownership must be verified via EXTERNAL sources** — county parcel/deed records
-  showing one owner name across ALL units, a state business registry entry, or multiple
-  independent Tier 3 sources with a confirmed anchor. **The DB's own `Owner`/`Cleaned Owner`
-  field must never be used as evidence toward an APT designation.** This data is not reliable
-  enough on its own: a majority-but-not-full owner (e.g. an investor holding 39 of 40 units) is
-  very often still the DB's sole listed Owner, so a single Owner name tells you nothing about
-  whether the last unit is also owned by that same entity. Real failure: **"The Falls of
-  Portofino"** was overridden to APT with reasoning stating "DB 'Owner' is Prime Group,
+- **100% single ownership must be verified via EXTERNAL sources** — and this is a different
+  question from "is it operated as a rental?", which rental-listing platforms and property-
+  management sites answer without saying anything about who legally owns every unit. A real
+  search aimed at ownership specifically — a county property appraiser/recorder lookup for the
+  address, or a state business registry search for the owning entity's name — is what this
+  requires; multiple independent Tier 3 sources with a confirmed anchor can also satisfy it, but
+  only if they actually corroborate ownership, not just rental operation. **The DB's own
+  `Owner`/`Cleaned Owner` field must never be used as evidence toward an APT designation.** This
+  data is not reliable enough on its own: a majority-but-not-full owner (e.g. an investor holding
+  39 of 40 units) is very often still the DB's sole listed Owner, so a single Owner name tells you
+  nothing about whether the last unit is also owned by that same entity. Real failure: **"The
+  Falls of Portofino"** was overridden to APT with reasoning stating "DB 'Owner' is Prime Group,
   satisfying the criteria for functional override to APT" — citing the DB's own field as if it
   were external verification.
 - **Zero contradicting evidence of genuine, operating HOA/COA governance** — a registered
@@ -261,17 +265,30 @@ not apply, regardless of how clean the four conditions otherwise look:**
   authoritative, code-checked floor for condition 1 below: it must contain 3+ distinct URLs on
   its own, not just a self-reported count claiming that many.
 - **An explicit, genuinely targeted search for individual unit SALE listings must actually have
-  been performed for this specific property before condition 2 can be claimed.** MLS/Zillow/
-  Redfin "for sale" listings, county deed/sale records — this is a real, targeted search, not a
-  byproduct of the general Attempt 1/2 research, and it is checked against the actual search
-  queries issued during research, not just a self-reported field. Two real, previously-mishandled
-  failures asserted "no sale listings found" or "no sale listings ... exist" without any evidence
-  that a real sale-oriented search (as opposed to rental-site browsing) ever ran. **This rule is
-  deliberately asymmetric: finding RENTAL listings at what's currently labeled HOA/COA does NOT
+  been performed for this specific property before condition 2 can be claimed.** This means
+  actually running a search built for this purpose — e.g. `"[address] for sale"`, `"[address]
+  sold"`, `"[property name] MLS listing"`, `"[property name] Zillow"`/`"Redfin"`, `"[county]
+  property appraiser [address]"`, or `"[address] deed"`/`"parcel records"` — not a byproduct of
+  general Attempt 1/2 research that happens to not surface a sale listing. This is checked against
+  the actual search queries issued during research, not just a self-reported field. Two real,
+  previously-mishandled batches asserted "no sale listings found" (or similar) without any
+  evidence a real sale-oriented search (as opposed to rental-site browsing) ever ran. **This rule
+  is deliberately asymmetric: finding RENTAL listings at what's currently labeled HOA/COA does NOT
   rule out the HOA/COA designation** (a large share of genuine HOA/COA units are individually
   owned and rented out by their owners) **— but finding SALE listings, or a property described as
   planned/entitled for individual sale, at what you're about to call APT DOES rule out APT, full
   stop, regardless of any other evidence.**
+
+  **This check is meant to be a rarely-firing failsafe, not a routine occurrence** — a second real
+  batch showed the code-side detection itself being too strict (requiring the query to share
+  tokens with the row's Address/name, and matching only a narrow keyword list) produced false
+  negatives even when a genuine sale-oriented search had run, just phrased or targeted slightly
+  differently than expected. The detection is deliberately broad now (a wide range of realistic
+  phrasing — MLS, Zillow, Redfin, realtor.com, "listing," "resale," tax/ownership records, etc. —
+  and no token-overlap requirement, since every research call is already scoped to one property)
+  so the gate only fires when a sale-oriented search genuinely never happened, not because of
+  phrasing variance. The real fix for the underlying behavior is doing the search reliably in the
+  first place — see the concrete query examples above.
 - **Attempt 2 must search for evidence of BOTH a condominium association AND an HOA**, regardless
   of which one `Master_Ownership Type` currently lists. HOA and COA are commonly mislabeled as
   EACH OTHER, not just mislabeled as APT — both real failures above are DB-listed COA, but their
