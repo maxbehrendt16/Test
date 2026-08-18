@@ -230,6 +230,25 @@ clearly established (e.g. you genuinely couldn't determine current ownership con
 the property's legal type and functional reality already agree and neither rule's trigger \
 condition is in play).
 
+**Absolute requirement, checked in code, for ANY override of an APT-listed property to COA/HOA \
+-- regardless of evidence tier or exception path:** you must have found genuine evidence that at \
+least one unit at this property is CURRENTLY listed for individual sale, or was sold within \
+roughly the last 12 months. A legal/structural condo designation (a county assessor record, a \
+recorded declaration, a state registry entity type) and a real recurring association fee are \
+**never sufficient by themselves** for this direction -- a huge share of legally-platted condo/HOA \
+properties are functionally single-owner apartment communities today with no individual sales at \
+all, exactly Rule A above. A real, previously-mishandled failure: "Foxcroft Of Shelby" (DB: APT) \
+was overridden to COA at "High" confidence on "Tier 1 legal evidence (...assessor record lists \
+Units 1-48 Foxcroft of Shelby Condos) and recurring association fees," concluding "likely \
+individual owners" under Rule B -- but the cited sources were the property's own single-\
+management-company leasing site and a LoopNet listing for the whole complex as one asset, neither \
+of which is evidence any individual unit has ever actually been sold or listed. "Likely" is a \
+guess, not a finding -- do not let a real legal-tier citation substitute for actually checking \
+whether anyone currently owns and could sell a single unit. Set `apt_override_sale_evidence_found` \
+to `yes` only if you found this, and only after running an actual sale-oriented search for this \
+specific property (the same kind described in §4.1's absolute gate below) -- this is enforced in \
+code as an absolute gate regardless of what else you submit.
+
 ## Evidence hierarchy
 
 **Tier 1 -- Legal/authoritative** (can independently justify an override, with one corroborating source):
@@ -560,15 +579,25 @@ still applies here, direction-aware: if you cite the fee as corroboration but th
 actually null/zero, that self-contradiction will be caught and downgraded regardless of what else \
 you submit.
 
+**Even after all four conditions above hold, the absolute `apt_override_sale_evidence_found` gate \
+from Rule A/B still applies on top -- this exception's own fee-based condition 3 is not a \
+substitute for it.** Satisfying conditions 1-4 here without also having found genuine individual- \
+unit sale evidence (a current listing, or a sale within roughly the last 12 months) is not enough \
+to override; default to Not Enough Info instead.
+
 **Worked example:** "Casa Gataway Hoa," DB-listed APT, `Master_Monthly Association Fees` is $461 \
 (real, recurring, not miscoded). Multiple Tier 3 sources (a listing site with a confirmed name/ \
-address anchor, plus two others) describe it as a condominium with HOA governance. Attempt 2 -- a \
-real one, including a state business registry search for an incorporated association at this \
-address -- turns up nothing either way. All four conditions hold and the gate is satisfied: this \
-resolves to **Override -> COA, confidence Medium.** Do not stop at "no Tier 1/2 evidence found, so \
-Confirmed APT" without first genuinely attempting Attempt 2 and then explicitly checking this \
-exception's conditions -- that combination (real fee + Tier 3 corroboration + exhausted search) is \
-exactly what this exception is for.
+address anchor, plus two others) describe it as a condominium with HOA governance, and one of them \
+-- a Redfin record -- shows unit 204 sold eight months ago. Attempt 2 -- a real one, including a \
+state business registry search for an incorporated association at this address -- turns up \
+nothing either way. All four conditions hold, the gate is satisfied, AND genuine individual-unit \
+sale evidence was found (`apt_override_sale_evidence_found`: `yes`): this resolves to **Override \
+-> COA, confidence Medium.** Do not stop at "no Tier 1/2 evidence found, so Confirmed APT" without \
+first genuinely attempting Attempt 2 and then explicitly checking this exception's conditions AND \
+the sale-evidence gate -- that combination (real fee + Tier 3 corroboration + exhausted search + \
+actual sale evidence) is exactly what this exception is for. Without the Redfin sale record, this \
+same picture would instead resolve to **Not Enough Info, APT unchanged** -- a real fee and Tier 3 \
+governance description alone are not enough.
 
 ## Known failure modes -- check every one of these before concluding Override
 
@@ -1141,6 +1170,35 @@ SUBMIT_SCHEMA = {
                 "better explanations. 'not_applicable' otherwise."
             ),
         },
+        "apt_override_sale_evidence_found": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Required whenever you're about to conclude Override with determined_type COA or "
+                "HOA on a property whose Master_Ownership Type is currently APT -- regardless of "
+                "which evidence tier or exception path got you there: 'yes' only if you found "
+                "genuine, specific evidence that at least one unit at THIS property is CURRENTLY "
+                "listed for individual sale, or was sold within roughly the last 12 months (e.g. "
+                "an active MLS/Zillow/Redfin listing, a recent county recorder deed transferring a "
+                "single unit, a dated local source mentioning a specific unit sale). A legal/"
+                "structural condo designation (a county assessor record, a recorded declaration, a "
+                "state registry entity type) and a real recurring association fee are NOT "
+                "sufficient on their own -- a huge share of legally-platted condo/HOA properties "
+                "are functionally single-owner apartment communities today with no individual "
+                "sales at all, and §2.1's Rule A can still apply even when strong Tier 1 legal "
+                "evidence of the condo declaration exists. A real, previously-mishandled failure: "
+                "'Foxcroft Of Shelby' was overridden to APT->COA on 'Tier 1 legal evidence "
+                "(...assessor record lists Units 1-48 Foxcroft of Shelby Condos) and recurring "
+                "association fees,' concluding 'likely individual owners' -- but the cited sources "
+                "were the property's own single-management-company leasing site and a LoopNet "
+                "listing for the whole complex as one asset, neither of which is evidence any "
+                "individual unit has ever actually been sold or listed; 'likely' is a guess, not a "
+                "finding. 'no' if you looked and found nothing, or didn't look. 'not_applicable' "
+                "for every other case: any Confirmed/Not-Enough-Info decision, any override that "
+                "isn't targeting COA/HOA, or any property whose Master_Ownership Type isn't "
+                "already APT."
+            ),
+        },
     },
     "required": [
         "determined_type", "decision", "confidence", "evidence_tier_used", "reasoning", "sources",
@@ -1153,6 +1211,7 @@ SUBMIT_SCHEMA = {
         "tier3_sales_listing_search_performed", "tier3_sales_evidence_found",
         "ownership_concentration_verified_externally", "ownership_concentration_contradicting_evidence",
         "tier3_dual_association_search_performed", "tier3_entity_name_registry_search_performed",
+        "apt_override_sale_evidence_found",
     ],
     "additionalProperties": False,
 }
@@ -1859,65 +1918,57 @@ def _enforce_master_planned_community_guardrail(row: dict, db_type: str, result:
     return result
 
 
-FEE_CITED_IN_REASONING_RE = re.compile(r"\bfee\b", re.IGNORECASE)
-EXTERNAL_GOVERNANCE_EVIDENCE_RE = re.compile(
-    r"homeowners?\s+association|condominium\s+association|\bhoa\b|\bassociation\s+fee\b|"
-    r"governing\s+documents?|declaration\s+of\s+condominium|board\s+of\s+directors|\bcc&rs?\b|"
-    r"\bcovenants?\b",
-    re.IGNORECASE,
-)
+def _enforce_apt_override_sale_evidence_guardrail(row: dict, result: dict) -> dict:
+    """Absolute, universal gate for ANY override of an APT-listed property to COA/HOA, regardless
+    of evidence tier or exception path: genuine evidence that at least one unit at this property
+    is currently listed for individual sale, or was sold within roughly the last 12 months, is
+    required. Legal/structural evidence (a recorded declaration, a state registry entity, a county
+    assessor use-code) and a real recurring association fee are never sufficient by themselves for
+    this direction -- a huge share of legally-platted condo/HOA properties are functionally
+    single-owner apartment communities today with no individual sales at all (§2.1's Rule A can
+    still apply even when strong Tier 1 legal evidence of the condo declaration exists).
 
+    Real failure this guards against: "Foxcroft Of Shelby" (DB: APT) was overridden to COA at
+    "High" confidence on "Tier 1 legal evidence" -- a county assessor record listing "Units 1-48
+    Foxcroft of Shelby Condos" -- plus recurring association fees, concluding "likely individual
+    owners" under §2.1 Rule B. But the cited sources are the property's own single-management-
+    company leasing site (Kaftan Communities) and a LoopNet listing for the whole 66-unit complex
+    as one asset -- classic single-owner apartment-community operation, and neither one is
+    evidence that any individual unit has ever actually been sold or listed. A legal condo
+    designation only tells you the units are individually PLATTED, not that anyone currently
+    functions as an individual owner -- that requires the same kind of check §2.1's Rule A/B
+    already demand for the ownership_concentration path, just made an absolute floor here too
+    since a bare legal-tier citation was otherwise sailing through unchecked.
 
-def _enforce_reverse_override_fee_evidence_guardrail(row: dict, result: dict, url_cache: dict) -> dict:
-    """A reverse-direction override (DB APT -> COA/HOA) that isn't going through the bounded §4.2
-    exception has no legitimate fee-based path at all -- the evidence hierarchy's Tier 1/2
-    categories (county recorder declarations, state registry entity types, tax assessor use-codes,
-    GIS parcel maps, published unit counts) never include the DB's own fee field. Only §4.2's
-    condition 3 legitimately uses a real fee as corroboration, and that path is already fully
-    gated (Attempt 2 exhausted, 3+ genuinely-agreeing external Tier 3 sources, zero contradicting
-    evidence) by _enforce_tier3_override_guardrail().
+    This supersedes the older, narrower fee-specific check that used to live here (which only
+    fired when reasoning mentioned a fee and the bounded exception wasn't invoked, and which risked
+    a false positive on a case with genuine sale evidence but no explicit "HOA" keyword in the
+    cited source) -- requiring real sale evidence directly, universally, is both simpler and
+    strictly stronger: anything the old check caught, this one catches too.
 
-    Real failure this guards against: "Reserve at Falcon Point" (DB: APT) was overridden to COA
-    on reasoning that read in full: "The property is marketed as rental apartments, but a
-    recurring monthly association fee indicates an HOA/COA governance structure. This overrides
-    the APT label due to the HOA-like governance rules." tier3_exception_invoked was "no" -- this
-    wasn't even claiming the bounded exception -- and both actually-cited sources (the property's
-    own leasing site, a home-listing aggregator) were rental-apartment-oriented; neither one
-    independently described any HOA/COA governance. The DB's own fee field was mistaken for
-    evidence about itself.
-
-    Scoped narrowly to minimize false positives on legitimate cases: only fires when (a) this is
-    genuinely the reverse direction (DB says APT, override targets COA/HOA), (b) the bounded
-    exception isn't invoked (which already gets its own, more thorough fee cross-check), and (c)
-    the reasoning itself leans on a fee at all -- an override that never mentions a fee isn't this
-    guardrail's concern. When those hold, it independently re-fetches the cited sources (same
-    fetch_url_cached() used elsewhere) and requires at least one to actually describe HOA/COA
-    governance in its own fetched text, rather than trusting the model's bare claim."""
+    Deliberately reuses _genuine_sale_search_performed() (the same actual-query cross-check used
+    for the forward direction's absolute sale-search gate) so a bare "yes" self-report isn't
+    trusted without at least one real sale-oriented search actually being issued."""
     if result.get("decision") != "Override" or result.get("determined_type") not in ("COA", "HOA"):
         return result
     if _norm_text(row.get("Master_Ownership Type")).upper() != "APT":
         return result
-    if result.get("tier3_exception_invoked") == "yes":
+    if result.get("apt_override_sale_evidence_found") == "yes" and _genuine_sale_search_performed(row, result):
         return result
-    if not FEE_CITED_IN_REASONING_RE.search(result.get("reasoning", "") or ""):
-        return result
-
-    for url in result.get("sources", []) or []:
-        fetched = fetch_url_cached(url, url_cache)
-        if fetched and EXTERNAL_GOVERNANCE_EVIDENCE_RE.search(fetched):
-            return result
 
     result = dict(result)
     original = result.get("reasoning", "")
     result["decision"] = "Not Enough Info"
     result["confidence"] = "Low"
     result["reasoning"] = (
-        "Automatically downgraded: this reverse-direction override (APT -> COA/HOA) leans on a "
-        "fee as its stated evidence but isn't invoking the bounded §4.2 exception (which "
-        "independently cross-checks fee-based corroboration alongside real external Tier 3 "
-        "agreement), and none of the cited sources' actual fetched text describes any HOA/COA "
-        "governance, association, or declaration. The DB's own fee field is never itself valid "
-        f"evidence outside that exception. Original reasoning: {original}"
+        "Automatically downgraded: overriding an APT-listed property to COA/HOA requires genuine "
+        "evidence that at least one unit at this property is currently listed for individual "
+        "sale, or was sold within roughly the last 12 months -- that wasn't confirmed here. A "
+        "legal/structural condo designation (an assessor record, a recorded declaration, a state "
+        "registry entity) and a real recurring association fee are not sufficient on their own, "
+        "since many legally-platted condo/HOA properties are functionally single-owner apartment "
+        "communities today (§2.1's Rule A can still apply even with real Tier 1 legal evidence). "
+        f"Original reasoning: {original}"
     )
     return result
 
@@ -2436,13 +2487,18 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
                 f"Model returned invalid tier3_entity_name_registry_search_performed: "
                 f"{result.get('tier3_entity_name_registry_search_performed')!r}"
             )
+        if result.get("apt_override_sale_evidence_found") not in YES_NO_NA_LABELS:
+            raise ValueError(
+                f"Model returned invalid apt_override_sale_evidence_found: "
+                f"{result.get('apt_override_sale_evidence_found')!r}"
+            )
         result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_coop_mention_guardrail(db_type, result)
         result = _enforce_sales_evidence_guardrail(db_type, result)
         result = _enforce_functional_ownership_guardrail(row, db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _enforce_minimum_sources_guardrail(result)
-        result = _enforce_reverse_override_fee_evidence_guardrail(row, result, url_cache)
+        result = _enforce_apt_override_sale_evidence_guardrail(row, result)
         result = _reconcile_decision_and_type(db_type, result)
         result = _enforce_hoa_coa_naming_match(row, db_type, result)
         result = _enforce_multi_name_guardrail(row, db_type, result)

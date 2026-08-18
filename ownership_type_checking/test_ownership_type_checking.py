@@ -272,6 +272,7 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -316,6 +317,7 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "yes",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["Cross Creek Apartments units for sale"],
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
@@ -330,6 +332,9 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
         # Real reported failure: DB says APT, but multiple Tier-3 sources and a real, populated
         # association fee corroborate HOA/COA. This is the reverse-direction §4.1 exception
         # (to_coa_hoa) -- gated on a genuinely exhausted Attempt 2, not a parallel shortcut.
+        # Also requires apt_override_sale_evidence_found (a separate, later-added absolute gate
+        # per §2.1/§4.2: real Tier 3 evidence and a fee alone are STILL not enough without genuine
+        # individual-unit sale evidence -- here, one of the cited sources is a Redfin sale record).
         row = {
             "RecordID": "912345",
             "Master_Property Name": "Casa Gataway",
@@ -341,8 +346,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "decision": "Override",
             "confidence": "High",
             "evidence_tier_used": "Tier 3",
-            "reasoning": "Tier-3 corroborated reverse override: multiple listings describe this as an HOA community with a monthly association fee, and a thorough state business registry / county records search found no APT-supporting Tier 1/2 evidence.",
-            "sources": ["https://realtor.com/x", "https://zillow.com/x", "https://homes.com/x"],
+            "reasoning": "Tier-3 corroborated reverse override: multiple listings describe this as an HOA community with a monthly association fee, a Redfin record shows unit 204 sold eight months ago, and a thorough state business registry / county records search found no APT-supporting Tier 1/2 evidence.",
+            "sources": ["https://realtor.com/x", "https://zillow.com/x", "https://redfin.com/unit-204-sold"],
             "structural_edge_case": "none",
             "tier3_exception_invoked": "yes",
             "tier3_exception_direction": "to_coa_hoa",
@@ -362,6 +367,8 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+            "_searched_queries": ["Casa Gataway unit 204 sold Redfin"],
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -406,6 +413,7 @@ class ProcessPropertyIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -441,6 +449,7 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "yes",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["county assessor parcel records for sale"],
         }
         result.update(overrides)
@@ -908,6 +917,7 @@ class MinimumSourcesGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -916,100 +926,90 @@ class MinimumSourcesGuardrailTests(unittest.TestCase):
         self.assertEqual(result["determined_type"], "APT")
 
 
-class ReverseOverrideFeeEvidenceGuardrailTests(unittest.TestCase):
-    """A reverse-direction override (DB APT -> COA/HOA) that isn't invoking the bounded §4.2
-    exception has no legitimate fee-based path -- only §4.2's condition 3 (already fully gated
-    elsewhere) legitimately uses a real fee as corroboration. Real failure: "Reserve at Falcon
-    Point" (DB: APT) was overridden to COA on reasoning citing ONLY the DB's own fee field, with
-    tier3_exception_invoked "no" and both actually-cited sources (its own leasing site, a Trulia
-    listing) being rental-apartment-oriented -- neither described any HOA/COA governance."""
+class AptOverrideSaleEvidenceGuardrailTests(unittest.TestCase):
+    """Absolute, universal gate for ANY override of an APT-listed property to COA/HOA, regardless
+    of evidence tier or exception path: genuine evidence of an individual unit sale/listing is
+    required. Real failure: "Foxcroft Of Shelby" (DB: APT) was overridden to COA at High
+    confidence on "Tier 1 legal evidence" (a county assessor record listing platted condo units)
+    plus recurring association fees, concluding "likely individual owners" -- but the cited
+    sources were the property's own single-management-company leasing site and a LoopNet listing
+    for the whole complex as one asset, neither of which is evidence any individual unit has ever
+    actually been sold or listed."""
 
     ROW = {
-        "RecordID": "060701608",
-        "Master_Property Name": "Reserve at Falcon Point",
-        "Address": "3987 Pasture Drive, East Lansing, MI 48823-6170, USA",
+        "RecordID": "030398463",
+        "Master_Property Name": "Foxcroft Of Shelby",
+        "Address": "1920 Orchard Crest Street, Shelby Township, MI 48317-4524, USA",
         "Master_Ownership Type": "APT",
-        "Master_Monthly Association Fees": "0.75",
     }
-    REAL_SOURCES = [
-        "https://villagegreen.com/mi/east-lansing/the-reserve-at-falcon-pointe-apartments/",
-        "https://www.trulia.com/home/3987-pasture-dr-f320a52c6-east-lansing-mi-48823-449244578",
-    ]
-    FEE_REASONING = (
-        "The property is marketed as rental apartments, but a recurring monthly association fee "
-        "indicates an HOA/COA governance structure. This overrides the APT label due to the "
-        "HOA-like governance rules."
+    REASONING = (
+        'Tier 1 legal evidence (MACOMB County assessor record lists "Units 1-48 Foxcroft of '
+        "Shelby Condos\") and recurring association fees demonstrate operation as a COA/"
+        "condominium community with likely individual owners. Under §2.1 Rule B, it must remain COA."
     )
+    SOURCES = [
+        "https://www.kaftancommunities.com/our-communities/foxcroft-townhomes/",
+        "https://www.loopnet.com/property/1920-orchard-crest-st-shelby-township-mi-48317/26099-0731301035/",
+    ]
 
     def _result(self, **overrides):
         result = {
             "decision": "Override",
             "determined_type": "COA",
-            "reasoning": self.FEE_REASONING,
-            "sources": list(self.REAL_SOURCES),
-            "tier3_exception_invoked": "no",
+            "evidence_tier_used": "Tier 1",
+            "reasoning": self.REASONING,
+            "sources": list(self.SOURCES),
+            "apt_override_sale_evidence_found": "no",
+            "_searched_queries": [],
         }
         result.update(overrides)
         return result
 
-    def test_reserve_at_falcon_point_end_to_end_with_real_rental_sources(self):
-        # Both real cited sources fetched -- a leasing site and a Trulia listing -- describe
-        # rental apartment content with no mention of HOA/COA governance at all.
-        rental_page_text = (
-            "The Reserve at Falcon Pointe Apartments -- apply now, schedule a tour, floor plans, "
-            "leasing office open daily. Luxury 1, 2, and 3 bedroom apartment homes for rent."
-        )
-        trulia_page_text = "3987 Pasture Dr, East Lansing, MI -- rental estimate, nearby rentals."
-        fetched = {self.REAL_SOURCES[0]: rental_page_text, self.REAL_SOURCES[1]: trulia_page_text}
-        with mock.patch(
-            "ownership_type_checking.fetch_url_cached",
-            side_effect=lambda url, cache: fetched.get(url),
-        ):
-            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(self.ROW, self._result(), {})
+    def test_no_sale_evidence_found_is_downgraded(self):
+        fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, self._result())
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
-    def test_source_actually_describing_hoa_governance_allows_override(self):
-        governance_text = "This community is governed by a registered Homeowners Association with recorded covenants."
-        fetched = {self.REAL_SOURCES[0]: governance_text, self.REAL_SOURCES[1]: "rental listing"}
-        with mock.patch(
-            "ownership_type_checking.fetch_url_cached",
-            side_effect=lambda url, cache: fetched.get(url),
-        ):
-            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(self.ROW, self._result(), {})
+    def test_sale_evidence_found_without_a_genuine_search_query_is_still_downgraded(self):
+        # A bare "yes" self-report isn't trusted without an actual sale-oriented query on record --
+        # mirrors the forward direction's _genuine_sale_search_performed() cross-check.
+        result = self._result(apt_override_sale_evidence_found="yes", _searched_queries=["Foxcroft Of Shelby reviews"])
+        fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_genuine_sale_evidence_and_search_allows_override(self):
+        result = self._result(
+            apt_override_sale_evidence_found="yes",
+            _searched_queries=["Foxcroft Of Shelby unit for sale Zillow"],
+        )
+        fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
         self.assertEqual(fixed["decision"], "Override")
 
-    def test_reasoning_without_any_fee_mention_is_not_this_guardrails_concern(self):
-        result = self._result(reasoning="County tax assessor records list this as a condominium.")
-        with mock.patch("ownership_type_checking.fetch_url_cached", return_value="rental listing"):
-            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(self.ROW, result, {})
-        self.assertEqual(fixed["decision"], "Override")
-
-    def test_tier3_exception_invoked_is_left_to_the_other_guardrail(self):
-        result = self._result(tier3_exception_invoked="yes")
-        with mock.patch("ownership_type_checking.fetch_url_cached", return_value="rental listing"):
-            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(self.ROW, result, {})
-        self.assertEqual(fixed["decision"], "Override")
+    def test_confirmed_decision_is_left_alone(self):
+        result = self._result(decision="Confirmed", determined_type="APT")
+        fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
+        self.assertEqual(fixed["decision"], "Confirmed")
 
     def test_forward_direction_override_is_not_this_guardrails_concern(self):
-        # This guardrail is specifically about the reverse direction (DB APT -> COA/HOA) --
-        # a forward override (DB COA/HOA -> APT) mentioning a fee is a completely different
-        # claim (a null fee corroborating APT), already covered by the tier3 guardrail.
         row = dict(self.ROW, **{"Master_Ownership Type": "COA"})
-        result = self._result(determined_type="APT", reasoning="Master_Monthly Association Fees is null, no fee on file.")
-        with mock.patch("ownership_type_checking.fetch_url_cached", return_value="rental listing"):
-            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(row, result, {})
+        result = self._result(determined_type="APT")
+        fixed = otc._enforce_apt_override_sale_evidence_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
 
-    def test_reserve_at_falcon_point_full_pipeline_end_to_end(self):
-        rental_page_text = "Apply now, schedule a tour, floor plans, leasing office open daily."
-        fetched = {self.REAL_SOURCES[0]: rental_page_text, self.REAL_SOURCES[1]: "rental estimate"}
+    def test_tier3_exception_path_is_also_subject_to_this_gate(self):
+        # Even a fully-gated Tier-3 reverse exception override doesn't get a pass on this --
+        # it's an absolute, universal requirement on top of that exception's own conditions.
+        result = self._result(evidence_tier_used="Mixed", tier3_exception_invoked="yes")
+        fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_foxcroft_of_shelby_full_pipeline_end_to_end(self):
         fake_result = {
             "determined_type": "COA",
             "decision": "Override",
-            "confidence": "Medium",
-            "evidence_tier_used": "Mixed",
-            "reasoning": self.FEE_REASONING,
-            "sources": list(self.REAL_SOURCES),
+            "confidence": "High",
+            "evidence_tier_used": "Tier 1",
+            "reasoning": self.REASONING,
+            "sources": list(self.SOURCES),
             "structural_edge_case": "none",
             "tier3_exception_invoked": "no",
             "tier3_exception_direction": "not_applicable",
@@ -1018,7 +1018,7 @@ class ReverseOverrideFeeEvidenceGuardrailTests(unittest.TestCase):
             "tier3_contradicting_evidence": "not_applicable",
             "tier3_internal_db_corroboration": "",
             "tier3_structural_edge_case_ruled_out": "not_applicable",
-            "ownership_concentration": "not_applicable",
+            "ownership_concentration": "individual_owner_present",
             "reverse_conversion_detected": "not_applicable",
             "multi_name_all_agree": "not_applicable",
             "tier3_sales_listing_search_performed": "not_applicable",
@@ -1027,12 +1027,10 @@ class ReverseOverrideFeeEvidenceGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "no",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
-             mock.patch(
-                 "ownership_type_checking.fetch_url_cached",
-                 side_effect=lambda url, cache: fetched.get(url),
-             ):
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", self.ROW, {})
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertEqual(result["determined_type"], "APT")
@@ -1054,6 +1052,7 @@ class SalesEvidenceGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         result.update(overrides)
         return result
@@ -1121,6 +1120,7 @@ class SalesEvidenceGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -1525,6 +1525,7 @@ class MountainRidgeAndCastleApartmentsRegressionTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "no",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["Mountain Ridge Garden Homes Apartments rental reviews"],
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
@@ -1578,6 +1579,7 @@ class MountainRidgeAndCastleApartmentsRegressionTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "no",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["Castle Apts Condo rental reviews"],
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
@@ -1628,6 +1630,7 @@ class MountainRidgeAndCastleApartmentsRegressionTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "yes",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": [
                 "Stratford Crossing Flats 1035 Northwest Lexi Lane Waukee IA ownership",
                 "Stratford Crossing Flats 1035 Northwest Lexi Lane Waukee IA ownership",
@@ -1964,8 +1967,8 @@ class HoaCoaNamingMatchTests(unittest.TestCase):
             "decision": "Override",
             "confidence": "High",
             "evidence_tier_used": "Tier 3",
-            "reasoning": "Tier-3 corroborated reverse override: multiple listings and a real fee support a condo/HOA structure.",
-            "sources": ["https://realtor.com/x", "https://zillow.com/x", "https://homes.com/x"],
+            "reasoning": "Tier-3 corroborated reverse override: multiple listings and a real fee support a condo/HOA structure, and a Redfin record shows unit 12 sold within the last year.",
+            "sources": ["https://realtor.com/x", "https://zillow.com/x", "https://redfin.com/unit-12-sold"],
             "structural_edge_case": "none",
             "tier3_exception_invoked": "yes",
             "tier3_exception_direction": "to_coa_hoa",
@@ -1985,6 +1988,8 @@ class HoaCoaNamingMatchTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+            "_searched_queries": ["Casa Gataway Hoa unit 12 sold Redfin"],
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -2013,6 +2018,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["county assessor for sale records"],
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
@@ -2035,6 +2041,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["county assessor for sale records"],
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "HOA", result)
@@ -2059,6 +2066,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["county assessor for sale records"],
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "HOA", result)
@@ -2081,6 +2089,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
         self.assertEqual(fixed["determined_type"], "APT")
@@ -2100,6 +2109,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -2122,6 +2132,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
         self.assertEqual(fixed["determined_type"], "APT")
@@ -2143,6 +2154,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "HOA")
@@ -2162,6 +2174,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -2184,6 +2197,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -2206,6 +2220,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -2229,6 +2244,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
@@ -2247,6 +2263,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["county assessor for sale records"],
         }
         fixed = otc._enforce_functional_ownership_guardrail(row, "COA", result)
@@ -2270,6 +2287,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
@@ -2288,6 +2306,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "yes",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
@@ -2306,6 +2325,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
@@ -2326,6 +2346,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
         self.assertEqual(fixed["decision"], "Confirmed")
@@ -2371,6 +2392,7 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["Lakeview Condominiums units for sale"],
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
@@ -2415,6 +2437,7 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -2462,6 +2485,7 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -2509,6 +2533,7 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "no",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -2561,6 +2586,7 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -2593,6 +2619,7 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             # ownership_concentration deliberately omitted
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
@@ -2724,6 +2751,7 @@ class MasterPlannedCommunityGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "yes",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
             "_searched_queries": ["Baumgardner Ranch units for sale"],
         }
         fetched_text = (
@@ -2757,6 +2785,7 @@ class MultiNameGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         result.update(overrides)
         return result
@@ -2840,6 +2869,7 @@ class MultiNameGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -2883,6 +2913,7 @@ class MultiNameGuardrailTests(unittest.TestCase):
             "ownership_concentration_contradicting_evidence": "not_applicable",
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):

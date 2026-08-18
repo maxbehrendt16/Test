@@ -117,6 +117,25 @@ just legal declaration status — see §6. Neither rule applies (`ownership_conc
 `not_applicable`) when this can't be clearly established, or when the property's legal type and
 functional reality already agree.
 
+**Absolute requirement, checked in code, for ANY override of an APT-listed property to COA/HOA —
+regardless of evidence tier or exception path (§4.1/§4.2 included):** genuine evidence that at
+least one unit at that property is CURRENTLY listed for individual sale, or was sold within
+roughly the last 12 months, must have been found. A legal/structural condo designation (a county
+assessor record, a recorded declaration, a state registry entity type) and a real recurring
+association fee are **never sufficient by themselves** for this direction — a huge share of
+legally-platted condo/HOA properties are functionally single-owner apartment communities today
+with no individual sales at all, exactly Rule A above; being legally condo-platted only means the
+units COULD be individually sold, not that anyone currently does. Real failure: **"Foxcroft Of
+Shelby"** (DB: APT) was overridden to COA at High confidence on "Tier 1 legal evidence (...
+assessor record lists Units 1-48 Foxcroft of Shelby Condos) and recurring association fees,"
+concluding "likely individual owners" under Rule B — but the cited sources were the property's own
+single-management-company leasing site (Kaftan Communities) and a LoopNet listing for the whole
+66-unit complex as one asset, neither of which is evidence any individual unit has ever actually
+been sold or listed. "Likely" is a guess, not a finding. Enforced in code via
+`apt_override_sale_evidence_found`, cross-checked against the actual search queries issued (the
+same mechanism as §4.1's sale-search gate) so a bare "yes" self-report isn't trusted without a
+real sale-oriented search having been run.
+
 **Neither rule applies when a structural edge case (§5.7) is in play** — a housing cooperative,
 condo-hotel/timeshare, manufactured home community, or senior/student housing is resolved by
 "never override" regardless of ownership concentration, and functional bulk-ownership evidence is
@@ -507,7 +526,15 @@ its own gate above, and stacking two leniency mechanisms on top of each other wo
 beyond what this exception is meant to allow. All four conditions, plus the Attempt 2 gate, are
 required every time.
 
-**If the gate and all four conditions hold:**
+**Even after the gate and all four conditions hold, §2.1's absolute
+`apt_override_sale_evidence_found` requirement still applies on top — this exception's own
+condition 3 (a real, populated fee) is not a substitute for it.** Satisfying the gate and all four
+conditions here without ALSO having found genuine individual-unit sale evidence (a current
+listing, or a sale within roughly the last 12 months) is not enough to override; default to Not
+Enough Info instead. A real fee and Tier 3 governance description tell you an association likely
+exists; they don't tell you anyone currently owns (and could sell) an individual unit there.
+
+**If the gate, all four conditions, AND the sale-evidence requirement hold:**
 
 - The override is allowed, but **confidence is capped at Medium, never High**, for the same reason
   as §4.1.
@@ -808,6 +835,7 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
 | `ownership_concentration_contradicting_evidence` | Per §2.1's Rule A: `yes` if any evidence of genuine, operating HOA/COA governance was found despite the bulk-ownership appearance — blocks Rule A in code regardless of the bulk-ownership signal |
 | `tier3_dual_association_search_performed` | Per §4.1's recommended practice (not an absolute gate): `yes` if Attempt 2 touched on evidence of BOTH a condominium association AND an HOA, regardless of which one the DB currently lists; tracked for manual QC visibility only, does not block an override on its own |
 | `tier3_entity_name_registry_search_performed` | Per §4.1's absolute gate, required whenever `Master_Property Name` contains a full formal legal-entity string: `yes` only if a state business registry search for that exact entity name was run; `not_applicable` for ordinary names |
+| `apt_override_sale_evidence_found` | Per §2.1's absolute, universal requirement: required whenever overriding an APT-listed property to COA/HOA (any evidence tier or exception path) — `yes` only if genuine evidence was found that at least one unit is currently listed for individual sale, or was sold within roughly the last 12 months; a legal/structural condo designation or a real fee alone is never sufficient. Cross-checked in code against the actual search queries issued, so a bare `yes` isn't trusted without a real sale-oriented search having run |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -1134,9 +1162,10 @@ scale.
 ### Casa Gataway Hoa (DB: APT) — the case that motivated §4.2
 
 The reverse-direction mirror of the Cross Creek case above. DB-listed as APT, but multiple Tier 3
-sources independently describe the property as an HOA community, and `Master_Monthly Association
+sources independently describe the property as an HOA community, `Master_Monthly Association
 Fees` is populated ($461/month) — a real, recurring-looking fee, which corroborates rather than
-contradicts that description.
+contradicts that description — and one of the three sources, a Redfin record, shows unit 204 sold
+eight months ago.
 
 | Field | Value |
 |---|---|
@@ -1146,6 +1175,7 @@ contradicts that description.
 | `evidence_tier_used` | Tier 3 (three independent sources; a thorough Attempt 2 — including a state business registry search — found no Tier 1/2 evidence either way) |
 | `tier3_exception_direction` | `to_coa_hoa` |
 | `tier3_reverse_attempt2_exhausted` | `yes` |
+| `apt_override_sale_evidence_found` | `yes` — the Redfin record of unit 204's sale eight months ago |
 | `archetype_flag` | Tier-3 Corroborated Override |
 
 **Why this is not simply "run §4.1 backwards":** before this exception existed, this case landed on
@@ -1160,9 +1190,41 @@ registry under the property's name and plausible variants and came up empty, in 
 county recorder and tax assessor searches — and all four §4.2 conditions hold on top of that gate:
 3+ independent, non-mirrored Tier 3 sources with a confirmed name/address anchor; zero contradicting
 evidence; the fee itself populated and corroborating (not null, which would point the other way);
-and no structural edge case (co-op, condo-hotel, senior/student housing) fitting better. Had Attempt
-2 not been genuinely exhausted, or had the fee been null instead of populated, this would fall back
-to Not Enough Info exactly as it did before §4.2 existed.
+and no structural edge case (co-op, condo-hotel, senior/student housing) fitting better. **On top of
+all of that, `apt_override_sale_evidence_found` is `yes`** — the Redfin sale record is real,
+individual-unit sale evidence, satisfying §2.1's absolute requirement that now sits above this
+entire exception. Had Attempt 2 not been genuinely exhausted, had the fee been null instead of
+populated, or had no individual-unit sale evidence existed at all (the fee and Tier 3 governance
+description alone are no longer enough, per the case below), this would fall back to Not Enough
+Info.
+
+### Foxcroft Of Shelby (DB: APT) — the case that motivated the universal sale-evidence requirement
+
+DB-listed as APT. Overridden to COA at **High** confidence on `evidence_tier_used: Tier 1` —
+reasoning cited a MACOMB County assessor record listing "Units 1-48 Foxcroft of Shelby Condos" plus
+recurring association fees, concluding "likely individual owners" under §2.1's Rule B. The two
+actually-cited sources were the property's own single-management-company leasing site (Kaftan
+Communities, which manages and presumably owns the whole 66-unit complex as one rental community)
+and a LoopNet listing for the whole complex as one commercial asset — neither one is evidence any
+individual unit has ever actually been sold or listed to an individual buyer.
+
+| Field | Value |
+|---|---|
+| `determined_type` | **APT** (no change) |
+| `decision` | **Not Enough Info** |
+| `evidence_tier_used` | `Tier 1`, but the only "Tier 1" fact (a legal condo-platting record) says nothing about CURRENT individual ownership |
+| `apt_override_sale_evidence_found` | Should have been `no` — no individual unit sale or listing evidence exists in either cited source |
+| `ownership_concentration` | Self-reported as `individual_owner_present` based on "likely individual owners" — a guess, not a verified finding |
+
+**This is exactly the gap §2.1's Rule A/B distinction exists to prevent, reached from an unexpected
+angle.** A legal condo declaration and an assessor record showing platted units tell you the
+property COULD have individual owners — they do not tell you it currently DOES. This property looks,
+from its own cited sources, exactly like a single-owner apartment complex under one management
+company (Rule A territory), yet the model treated the mere existence of a legal Tier 1 record as
+settling the question, and hedged the actual functional-ownership question with "likely" instead of
+verifying it. This is why `apt_override_sale_evidence_found` is now an absolute, universal
+requirement for ANY override of an APT-listed property to COA/HOA, regardless of evidence tier —
+Tier 1 legal evidence is not exempt from it.
 
 ### Sky Nashville (DB: HOA) — the case that motivated §4.1's sales-listing gate
 
