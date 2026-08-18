@@ -155,6 +155,19 @@ rather than silently falling back to the DB's current label (which, when that la
 APT, previously produced a confusing "Not Enough Info, APT" result that looked like the tool was
 agreeing with APT right after just explaining why it can't be).
 
+**A second, related self-consistency bug: `determined_type` can already correctly reflect Rule B
+(not APT), while `decision` is separately, mistakenly left as `Confirmed`.** Real failures:
+reasoning read *"...satisfying Rule B's requirement that any individually owned unit prevents an
+APT override... evidence confirms COA designation"* and *"...indicating a functioning condo
+association. Rule B applies..."* while `decision` was still `Confirmed` in both cases. Left alone,
+the tool's general decision/type consistency check (a hard, code-level rule: `Confirmed`/`Not
+Enough Info` always implies `determined_type` equals the DB's own current label, and reverts it
+if not) would silently revert the correct `determined_type` back to the (wrong) DB label,
+producing a final result that directly contradicted the model's own reasoning. Fixed in code: whenever Rule B fires and `determined_type`
+is already correctly non-APT, `decision` is set from that comparison directly (`Override` if it
+differs from the DB label, `Confirmed` if it doesn't) rather than trusted from whatever the model
+separately typed.
+
 **This is a required verification step, not an optional one:** before finalizing any decision,
 explicitly check current ownership concentration (single owner vs. any individual owners), not
 just legal declaration status — see §6. Neither rule applies (`ownership_concentration`:
@@ -185,6 +198,15 @@ against the search-query text the way §4.1's forward gate is — a real, previo
 failure showed that query-text cross-check rejecting responses whose own reasoning clearly
 described finding sale evidence, purely because the issued query text didn't happen to match an
 expected keyword pattern.
+
+**The same self-report/prose dissonance turned out to affect `apt_override_sale_evidence_found`
+itself, not just the query-text cross-check.** Two real failures had this gate downgrade responses
+whose reasoning plainly described genuine sale evidence — *"Unit 3D sold June 17, 2026, and Unit
+4K is currently listed for sale,"* *"confirmed Zillow listings ... with sale prices"* — while the
+structured field still wasn't `yes`. The gate now also falls back to scanning `reasoning` directly
+for sale-oriented language (a keyword match guarded against explicit negation, e.g. "no ... sale
+... found") when the field isn't set, so genuine evidence the model has already described in its
+own words isn't rejected purely for a structured-field bookkeeping gap.
 
 **Neither rule applies when a structural edge case (§5.7) is in play** — a housing cooperative,
 condo-hotel/timeshare, manufactured home community, or senior/student housing is resolved by

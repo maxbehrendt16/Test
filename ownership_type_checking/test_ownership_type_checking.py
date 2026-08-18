@@ -1047,6 +1047,30 @@ class AptOverrideSaleEvidenceGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
         self.assertEqual(fixed["decision"], "Override")
 
+    def test_reasoning_describing_sale_evidence_is_trusted_even_without_the_self_report(self):
+        # Real, previously-mishandled failure: reasoning read "Unit 3D sold June 17, 2026, and
+        # Unit 4K is currently listed for sale ... Under Rule B ... override the DB's APT label to
+        # COA" while apt_override_sale_evidence_found still wasn't "yes" -- genuine, explicit sale
+        # evidence rejected only because the structured field didn't also get set correctly.
+        result = self._result(
+            reasoning=(
+                "Dedicated search confirms individual-unit sales and listings: Unit 3D sold June "
+                "17, 2026, and Unit 4K is currently listed for sale. Combined with evidence of a "
+                "condominium association structure, this confirms individual ownership and COA "
+                "governance. Under Rule B, override the DB's APT label to COA."
+            ),
+        )
+        fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_reasoning_mentioning_sale_terms_with_negation_still_requires_the_self_report(self):
+        # "sale" appears, but explicitly negated -- must not be mistaken for genuine evidence.
+        result = self._result(
+            reasoning="Dedicated sale-listing search found no individual units listed for sale.",
+        )
+        fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
     def test_confirmed_decision_is_left_alone(self):
         result = self._result(decision="Confirmed", determined_type="APT")
         fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
@@ -1097,6 +1121,52 @@ class AptOverrideSaleEvidenceGuardrailTests(unittest.TestCase):
             result = otc.process_property(None, "gpt-4o", self.ROW, {})
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertEqual(result["determined_type"], "APT")
+
+    def test_ardmore_terrace_full_pipeline_end_to_end(self):
+        # Real reported failure: RecordID 39658176 -- reasoning plainly described genuine sale
+        # evidence ("confirmed Zillow listings showing individual units (e.g., Unit 2369-D) with
+        # sale prices at Ardmore Terrace") but apt_override_sale_evidence_found was still "no",
+        # and the response was wrongly downgraded to Confirmed/APT.
+        row = {
+            "RecordID": "39658176",
+            "Master_Property Name": "Ardmore Terrace",
+            "Master_Ownership Type": "APT",
+        }
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Override",
+            "confidence": "Medium",
+            "evidence_tier_used": "Mixed",
+            "reasoning": (
+                "Dedicated sale search confirmed Zillow listings showing individual units (e.g., "
+                "Unit 2369-D) with sale prices at Ardmore Terrace, confirming Rule B conditions "
+                "for COA."
+            ),
+            "sources": ["https://zillow.com/x", "https://realtor.com/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "no",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Override")
+        self.assertEqual(result["determined_type"], "COA")
 
 
 class SalesEvidenceGuardrailTests(unittest.TestCase):
@@ -2404,6 +2474,59 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
         self.assertEqual(fixed["determined_type"], "HOA")
         self.assertEqual(fixed["decision"], "Override")
 
+    def test_rule_b_corrects_a_wrongly_confirmed_decision_to_override(self):
+        # Real, previously-mishandled failure: determined_type already correctly reflected Rule B
+        # (not APT), but the model's own `decision` field was mistakenly left as "Confirmed" --
+        # and without this fix, _reconcile_decision_and_type() would later see "Confirmed" plus a
+        # determined_type different from the DB label and silently revert determined_type BACK to
+        # the (wrong) DB label, producing a final "Confirmed, APT" that directly contradicted the
+        # model's own reasoning ("...satisfying Rule B's requirement that any individually owned
+        # unit prevents an APT override... evidence confirms COA designation").
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "COA",
+            "reasoning": (
+                "Multiple individual-unit sale listings were found at the address, satisfying "
+                "Rule B's requirement that any individually owned unit prevents an APT override. "
+                "Sale-listing search was performed, and evidence confirms COA designation."
+            ),
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_rule_b_leaves_an_already_correct_confirmed_decision_alone(self):
+        # determined_type matches db_type here (a COA<->COA "confirmation" that Rule B applies) --
+        # decision should stay Confirmed, not get flipped to Override.
+        result = {
+            "decision": "Confirmed",
+            "determined_type": "COA",
+            "reasoning": "Individually owned units confirmed; Rule B keeps this COA.",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+        self.assertEqual(fixed["decision"], "Confirmed")
+
     def test_not_applicable_concentration_is_a_no_op(self):
         result = {
             "decision": "Confirmed",
@@ -2902,6 +3025,53 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertTrue(result["is_error"])
+
+    def test_rule_b_wrongly_confirmed_decision_is_corrected_to_override_end_to_end(self):
+        # Real reported failure: RecordID 47872263 -- determined_type correctly reflected Rule B
+        # (COA), but decision was mistakenly left as "Confirmed." Without the fix, this would end
+        # up reported as Confirmed/APT (via _reconcile_decision_and_type() reverting
+        # determined_type back to the DB label), directly contradicting the model's own reasoning
+        # ("...evidence confirms COA designation").
+        row = {
+            "RecordID": "47872263",
+            "Master_Property Name": "Rivendell",
+            "Master_Ownership Type": "APT",
+        }
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Confirmed",
+            "confidence": "Medium",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": (
+                "Multiple individual-unit sale listings were found at the address, satisfying "
+                "Rule B's requirement that any individually owned unit prevents an APT override. "
+                "Sale-listing search was performed, and evidence confirms COA designation."
+            ),
+            "sources": ["https://zillow.com/x", "https://redfin.com/x"],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Override")
+        self.assertEqual(result["determined_type"], "COA")
 
 
 class MasterPlannedCommunityGuardrailTests(unittest.TestCase):
