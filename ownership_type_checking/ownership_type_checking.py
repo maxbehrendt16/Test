@@ -127,9 +127,15 @@ TIER3_EXCEPTION_MIN_SOURCES = 3
 # model's self-reported tier3_independent_source_count claimed 3+ ("multiple independent listing
 # platforms") -- an earlier version of this tool deliberately allowed that gap (on the theory
 # that the model might legitimately examine more sources than it bothers to list), but that gap
-# is exactly what let these self-reports go unverified. `sources` is now the authoritative,
-# code-checked floor for condition 1: it must itself contain TIER3_EXCEPTION_MIN_SOURCES distinct
-# URLs, not just a self-reported count claiming that many.
+# is exactly what let these self-reports go unverified. `tier3_independent_source_count` is still
+# required to be 3+ (condition 1's actual bar), but the model in practice reliably lists at most 2
+# URLs in `sources` regardless of how many it actually consulted -- confirmed across many real
+# batches, this is a consistent model-output quirk, not a signal of thin research (Castle
+# Apartments and Mountain Ridge both fail condition 1 for other, independent reasons regardless of
+# this floor). TIER3_EXCEPTION_MIN_LISTED_SOURCES is the separate, lower floor actually checked
+# against `sources` itself, calibrated to match that real output ceiling instead of a number the
+# model never actually produces.
+TIER3_EXCEPTION_MIN_LISTED_SOURCES = 2
 
 SYSTEM_PROMPT = """You are a research assistant verifying property ownership-type records in a \
 Community Lending Portfolio (CLP) database.
@@ -522,17 +528,18 @@ override built on Tier 3 evidence alone, and a claim that doesn't hold up agains
 data (e.g. citing a null fee when the row's fee field is actually populated) will be caught and \
 downgraded regardless of what the rest of your answer says.
 
-**`sources` must actually list every one of the 3+ independent sources you're counting toward \
-condition 1 -- `tier3_independent_source_count` is no longer allowed to claim more than `sources` \
-actually shows.** An earlier version of this tool let you list fewer URLs than your claimed count \
-(on the theory you might legitimately examine more sources than you bother to list); two real \
-failures ("Mountain Ridge Garden Homes Apartments," "Castle Apartments Condominium Association, \
-Inc.") exploited exactly that gap -- reasoning claimed "multiple independent listing platforms" \
-while `sources` listed only 1-2 URLs, and the override went through anyway. **This is enforced in \
-code now: `sources` itself must contain 3+ distinct URLs before condition 1 can be satisfied at \
-all**, regardless of what `tier3_independent_source_count` says. If you genuinely found 3+ \
-independent, non-syndicated sources agreeing, list all of them as URLs in `sources` -- don't \
-summarize or truncate the list.
+**`sources` must actually list at least 2 distinct URLs backing the independent sources you're \
+counting toward condition 1 -- `tier3_independent_source_count` is not allowed to claim more \
+sources exist than `sources` shows any trace of at all.** An earlier version of this tool let you \
+list arbitrarily fewer URLs than your claimed count; two real failures ("Mountain Ridge Garden \
+Homes Apartments," "Castle Apartments Condominium Association, Inc.") exploited that gap -- \
+reasoning claimed "multiple independent listing platforms" while `sources` listed only 1 URL, and \
+the override went through anyway. **This is enforced in code: `sources` itself must contain 2+ \
+distinct URLs before condition 1 can be satisfied at all**, regardless of what \
+`tier3_independent_source_count` says -- but `tier3_independent_source_count` itself must still be \
+3+ (this field is checked separately and still requires genuinely finding 3 independent sources, \
+even if you only end up listing 2 URLs for them in `sources`). List every URL you can for the \
+sources you found; don't pad or fabricate one to reach 3 URLs listed if you only have 2 to show.
 
 ## Bounded exception (reverse direction, to COA/HOA): last-resort Tier-3-corroborated override
 
@@ -551,53 +558,63 @@ for this specific property (not skipped them) and found no Tier 1/2 evidence eit
 haven't genuinely made that attempt, this exception does not apply -- go make it, or default to \
 Not Enough Info. Do not set this to `yes` if you simply didn't try.
 
-Once that gate is satisfied, the same four conditions from the forward exception apply, adapted:
+Once that gate is satisfied, three conditions from the forward exception apply, adapted (this \
+direction has no condition 3 -- see below for why):
 
 1. **3+ independent Tier 3 sources that agree, with a confirmed name/address anchor** -- same \
 requirement as condition 1 above.
 2. **Zero contradicting evidence anywhere** -- nothing suggesting this is genuinely a single-owner \
 rental with no association (e.g. no evidence of one owner holding all units, no indication the \
 "HOA" language is just marketing).
-3. **At least one internal DB field corroborates a real association** -- here, that's the mirror \
-image of the forward exception's condition 3: a **real, non-null, non-zero, recurring** \
-`Master_Monthly Association Fees` value, sanity-checked against §5.8's fee-miscoding pitfall (not a \
-one-time deposit or a data-entry artifact). A legitimate recurring fee, by itself, is sufficient -- \
-same "one field is enough, don't hunt for a reason to reject it" principle as the forward case.
-4. **No structural edge case explains the pattern instead** -- e.g. not a co-op being mistaken for \
+3. **No structural edge case explains the pattern instead** -- e.g. not a co-op being mistaken for \
 a "regular" COA/HOA in a way that would call for `structural_edge_case` instead of this exception, \
 and not a master-planned mixed community (explicit "master planned community" phrasing or explicit \
 for-rent-and-for-sale housing in a cited source) where the specific component can't be cleanly \
 confirmed (co-ops and master-planned mixed communities still resolve to Confirmed per failure mode \
 7, regardless of this exception).
 
-If all four hold (this direction does not get the 3-of-4 partial-Tier-1/2-support relaxation -- \
-that relaxation is specifically for the forward direction): **Override -> COA or HOA (whichever the \
-evidence supports), confidence capped at Medium, never High.** Say so explicitly in your reasoning \
-(e.g. "Reverse Tier-3 exception: Attempt 2 exhausted, no Tier 1/2 evidence found; a real recurring \
-fee and 3 independent sources corroborate COA."). The `tier3_internal_db_corroboration` backstop \
-still applies here, direction-aware: if you cite the fee as corroboration but the row's fee field is \
-actually null/zero, that self-contradiction will be caught and downgraded regardless of what else \
-you submit.
+**There is deliberately no fee-based internal-DB-corroboration condition for this direction \
+(unlike the forward exception's condition 3).** An earlier version of this tool required a real, \
+populated `Master_Monthly Association Fees` value as corroboration here, cross-checked against the \
+row's own fee field -- but a real, previously-mishandled failure showed this backstop \
+mischaracterizing genuinely-found EXTERNAL fee evidence (from Tier 3 sources online) as a claim \
+about the DB's own internal field, and downgrading a response that was never making that claim at \
+all. The absolute `apt_override_sale_evidence_found` gate below is the real, direct requirement \
+for this direction now -- a fee (wherever it's found) is no longer a substitute or a separate \
+gate.
 
-**Even after all four conditions above hold, the absolute `apt_override_sale_evidence_found` gate \
-from Rule A/B still applies on top -- this exception's own fee-based condition 3 is not a \
-substitute for it.** Satisfying conditions 1-4 here without also having found genuine individual- \
-unit sale evidence (a current listing, or a sale within roughly the last 12 months) is not enough \
-to override; default to Not Enough Info instead.
+If all three conditions above hold (this direction does not get the 3-of-4 partial-Tier-1/2-\
+support relaxation -- that relaxation is specifically for the forward direction) AND the \
+`apt_override_sale_evidence_found` gate below is satisfied: **Override -> COA or HOA (whichever \
+the evidence supports), confidence capped at Medium, never High.** Say so explicitly in your \
+reasoning (e.g. "Reverse Tier-3 exception: Attempt 2 exhausted, no Tier 1/2 evidence found; 3 \
+independent sources corroborate COA, and a Redfin record confirms unit 204 sold eight months \
+ago.").
+
+**The absolute `apt_override_sale_evidence_found` gate from Rule A/B still applies on top of the \
+three conditions above.** Satisfying those three conditions without also having found genuine \
+individual-unit sale evidence (a current listing, or a sale within roughly the last 12 months) is \
+not enough to override; default to Not Enough Info instead. **You should actively go look for this \
+as part of Attempt 2 whenever you're leaning toward a reverse-direction override** -- run a \
+dedicated search for individual unit sales at this specific property (the same kind of query as \
+§4.1's sales-listing gate below) rather than concluding COA/HOA on legal/fee evidence alone and \
+leaving this unconfirmed. If you find it, say so and set `apt_override_sale_evidence_found` to \
+`yes`; if you genuinely searched and found nothing, set it to `no` and this exception does not \
+apply.
 
 **Worked example:** "Casa Gataway Hoa," DB-listed APT, `Master_Monthly Association Fees` is $461 \
 (real, recurring, not miscoded). Multiple Tier 3 sources (a listing site with a confirmed name/ \
 address anchor, plus two others) describe it as a condominium with HOA governance, and one of them \
 -- a Redfin record -- shows unit 204 sold eight months ago. Attempt 2 -- a real one, including a \
 state business registry search for an incorporated association at this address -- turns up \
-nothing either way. All four conditions hold, the gate is satisfied, AND genuine individual-unit \
-sale evidence was found (`apt_override_sale_evidence_found`: `yes`): this resolves to **Override \
--> COA, confidence Medium.** Do not stop at "no Tier 1/2 evidence found, so Confirmed APT" without \
-first genuinely attempting Attempt 2 and then explicitly checking this exception's conditions AND \
-the sale-evidence gate -- that combination (real fee + Tier 3 corroboration + exhausted search + \
-actual sale evidence) is exactly what this exception is for. Without the Redfin sale record, this \
-same picture would instead resolve to **Not Enough Info, APT unchanged** -- a real fee and Tier 3 \
-governance description alone are not enough.
+nothing either way. All three conditions hold, the gate is satisfied, AND genuine individual-unit \
+sale evidence was found (`apt_override_sale_evidence_found`: `yes`, from the Redfin record): this \
+resolves to **Override -> COA, confidence Medium.** Do not stop at "no Tier 1/2 evidence found, so \
+Confirmed APT" without first genuinely attempting Attempt 2 and then explicitly checking this \
+exception's conditions AND the sale-evidence gate -- that combination (Tier 3 corroboration + \
+exhausted search + actual sale evidence) is exactly what this exception is for. Without the Redfin \
+sale record, this same picture would instead resolve to **Not Enough Info, APT unchanged** -- Tier \
+3 governance description and a real fee alone are not enough.
 
 ## Known failure modes -- check every one of these before concluding Override
 
@@ -1661,6 +1678,35 @@ def _sale_search_correction_message(row: dict) -> str:
     )
 
 
+def _submission_requires_reverse_sale_search(row: dict, result: dict) -> bool:
+    """Mirrors _submission_requires_sale_search()'s scoping for the opposite direction: an
+    Override away from an APT-listed property to COA/HOA needs genuine individual-unit sale
+    evidence on record (the apt_override_sale_evidence_found gate), regardless of evidence tier
+    or exception path -- a legal/structural condo designation and a real fee are never enough by
+    themselves, per §2.1's Rule A/B."""
+    if result.get("decision") != "Override" or result.get("determined_type") not in ("COA", "HOA"):
+        return False
+    return _norm_text(row.get("Master_Ownership Type")).upper() == "APT"
+
+
+def _reverse_sale_search_correction_message(row: dict) -> str:
+    address = _norm_text(row.get("Address"))
+    name = _norm_text(row.get("Master_Property Name"))
+    subject = address or name
+    return (
+        "Before I can accept that conclusion: you're overriding this APT-listed property to "
+        "COA/HOA, which requires genuine evidence that at least one unit is currently listed for "
+        "individual sale, or was sold within roughly the last 12 months -- a legal/structural "
+        "condo designation and a recurring association fee are not enough on their own, since "
+        "many legally-platted condo/HOA properties are functionally single-owner apartment "
+        "communities today. Run a dedicated search now for individual unit sales at this "
+        f"specific property, e.g. \"{subject} for sale\", \"{subject} sold\", or \"{name} MLS "
+        "listing\" -- then call submit_assessment again with your final answer (Confirmed/the DB "
+        "label if that search finds nothing supporting an individual sale, or Override if it "
+        "confirms one)."
+    )
+
+
 def research_property(client, row: dict, triggers: list, url_cache: dict, model: str) -> dict:
     input_items = [{"role": "user", "content": build_user_message(row, triggers, url_cache)}]
     tools = [OPENAI_WEB_SEARCH_TOOL, OPENAI_SUBMIT_TOOL]
@@ -1690,13 +1736,34 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
         if submit_call:
             result = json.loads(submit_call.arguments)
 
+            needs_forward_correction = (
+                _submission_requires_sale_search(result)
+                and not _genuine_sale_search_performed(row, {"_searched_queries": searched_queries})
+            )
+            # Deliberately does NOT cross-check _searched_queries the way the forward direction
+            # does -- a real, previously-mishandled failure showed the model's own reasoning
+            # correctly describing found sale evidence ("multiple units actively listed for
+            # sale") while that regex-based query cross-check still rejected it, purely because
+            # the actual issued query text didn't happen to match the expected keyword pattern.
+            # The in-conversation correction below is the real enforcement mechanism now (it
+            # forces an actual search attempt before the model may claim "yes" at all); once
+            # claimed, apt_override_sale_evidence_found is trusted directly, same as the after-
+            # the-fact guardrail (_enforce_apt_override_sale_evidence_guardrail).
+            needs_reverse_correction = (
+                _submission_requires_reverse_sale_search(row, result)
+                and result.get("apt_override_sale_evidence_found") != "yes"
+            )
             if (
                 not is_last_turn
                 and sale_search_corrections_used < MAX_SALE_SEARCH_CORRECTIONS
-                and _submission_requires_sale_search(result)
-                and not _genuine_sale_search_performed(row, {"_searched_queries": searched_queries})
+                and (needs_forward_correction or needs_reverse_correction)
             ):
                 sale_search_corrections_used += 1
+                correction_message = (
+                    _sale_search_correction_message(row)
+                    if needs_forward_correction
+                    else _reverse_sale_search_correction_message(row)
+                )
                 # A function_call (submit_assessment) MUST be followed by a matching
                 # function_call_output before the conversation can continue via
                 # previous_response_id -- the Responses API rejects the next turn with
@@ -1715,7 +1782,7 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
                             "to do next."
                         ),
                     },
-                    {"role": "user", "content": _sale_search_correction_message(row)},
+                    {"role": "user", "content": correction_message},
                 ]
                 continue
 
@@ -1742,27 +1809,26 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
 def _tier3_exception_backstop_failure(row: dict, result: dict, direction: str):
     """Deterministic cross-check of the model's self-reported condition-3 corroboration against
     the property's own row data -- the one condition where a claim can actually be checked in
-    code -- rather than trusting a bare self-report. Direction-aware: the forward exception
-    ('to_apt') expects a claim of a null/absent fee; the reverse exception ('to_coa_hoa') expects
-    the opposite, a claim of a real recurring fee. Returns a human-readable failure reason, or
-    None if no backstop check fires (which does not by itself mean the exception is satisfied --
-    the self-reported fields still gate it). There is deliberately no property-age backstop here:
-    neither direction has a minimum-age/build-year requirement."""
+    code -- rather than trusting a bare self-report. Only ever called for the forward exception
+    ('to_apt'), which expects a claim of a null/absent fee -- the reverse exception's condition 3
+    is no longer gated at all (see _tier3_exception_condition_failures()): a real, previously-
+    mishandled failure had the model's reasoning genuinely find association-fee evidence via Tier
+    3 sources online, populate tier3_internal_db_corroboration describing that finding, and this
+    backstop mischaracterized it as a claim about the DB's OWN fee field (which happened to be
+    null/zero on that row) -- downgrading a response that was never claiming anything about the
+    internal field at all. Returns a human-readable failure reason, or None if no backstop check
+    fires (which does not by itself mean the exception is satisfied -- the self-reported fields
+    still gate it). There is deliberately no property-age backstop here: this direction has no
+    minimum-age/build-year requirement."""
     corroboration_text = _norm_text(result.get("tier3_internal_db_corroboration")).lower()
     if "fee" not in corroboration_text:
         return None
     fee = _parse_number(row.get("Master_Monthly Association Fees"))
-    if direction == "to_apt" and fee is not None and fee != 0:
+    if fee is not None and fee != 0:
         return (
             f"the model cited a null/absent association fee as internal corroboration, but "
             f"Master_Monthly Association Fees is actually populated ({fee:g}) -- direct "
             f"contradiction with the row's own data"
-        )
-    if direction == "to_coa_hoa" and (fee is None or fee == 0):
-        return (
-            "the model cited the association fee as internal corroboration for a COA/HOA "
-            "determination, but Master_Monthly Association Fees is actually null/zero on this "
-            "row -- direct contradiction with the row's own data"
         )
     return None
 
@@ -1946,14 +2012,22 @@ def _enforce_apt_override_sale_evidence_guardrail(row: dict, result: dict) -> di
     cited source) -- requiring real sale evidence directly, universally, is both simpler and
     strictly stronger: anything the old check caught, this one catches too.
 
-    Deliberately reuses _genuine_sale_search_performed() (the same actual-query cross-check used
-    for the forward direction's absolute sale-search gate) so a bare "yes" self-report isn't
-    trusted without at least one real sale-oriented search actually being issued."""
+    Trusts a self-reported apt_override_sale_evidence_found: "yes" directly, without cross-
+    checking _searched_queries the way the forward direction's absolute sale-search gate does. A
+    real, previously-mishandled failure showed that cross-check rejecting responses whose own
+    reasoning clearly described finding sale evidence ("multiple units actively listed for sale,"
+    "Zillow/Redfin confirm individual sales") purely because the issued query text didn't happen
+    to match the expected keyword pattern -- dissonance between what the model found and what got
+    accepted, for no real benefit. research_property()'s in-conversation correction loop (see
+    _submission_requires_reverse_sale_search()) is the actual enforcement mechanism now: it
+    rejects a premature "no"/unset submission and forces a genuine search attempt before the
+    model may resubmit, so a self-report reaching this guardrail has already been given a real
+    chance to go find (or fail to find) the evidence before claiming so."""
     if result.get("decision") != "Override" or result.get("determined_type") not in ("COA", "HOA"):
         return result
     if _norm_text(row.get("Master_Ownership Type")).upper() != "APT":
         return result
-    if result.get("apt_override_sale_evidence_found") == "yes" and _genuine_sale_search_performed(row, result):
+    if result.get("apt_override_sale_evidence_found") == "yes":
         return result
 
     result = dict(result)
@@ -2102,22 +2176,24 @@ TIER3_EXCEPTION_MIN_CONDITIONS_WITH_PARTIAL_TIER12 = 3
 
 
 def _tier3_exception_condition_failures(row: dict, result: dict, direction: str) -> list:
-    """Evaluates each of the exception's four conditions independently (identical structure for
-    both directions; only condition 3's polarity differs, handled inside the backstop) and
-    returns a list of human-readable failure descriptions for the ones that DON'T hold (empty
-    list if all four hold). Condition 3's evaluation folds in the deterministic backstop
-    cross-check so a self-report contradicted by the property's own data counts as a failure of
-    that condition, not a separate, always-fatal check -- this lets it participate correctly in
-    the forward direction's partial-Tier-1/2-support relaxation (still one condition failing,
-    same as any other)."""
+    """Evaluates each of the exception's conditions independently and returns a list of
+    human-readable failure descriptions for the ones that DON'T hold (empty list if all hold).
+    Conditions 1, 2, and 4 are identical structure for both directions. Condition 3 (internal DB
+    fee corroboration) only applies to the forward direction ('to_apt') -- its evaluation folds in
+    the deterministic backstop cross-check so a self-report contradicted by the property's own
+    data counts as a failure of that condition, not a separate, always-fatal check, which lets it
+    participate correctly in the forward direction's partial-Tier-1/2-support relaxation (still one
+    condition failing, same as any other). For the reverse direction ('to_coa_hoa'), condition 3 is
+    never evaluated at all (never appears in the returned failures) -- superseded by the universal
+    apt_override_sale_evidence_found gate checked separately, after this exception's conditions."""
     failures = []
 
     distinct_sources = set(result.get("sources", []) or [])
-    if len(distinct_sources) < TIER3_EXCEPTION_MIN_SOURCES:
+    if len(distinct_sources) < TIER3_EXCEPTION_MIN_LISTED_SOURCES:
         failures.append(
             f"condition 1: only {len(distinct_sources)} distinct URL(s) were actually listed in "
-            f"`sources` -- the exception requires {TIER3_EXCEPTION_MIN_SOURCES}+ actually-listed "
-            f"sources, not just a self-reported count claiming that many"
+            f"`sources` -- the exception requires {TIER3_EXCEPTION_MIN_LISTED_SOURCES}+ actually-"
+            f"listed sources, not just a self-reported count claiming that many"
         )
     elif (_parse_number(result.get("tier3_independent_source_count")) or 0) < TIER3_EXCEPTION_MIN_SOURCES:
         failures.append("condition 1: self-reported independent source count is below 3")
@@ -2132,20 +2208,31 @@ def _tier3_exception_condition_failures(row: dict, result: dict, direction: str)
     elif result.get("tier3_contradicting_evidence") != "no":
         failures.append("condition 2: contradicting evidence was found, or this wasn't explicitly ruled out")
 
-    corroboration_text = _norm_text(result.get("tier3_internal_db_corroboration"))
-    if not corroboration_text:
-        failures.append("condition 3: no internal DB field corroboration was cited")
-    elif direction == "to_apt" and "fee" not in corroboration_text.lower():
-        failures.append(
-            "condition 3: forward-direction corroboration must be based on the null/blank "
-            "Master_Monthly Association Fees field -- the DB's Owner/Cleaned Owner field is not "
-            "reliable enough to use as evidence toward an APT designation (a majority-but-not-"
-            "full owner is often still the DB's sole listed Owner)"
-        )
-    else:
-        backstop_reason = _tier3_exception_backstop_failure(row, result, direction)
-        if backstop_reason:
-            failures.append(f"condition 3: {backstop_reason}")
+    # Reverse direction ('to_coa_hoa'): condition 3 (internal DB fee corroboration) is no longer
+    # gated here at all -- superseded by the universal apt_override_sale_evidence_found floor
+    # (checked separately, after this exception's conditions, by
+    # _enforce_apt_override_sale_evidence_guardrail()), which is a stronger, more direct
+    # requirement. Real, previously-mishandled failure: the model's reasoning described genuinely
+    # finding association-fee evidence in Tier 3 sources online, populated
+    # tier3_internal_db_corroboration with a description of that finding, and this backstop
+    # mischaracterized it as a claim about the DB's OWN fee field -- which the row's actual
+    # Master_Monthly Association Fees happened to be null/zero -- and downgraded a response that
+    # was never claiming anything about the internal field at all.
+    if direction == "to_apt":
+        corroboration_text = _norm_text(result.get("tier3_internal_db_corroboration"))
+        if not corroboration_text:
+            failures.append("condition 3: no internal DB field corroboration was cited")
+        elif "fee" not in corroboration_text.lower():
+            failures.append(
+                "condition 3: forward-direction corroboration must be based on the null/blank "
+                "Master_Monthly Association Fees field -- the DB's Owner/Cleaned Owner field is not "
+                "reliable enough to use as evidence toward an APT designation (a majority-but-not-"
+                "full owner is often still the DB's sole listed Owner)"
+            )
+        else:
+            backstop_reason = _tier3_exception_backstop_failure(row, result, direction)
+            if backstop_reason:
+                failures.append(f"condition 3: {backstop_reason}")
 
     if result.get("tier3_structural_edge_case_ruled_out") != "yes":
         failures.append("condition 4: a structural edge case wasn't explicitly ruled out")
