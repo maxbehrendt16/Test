@@ -1776,9 +1776,14 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
             # forces an actual search attempt before the model may claim "yes" at all); once
             # claimed, apt_override_sale_evidence_found is trusted directly, same as the after-
             # the-fact guardrail (_enforce_apt_override_sale_evidence_guardrail).
+            reverse_reasoning_text = result.get("reasoning", "") or ""
             needs_reverse_correction = (
                 _submission_requires_reverse_sale_search(row, result)
                 and result.get("apt_override_sale_evidence_found") != "yes"
+                and not (
+                    SALE_EVIDENCE_IN_REASONING_RE.search(reverse_reasoning_text)
+                    and not SALE_EVIDENCE_NEGATION_RE.search(reverse_reasoning_text)
+                )
             )
             needs_rule_b_correction = _submission_has_rule_b_contradiction(result)
             if (
@@ -1902,6 +1907,27 @@ OPERATING_ASSOCIATION_MENTION_RE = re.compile(
     r"registered\s+(hoa|coa|homeowners?\s+association|condominium\s+association)|"
     r"\b(?:hoa|coa|association)\s+exists\b|\ban?\s+operating\s+association\b|"
     r"\bactive\s+(?:hoa|coa)\b",
+    re.IGNORECASE,
+)
+
+# Reasoning-text fallback for _enforce_apt_override_sale_evidence_guardrail(): two real,
+# previously-mishandled failures had reasoning plainly describing genuine sale evidence
+# ("Unit 3D sold June 17, 2026, and Unit 4K is currently listed for sale," "Dedicated sale search
+# confirmed Zillow listings ... with sale prices") while apt_override_sale_evidence_found still
+# wasn't "yes" -- the same self-report/prose dissonance already fixed for the query-text
+# cross-check, just showing up in a different field. Scoped to only fire when decision is already
+# "Override" to COA/HOA (i.e. the model has already committed to the override and this reasoning
+# is its stated justification for it), which limits the real-world risk of the negation check
+# below missing a case.
+SALE_EVIDENCE_IN_REASONING_RE = re.compile(
+    r"sale\s+(price|listing)|listed?\s+for\s+sale|\bsold\b|\bmls\b|\bzillow\b|\bredfin\b|"
+    r"realtor\.?com|individual[\s-]unit\s+sale",
+    re.IGNORECASE,
+)
+SALE_EVIDENCE_NEGATION_RE = re.compile(
+    r"\bno\b[^.]{0,60}\b(sale|sold|listed|listing|found|confirmed)\b|\bfound\s+no\b|"
+    r"\bnot\s+(confirmed|found|listed)\b|wasn.t\s+confirmed|\bzero\b[^.]{0,40}\b(sale|found)\b|"
+    r"\bnone\s+found\b",
     re.IGNORECASE,
 )
 
@@ -2063,12 +2089,24 @@ def _enforce_apt_override_sale_evidence_guardrail(row: dict, result: dict) -> di
     _submission_requires_reverse_sale_search()) is the actual enforcement mechanism now: it
     rejects a premature "no"/unset submission and forces a genuine search attempt before the
     model may resubmit, so a self-report reaching this guardrail has already been given a real
-    chance to go find (or fail to find) the evidence before claiming so."""
+    chance to go find (or fail to find) the evidence before claiming so.
+
+    Also falls back to a direct scan of `reasoning` itself (SALE_EVIDENCE_IN_REASONING_RE, guarded
+    against negation by SALE_EVIDENCE_NEGATION_RE) when apt_override_sale_evidence_found isn't
+    "yes" -- the same self-report/prose dissonance already fixed for the forward direction's
+    query-text cross-check turned out to affect this field too. Two real, previously-mishandled
+    failures had this exact gate downgrade responses whose reasoning plainly said things like
+    "Unit 3D sold June 17, 2026, and Unit 4K is currently listed for sale" and "confirmed Zillow
+    listings ... with sale prices" -- genuine, explicit sale evidence that the model's own words
+    already established, rejected only because the structured field wasn't also set correctly."""
     if result.get("decision") != "Override" or result.get("determined_type") not in ("COA", "HOA"):
         return result
     if _norm_text(row.get("Master_Ownership Type")).upper() != "APT":
         return result
     if result.get("apt_override_sale_evidence_found") == "yes":
+        return result
+    reasoning_text = result.get("reasoning", "") or ""
+    if SALE_EVIDENCE_IN_REASONING_RE.search(reasoning_text) and not SALE_EVIDENCE_NEGATION_RE.search(reasoning_text):
         return result
 
     result = dict(result)
@@ -2233,6 +2271,21 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
             f"({db_type!r}) with low confidence rather than asserting APT is correct -- it is "
             f"NOT a confirmation that APT holds. Original reasoning: {original}"
         )
+    elif concentration == "individual_owner_present":
+        # determined_type already correctly reflects Rule B (not APT) here -- but `decision`
+        # itself isn't independently trustworthy, and leaving a wrong value in place is actively
+        # dangerous: _reconcile_decision_and_type() later assumes "Confirmed"/"Not Enough Info"
+        # means determined_type should equal db_type, and will silently overwrite a CORRECT
+        # determined_type back to the (wrong) DB label if decision was mistakenly left as
+        # "Confirmed" instead of "Override". Real, previously-mishandled failures: reasoning read
+        # "...satisfying Rule B's requirement that any individually owned unit prevents an APT
+        # override... evidence confirms COA designation" and "...indicating a functioning condo
+        # association. Rule B applies..." while decision was still "Confirmed" -- both ended up
+        # reported as Confirmed/APT, directly contradicting their own reasoning. Rule B's own
+        # finding is authoritative for `decision` here, not whatever the model separately typed.
+        correct_decision = "Confirmed" if result.get("determined_type") == db_type else "Override"
+        if result.get("decision") != correct_decision:
+            result["decision"] = correct_decision
 
     return result
 
