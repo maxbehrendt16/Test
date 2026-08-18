@@ -736,6 +736,29 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
 
+    def test_reverse_direction_fee_corroboration_null_fee_no_longer_fails_condition_three(self):
+        # Real, previously-mishandled failure: reasoning genuinely found association-fee
+        # evidence via Tier 3 sources online ("multiple independent Tier 3 sources showing
+        # individual unit sales and HOA fees"), tier3_internal_db_corroboration described that
+        # finding, and the old backstop mischaracterized it as a claim about the DB's OWN fee
+        # field -- which happened to be null/zero on this row -- and downgraded a response that
+        # was never claiming anything about the internal field at all. Condition 3 no longer
+        # gates the reverse direction at all; the universal apt_override_sale_evidence_found gate
+        # (checked separately, after this exception) is the real requirement now.
+        row = self._large_row(**{"Master_Monthly Association Fees": ""})
+        result = self._clean_override(
+            determined_type="COA",
+            tier3_exception_direction="to_coa_hoa",
+            tier3_reverse_attempt2_exhausted="yes",
+            tier3_sales_listing_search_performed="not_applicable",
+            tier3_sales_evidence_found="not_applicable",
+            tier3_internal_db_corroboration=(
+                "Multiple independent Tier 3 sources online show individual unit sales and HOA fees"
+            ),
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+
     def test_forward_direction_owner_field_corroboration_fails_condition_three(self):
         # Real reported concern ("Medley Johns Creek"): the DB's own Owner/Cleaned Owner field
         # is not reliable enough to use as condition-3 corroboration -- a majority-but-not-full
@@ -981,12 +1004,16 @@ class AptOverrideSaleEvidenceGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, self._result())
         self.assertEqual(fixed["decision"], "Not Enough Info")
 
-    def test_sale_evidence_found_without_a_genuine_search_query_is_still_downgraded(self):
-        # A bare "yes" self-report isn't trusted without an actual sale-oriented query on record --
-        # mirrors the forward direction's _genuine_sale_search_performed() cross-check.
+    def test_sale_evidence_found_is_trusted_even_without_a_matching_search_query(self):
+        # Deliberately does NOT cross-check _searched_queries the way the forward direction does
+        # -- a real, previously-mishandled failure showed that cross-check rejecting responses
+        # whose own reasoning clearly described finding sale evidence purely because the issued
+        # query text didn't happen to match the expected keyword pattern. The in-conversation
+        # correction loop (research_property()) is the real enforcement now; once the model
+        # claims "yes" here, it's trusted directly.
         result = self._result(apt_override_sale_evidence_found="yes", _searched_queries=["Foxcroft Of Shelby reviews"])
         fixed = otc._enforce_apt_override_sale_evidence_guardrail(self.ROW, result)
-        self.assertEqual(fixed["decision"], "Not Enough Info")
+        self.assertEqual(fixed["decision"], "Override")
 
     def test_genuine_sale_evidence_and_search_allows_override(self):
         result = self._result(
@@ -1308,6 +1335,53 @@ class SaleSearchCorrectionMessageTests(unittest.TestCase):
         self.assertIn("Stratford Crossing Flats for sale", message)
 
 
+class SubmissionRequiresReverseSaleSearchTests(unittest.TestCase):
+    def test_apt_to_coa_override_requires_it(self):
+        row = {"Master_Ownership Type": "APT"}
+        result = {"decision": "Override", "determined_type": "COA"}
+        self.assertTrue(otc._submission_requires_reverse_sale_search(row, result))
+
+    def test_apt_to_hoa_override_requires_it(self):
+        row = {"Master_Ownership Type": "APT"}
+        result = {"decision": "Override", "determined_type": "HOA"}
+        self.assertTrue(otc._submission_requires_reverse_sale_search(row, result))
+
+    def test_non_apt_db_type_does_not_require_it(self):
+        # This function is specifically about the reverse direction (DB APT -> COA/HOA) -- a
+        # DB-COA record overridden to HOA (or vice versa) is a different claim entirely.
+        row = {"Master_Ownership Type": "COA"}
+        result = {"decision": "Override", "determined_type": "HOA"}
+        self.assertFalse(otc._submission_requires_reverse_sale_search(row, result))
+
+    def test_forward_direction_override_does_not_require_it(self):
+        row = {"Master_Ownership Type": "COA"}
+        result = {"decision": "Override", "determined_type": "APT"}
+        self.assertFalse(otc._submission_requires_reverse_sale_search(row, result))
+
+    def test_non_override_decision_does_not_require_it(self):
+        row = {"Master_Ownership Type": "APT"}
+        result = {"decision": "Confirmed", "determined_type": "APT"}
+        self.assertFalse(otc._submission_requires_reverse_sale_search(row, result))
+
+
+class ReverseSaleSearchCorrectionMessageTests(unittest.TestCase):
+    def test_message_uses_address_and_name_and_lists_required_keywords(self):
+        row = {
+            "Address": "1920 Orchard Crest Street, Shelby Township, MI 48317-4524, USA",
+            "Master_Property Name": "Foxcroft Of Shelby",
+        }
+        message = otc._reverse_sale_search_correction_message(row)
+        self.assertIn("1920 Orchard Crest Street, Shelby Township, MI 48317-4524, USA", message)
+        self.assertIn("Foxcroft Of Shelby MLS listing", message)
+        for keyword in ["for sale", "sold", "MLS"]:
+            self.assertIn(keyword, message)
+
+    def test_falls_back_to_name_when_address_is_missing(self):
+        row = {"Address": "", "Master_Property Name": "Foxcroft Of Shelby"}
+        message = otc._reverse_sale_search_correction_message(row)
+        self.assertIn("Foxcroft Of Shelby for sale", message)
+
+
 class ResearchPropertySaleSearchCorrectionLoopTests(unittest.TestCase):
     """research_property() must not accept a premature Override-to-APT submission (via the
     forward Tier-3 exception or Rule A) that lacks a genuine sale-listing search -- it should
@@ -1489,6 +1563,75 @@ class ResearchPropertySaleSearchCorrectionLoopTests(unittest.TestCase):
 
         self.assertEqual(mock_call.call_count, 1)
         self.assertEqual(result["decision"], "Override")
+
+    def test_reverse_direction_premature_submission_is_rejected_and_corrected(self):
+        # Mirrors the forward-direction test above, for an APT-listed property the model wants
+        # to override to COA/HOA on legal/fee evidence without having searched for individual
+        # unit sales yet.
+        reverse_row = {
+            "Address": "1920 Orchard Crest Street, Shelby Township, MI 48317",
+            "Master_Property Name": "Foxcroft Of Shelby",
+            "Master_Ownership Type": "APT",
+        }
+        bare_result = {
+            "decision": "Override",
+            "determined_type": "COA",
+            "apt_override_sale_evidence_found": "no",
+            "sources": ["https://a.com", "https://b.com"],
+        }
+        first_response = self._FakeResponse(
+            output=[
+                self._FakeItem("web_search_call", action=self._FakeAction("Foxcroft Of Shelby assessor record")),
+                self._submit_item(bare_result),
+            ],
+            id_="resp_1",
+        )
+        corrected_result = dict(bare_result)
+        corrected_result["apt_override_sale_evidence_found"] = "yes"
+        second_response = self._FakeResponse(
+            output=[
+                self._FakeItem("web_search_call", action=self._FakeAction("Foxcroft Of Shelby unit for sale Zillow")),
+                self._submit_item(corrected_result),
+            ],
+            id_="resp_2",
+        )
+        with mock.patch(
+            "ownership_type_checking.call_openai_with_backoff",
+            side_effect=[first_response, second_response],
+        ) as mock_call:
+            result = otc.research_property(None, reverse_row, [], {}, "gpt-4o")
+
+        self.assertEqual(mock_call.call_count, 2)
+        self.assertEqual(result["apt_override_sale_evidence_found"], "yes")
+        second_call_input = mock_call.call_args_list[1].kwargs["input"]
+        self.assertEqual(second_call_input[0]["type"], "function_call_output")
+        self.assertIn("individual sale", second_call_input[1]["content"].lower())
+
+    def test_reverse_direction_correction_not_triggered_when_already_confirmed(self):
+        # Only an Override to COA/HOA on an APT-listed property triggers this -- an ordinary
+        # Confirmed/Not Enough Info decision is never subject to it.
+        reverse_row = {
+            "Address": "1920 Orchard Crest Street, Shelby Township, MI 48317",
+            "Master_Property Name": "Foxcroft Of Shelby",
+            "Master_Ownership Type": "APT",
+        }
+        confirmed_result = {
+            "decision": "Confirmed",
+            "determined_type": "APT",
+            "apt_override_sale_evidence_found": "not_applicable",
+            "sources": ["https://a.com", "https://b.com"],
+        }
+        response = self._FakeResponse(
+            output=[self._submit_item(confirmed_result)],
+            id_="resp_1",
+        )
+        with mock.patch(
+            "ownership_type_checking.call_openai_with_backoff", return_value=response
+        ) as mock_call:
+            result = otc.research_property(None, reverse_row, [], {}, "gpt-4o")
+
+        self.assertEqual(mock_call.call_count, 1)
+        self.assertEqual(result["decision"], "Confirmed")
 
 
 class MountainRidgeAndCastleApartmentsRegressionTests(unittest.TestCase):

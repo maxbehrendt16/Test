@@ -132,9 +132,15 @@ concluding "likely individual owners" under Rule B — but the cited sources wer
 single-management-company leasing site (Kaftan Communities) and a LoopNet listing for the whole
 66-unit complex as one asset, neither of which is evidence any individual unit has ever actually
 been sold or listed. "Likely" is a guess, not a finding. Enforced in code via
-`apt_override_sale_evidence_found`, cross-checked against the actual search queries issued (the
-same mechanism as §4.1's sale-search gate) so a bare "yes" self-report isn't trusted without a
-real sale-oriented search having been run.
+`apt_override_sale_evidence_found`, and enforced interactively too: a submission claiming this
+override without the field set to `yes` is rejected in-conversation and the model is asked to run
+a real search before resubmitting, mirroring §4.1's forward-direction sale-search correction —
+the goal is to get the model to actually do this research, not just get silently downgraded for
+skipping it. Once the model reports `yes`, that's trusted directly rather than cross-checked
+against the search-query text the way §4.1's forward gate is — a real, previously-mishandled
+failure showed that query-text cross-check rejecting responses whose own reasoning clearly
+described finding sale evidence, purely because the issued query text didn't happen to match an
+expected keyword pattern.
 
 **Neither rule applies when a structural edge case (§5.7) is in play** — a housing cooperative,
 condo-hotel/timeshare, manufactured home community, or senior/student housing is resolved by
@@ -510,8 +516,9 @@ field, `tier3_reverse_attempt2_exhausted` — if it isn't `yes`, this exception 
 regardless of how strong the Tier 3 evidence looks, and the decision falls back to the normal §6
 process (Not Enough Info, absent sufficient Tier 1/2 evidence).
 
-**All four conditions required (adapted from §4.1, applied in the reverse direction) — with the
-gate above also required, and no 3-of-4 relaxation for this direction (see below):**
+**Three conditions required (adapted from §4.1's forward conditions 1, 2, and 4 — see below for
+why this direction has no condition 3) — with the gate above also required, and no 3-of-4
+relaxation for this direction:**
 
 1. **3+ independent Tier 3 sources that agree, at least ONE of which ties the DB's
    `Master_Property Name` and `Address` together (the "anchor")** — same corroboration-vs-
@@ -519,29 +526,42 @@ gate above also required, and no 3-of-4 relaxation for this direction (see below
 2. **Zero contradicting evidence anywhere** — no lease/rental listing suggesting a single
    corporate landlord, no county deed pattern suggesting single ownership, nothing in Attempt 2's
    targeted searches pointing toward APT.
-3. **At least one internal DB field corroborates COA/HOA structure.** Unlike §4.1's condition 3
-   (which looks for a null fee), this direction looks for the fee actually being **populated** with
-   a real, recurring-looking amount — a real association fee on file is itself evidence an
-   association exists to charge one. A null or zero fee does not satisfy this condition in this
-   direction.
-4. **No structural edge case (§5.7) explains the pattern instead** — same check as §4.1's condition
+3. **No structural edge case (§5.7) explains the pattern instead** — same check as §4.1's condition
    4, ruled out explicitly before relying on the exception.
+
+**There is deliberately no fee-based internal-DB-corroboration condition for this direction.** An
+earlier version required a real, populated `Master_Monthly Association Fees` value here, cross-
+checked in code against the row's own fee field. A real, previously-mishandled failure showed this
+backstop mischaracterizing evidence: the model's reasoning genuinely found association-fee
+evidence via Tier 3 sources *online* ("multiple independent Tier 3 sources showing individual unit
+sales and HOA fees"), `tier3_internal_db_corroboration` described that finding, and the code
+treated it as a claim about the DB's own internal fee field — which happened to be null/zero on
+that row — and downgraded a response that was never making that claim at all. The absolute
+`apt_override_sale_evidence_found` gate below is the real, direct requirement now; a fee (wherever
+it's found) is no longer a separate gate or a substitute for it.
 
 **No 3-of-4 relaxation for this direction.** §4.1's "three of four with a supporting Tier 1/2
 source" relaxation does not apply here — this reverse direction is already the last-resort path per
 its own gate above, and stacking two leniency mechanisms on top of each other would compound risk
-beyond what this exception is meant to allow. All four conditions, plus the Attempt 2 gate, are
+beyond what this exception is meant to allow. All three conditions, plus the Attempt 2 gate, are
 required every time.
 
-**Even after the gate and all four conditions hold, §2.1's absolute
-`apt_override_sale_evidence_found` requirement still applies on top — this exception's own
-condition 3 (a real, populated fee) is not a substitute for it.** Satisfying the gate and all four
-conditions here without ALSO having found genuine individual-unit sale evidence (a current
+**Even after the gate and all three conditions hold, §2.1's absolute
+`apt_override_sale_evidence_found` requirement still applies on top.** Satisfying the gate and all
+three conditions here without ALSO having found genuine individual-unit sale evidence (a current
 listing, or a sale within roughly the last 12 months) is not enough to override; default to Not
-Enough Info instead. A real fee and Tier 3 governance description tell you an association likely
-exists; they don't tell you anyone currently owns (and could sell) an individual unit there.
+Enough Info instead. Tier 3 governance description and a real fee tell you an association likely
+exists; they don't tell you anyone currently owns (and could sell) an individual unit there. **This
+is enforced interactively, not just after the fact:** if the model tries to submit this override
+without having set `apt_override_sale_evidence_found` to `yes`, the code rejects that submission
+and asks it to run a dedicated individual-unit-sale search before resubmitting (bounded to a small
+number of extra turns, mirroring §4.1's forward sale-search correction) — the goal is to get the
+model to actually go find this evidence, not just get silently downgraded for not having it. Once
+the model reports `yes`, that self-report is trusted directly (unlike the forward direction, this
+is deliberately not cross-checked against the actual search-query text — see the note on real
+dissonance failures at the end of §11).
 
-**If the gate, all four conditions, AND the sale-evidence requirement hold:**
+**If the gate, all three conditions, AND the sale-evidence requirement hold:**
 
 - The override is allowed, but **confidence is capped at Medium, never High**, for the same reason
   as §4.1.
@@ -550,7 +570,7 @@ exists; they don't tell you anyone currently owns (and could sell) an individual
   forward direction in batch summaries. Like §4.1's cases, this is a highest-risk override path and
   should be oversampled during the §9 QC pass.
 
-If the Attempt 2 gate isn't met, or any of the four conditions is unclear, unverified, or only
+If the Attempt 2 gate isn't met, or any of the three conditions is unclear, unverified, or only
 partially met, do not apply the exception; fall back to the normal §6 decision process.
 
 ### 4.3 COA/HOA naming tiebreaker (deterministic, code-level only)
@@ -804,9 +824,10 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
    - The §4.1 bounded-exception conditions hold (all four, or three of four with a single
      supporting-but-insufficient Tier 1/2 source) → **Override — APT** on Tier 3 evidence,
      confidence capped at Medium, archetype flag "Tier-3 Corroborated Override"
-   - The §4.2 bounded-exception gate and all four conditions hold (reverse direction — DB says APT,
-     evidence says COA/HOA) → **Override — [COA or HOA]** on Tier 3 evidence, confidence capped at
-     Medium, archetype flag "Tier-3 Corroborated Override"
+   - The §4.2 bounded-exception gate, all three conditions, and the absolute
+     `apt_override_sale_evidence_found` requirement hold (reverse direction — DB says APT, evidence
+     says COA/HOA) → **Override — [COA or HOA]** on Tier 3 evidence, confidence capped at Medium,
+     archetype flag "Tier-3 Corroborated Override"
    - Evidence is mixed, thin, Tier 3-only (and neither the §4.1 nor §4.2 exception applies),
      contradictory, or genuinely ambiguous even after Attempt 2 (e.g., evidence points different
      directions, or the property sits in a legitimately unclear situation like a mixed-use master
@@ -842,7 +863,7 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
 | `ownership_concentration_contradicting_evidence` | Per §2.1's Rule A: `yes` if any evidence of genuine, operating HOA/COA governance was found despite the bulk-ownership appearance — blocks Rule A in code regardless of the bulk-ownership signal |
 | `tier3_dual_association_search_performed` | Per §4.1's recommended practice (not an absolute gate): `yes` if Attempt 2 touched on evidence of BOTH a condominium association AND an HOA, regardless of which one the DB currently lists; tracked for manual QC visibility only, does not block an override on its own |
 | `tier3_entity_name_registry_search_performed` | Per §4.1's absolute gate, required whenever `Master_Property Name` contains a full formal legal-entity string: `yes` only if a state business registry search for that exact entity name was run; `not_applicable` for ordinary names |
-| `apt_override_sale_evidence_found` | Per §2.1's absolute, universal requirement: required whenever overriding an APT-listed property to COA/HOA (any evidence tier or exception path) — `yes` only if genuine evidence was found that at least one unit is currently listed for individual sale, or was sold within roughly the last 12 months; a legal/structural condo designation or a real fee alone is never sufficient. Cross-checked in code against the actual search queries issued, so a bare `yes` isn't trusted without a real sale-oriented search having run |
+| `apt_override_sale_evidence_found` | Per §2.1's absolute, universal requirement: required whenever overriding an APT-listed property to COA/HOA (any evidence tier or exception path) — `yes` only if genuine evidence was found that at least one unit is currently listed for individual sale, or was sold within roughly the last 12 months; a legal/structural condo designation or a real fee alone is never sufficient. Enforced interactively (a submission without `yes` is rejected and the model is asked to search before resubmitting, per §4.2), and trusted directly once reported `yes` — deliberately not cross-checked against search-query text the way §4.1's forward gate is, since that cross-check previously rejected genuinely-evidenced responses over query phrasing |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -1233,6 +1254,41 @@ settling the question, and hedged the actual functional-ownership question with 
 verifying it. This is why `apt_override_sale_evidence_found` is now an absolute, universal
 requirement for ANY override of an APT-listed property to COA/HOA, regardless of evidence tier —
 Tier 1 legal evidence is not exempt from it.
+
+### The batch that motivated relaxing the reverse-direction gates
+
+A single re-run of a batch (only the previously-positive rows, which should therefore have had a
+*much higher* override rate than a fresh batch) came back with 59 of 93 rows auto-downgraded.
+Digging into the reasoning text surfaced two more real, distinct failure patterns on top of
+Foxcroft Of Shelby above — both now fixed:
+
+**1. The internal-DB-corroboration backstop mischaracterizing external evidence.** One row's
+reasoning read in full: *"The property is confirmed to be a condominium (COA/HOA) through multiple
+independent Tier 3 sources showing individual unit sales and HOA fees. These facts contradict the
+DB APT label, indicating the need for an HOA override."* The model genuinely found fee evidence
+*online*, via Tier 3 research — not from the DB's own field. But `tier3_internal_db_corroboration`
+described that finding, and the (then-existing) reverse-direction condition-3 backstop assumed any
+mention of "fee" in that field referred to the DB's own `Master_Monthly Association Fees` column —
+which happened to be null/zero on that row — and downgraded the response as a "direct
+contradiction," even though the model was never claiming anything about the internal field at all.
+Fixed by removing condition 3 (the fee-based internal-DB-corroboration requirement) from the
+reverse direction entirely — see §4.2.
+
+**2. Dissonance between the model's own reasoning and the code's verdict on sale evidence.** Of the
+59 downgraded rows, 34 were rejected by the (newly-added) `apt_override_sale_evidence_found` gate
+— but several of those rows' own "Original reasoning" text plainly described finding sale
+evidence: *"Multiple independent listing platforms (Zillow, Redfin) confirm individual [unit
+sales]...,"* *"Individual townhome units at The Barracks Townhomes are actively listed [for
+sale],"* *"Multiple units at 1925 Ginger Street are actively listed for sale as con[dos]..."* The
+gate's original implementation cross-checked `apt_override_sale_evidence_found: yes` against the
+actual issued search-query text (mirroring §4.1's forward-direction pattern) — but the query text
+didn't always happen to match the expected sale-oriented keyword pattern even when the model's own
+prose clearly described a genuine finding, producing exactly this dissonance. Fixed by dropping
+that cross-check for this specific gate and trusting the self-reported field directly (see §2.1
+and §4.2) — paired with a new in-conversation correction (mirroring §4.1's forward-direction
+mechanism) that rejects a premature submission lacking `apt_override_sale_evidence_found: yes` and
+asks the model to actually go run the search before resubmitting, so the underlying research gap
+gets addressed rather than just silently downgraded.
 
 ### Sky Nashville (DB: HOA) — the case that motivated §4.1's sales-listing gate
 
