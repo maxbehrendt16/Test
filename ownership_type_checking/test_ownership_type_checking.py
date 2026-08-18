@@ -816,6 +816,87 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         self.assertEqual(fixed["decision"], "Override")
 
 
+class MinimumSourcesGuardrailTests(unittest.TestCase):
+    """_enforce_tier3_override_guardrail() deliberately does not check an Override whose
+    evidence_tier_used is "Mixed" and that isn't invoking either bounded Tier-3 exception -- that
+    combination is meant to signal genuine, ordinary Tier 1/2 evidence. A real failure exploited
+    exactly that gap: a DB-APT record was overridden to COA on reasoning that cited ONLY the DB's
+    own Master_Monthly Association Fees field, with `sources` empty -- no external record was ever
+    found. _enforce_minimum_sources_guardrail() is the code-level floor that catches this: no
+    Override may stand with zero cited sources, regardless of evidence tier or exception path."""
+
+    def test_override_with_no_sources_is_downgraded(self):
+        result = {"decision": "Override", "determined_type": "COA", "sources": [], "reasoning": "x"}
+        fixed = otc._enforce_minimum_sources_guardrail(result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_override_with_missing_sources_key_is_downgraded(self):
+        result = {"decision": "Override", "determined_type": "COA", "reasoning": "x"}
+        fixed = otc._enforce_minimum_sources_guardrail(result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_override_with_at_least_one_source_is_left_alone(self):
+        result = {"decision": "Override", "determined_type": "COA", "sources": ["https://a.com"], "reasoning": "x"}
+        fixed = otc._enforce_minimum_sources_guardrail(result)
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_confirmed_decision_with_no_sources_is_left_alone(self):
+        # Not this guardrail's concern -- a Confirmed decision isn't claiming new evidence
+        # overriding the DB label, so it doesn't need an external citation the same way.
+        result = {"decision": "Confirmed", "determined_type": "APT", "sources": [], "reasoning": "x"}
+        fixed = otc._enforce_minimum_sources_guardrail(result)
+        self.assertEqual(fixed["decision"], "Confirmed")
+
+    def test_reserve_at_falcon_point_end_to_end(self):
+        # Real reported failure: DB-APT record overridden to COA on reasoning that cited ONLY the
+        # DB's own Master_Monthly Association Fees field ("a recurring monthly association fee
+        # indicates an HOA/COA governance structure") -- evidence_tier_used was "Mixed",
+        # tier3_exception_invoked was "no" (an ordinary override, not the bounded exception), and
+        # `sources` was empty the entire time. External listings for this property actually
+        # describe it as a rental apartment complex.
+        row = {
+            "RecordID": "060701608",
+            "Master_Property Name": "Reserve at Falcon Point",
+            "Address": "3987 Pasture Drive, East Lansing, MI 48823-6170, USA",
+            "Master_Ownership Type": "APT",
+            "Master_Monthly Association Fees": "0.75",
+        }
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Override",
+            "confidence": "Medium",
+            "evidence_tier_used": "Mixed",
+            "reasoning": (
+                "The property is marketed as rental apartments, but a recurring monthly "
+                "association fee indicates an HOA/COA governance structure. This overrides the "
+                "APT label due to the HOA-like governance rules."
+            ),
+            "sources": [],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "APT")
+
+
 class SalesEvidenceGuardrailTests(unittest.TestCase):
     """Absolute rule per a real reported failure ("Sky Nashville"): finding evidence of
     individual unit sales, sale listings, or units planned/entitled for individual sale directly

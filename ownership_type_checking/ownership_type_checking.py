@@ -246,6 +246,23 @@ condition is in play).
 - The property's own marketing/leasing website ("apply now," "leasing office," "floor plans")
 - General web search snippets, forum mentions, local news human-interest coverage
 
+**None of these three tiers is ever satisfied by the DB's own pre-filled fields on this record \
+-- `Master_Monthly Association Fees`, `Owner`/`Cleaned Owner`, `Property Manager`, `Developer \
+Name`, or anything else already given to you about this specific row.** Those fields describe \
+the very thing you're being asked to verify -- they are not proof of it, and this data can be \
+wrong or stale, which is the whole reason the research step exists. A real, previously-mishandled \
+failure: reasoning said "a recurring monthly association fee indicates an HOA/COA governance \
+structure," and used that ALONE to override a DB-APT record to COA, with `sources` empty and \
+external listings describing the property as a rental apartment complex the entire time -- no \
+external record was ever found or cited; the DB's own field was mistaken for evidence about \
+itself. `Master_Monthly Association Fees` being populated is a reason to go research harder (it's \
+one of the signals that triggers deeper investigation in the first place, and can corroborate \
+Tier 1/2 findings you've independently made per the bounded exceptions below) -- it is never \
+itself a Tier 1, 2, or 3 source, and can never be the reason you give for a determination. **Every \
+Override must cite at least one real external source you actually found it in, in `sources` -- an \
+Override with no cited sources is invalid and will be automatically rejected in code regardless of \
+what the reasoning says**, no matter which evidence tier you claim.
+
 **A past individual sale record is evidence of historical ownership and legal structure, not \
 proof of CURRENT ownership -- some buildings convert from individually-owned condos back into \
 single-owner rentals via a bulk buyout of the whole building by one investor/entity.** Before \
@@ -2150,6 +2167,39 @@ def _downgrade_tier3_override(result: dict, failure_reason: str) -> dict:
     return result
 
 
+def _enforce_minimum_sources_guardrail(result: dict) -> dict:
+    """No Override may rest on zero cited external sources, regardless of which evidence tier or
+    exception path it claims. _enforce_tier3_override_guardrail() deliberately does not check an
+    Override whose evidence_tier_used is "Mixed" and that isn't invoking either bounded Tier-3
+    exception -- that combination is meant to mean genuine, ordinary Tier 1/2 evidence, which
+    isn't this guardrail's concern. A real, previously-mishandled failure exploited exactly that
+    gap: a DB-APT record ("Reserve at Falcon Point") was overridden to COA with evidence_tier_used
+    "Mixed" and reasoning citing ONLY the DB's own Master_Monthly Association Fees field ("a
+    recurring monthly association fee indicates an HOA/COA governance structure") -- `sources` was
+    empty, meaning no external record was ever actually found or cited. The database's own fields
+    describe what's being verified, not proof of it, and must never substitute for a genuine
+    external citation (see the Evidence hierarchy section of the prompt). This is deliberately the
+    loosest possible bar (>=1 URL, not the Tier-3 exception's stricter 3+) -- an ordinary Tier 1/2
+    override already requires at least one corroborating source per the evidence hierarchy itself;
+    this just makes that a real, code-enforced floor for every Override, not only the Tier-3/Mixed
+    ones the tier3 guardrail already covers."""
+    if result.get("decision") != "Override":
+        return result
+    if set(result.get("sources", []) or []):
+        return result
+    result = dict(result)
+    original = result.get("reasoning", "")
+    result["decision"] = "Not Enough Info"
+    result["confidence"] = "Low"
+    result["reasoning"] = (
+        "Automatically downgraded: this Override cited zero external sources. The database's own "
+        "fields (e.g. Master_Monthly Association Fees, Owner) describe what's being verified, not "
+        "proof of it, and can never substitute for an actual external record -- every Override "
+        f"must cite at least one source it was genuinely found in. Original reasoning: {original}"
+    )
+    return result
+
+
 def _reconcile_decision_and_type(db_type: str, result: dict) -> dict:
     """Self-contradiction check, mirroring the dedup tool's hard consistency check: an Override
     whose determined_type matches the DB label isn't actually an override (fix to Confirmed), and
@@ -2306,6 +2356,7 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         result = _enforce_sales_evidence_guardrail(db_type, result)
         result = _enforce_functional_ownership_guardrail(row, db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
+        result = _enforce_minimum_sources_guardrail(result)
         result = _reconcile_decision_and_type(db_type, result)
         result = _enforce_hoa_coa_naming_match(row, db_type, result)
         result = _enforce_multi_name_guardrail(row, db_type, result)
