@@ -223,16 +223,24 @@ checked** — `Master_Monthly Association Fees`, `Owner`/`Cleaned Owner`, `Prope
 the very thing being verified, not proof of it, and that data can be wrong or stale — which is the
 whole reason the research step exists in the first place. A real, previously-mishandled failure
 ("Reserve at Falcon Point," DB: APT — see the worked example at the end of §11) was overridden to
-COA on reasoning that cited ONLY the DB's own `Master_Monthly Association Fees` field, with
-`sources` empty and external listings actually describing the property as a rental apartment
-complex the whole time. A populated DB field like this is a reason to research harder — it's one
-of the signals that triggers deeper investigation, and can corroborate a genuinely external Tier
-1/2 finding within the bounded exceptions below — but it is never itself Tier 1, 2, or 3 evidence,
-and can never be the stated reason for a determination. **Enforced in code as an absolute floor:
-every Override must cite at least 1 real external source in `sources` — an Override with zero
-cited sources is automatically rejected regardless of which evidence tier is claimed.** This check
-applies even to ordinary (non-Tier-3-exception) overrides claiming Mixed or Tier 1/2 evidence,
-which the §4.1/§4.2 exception-specific gates below don't otherwise touch.
+COA on reasoning that cited ONLY the DB's own `Master_Monthly Association Fees` field
+(`tier3_exception_invoked` was `no` — not even claiming the bounded exception), while its two
+actually-cited sources (its own leasing site, a home-listing aggregator) both described the
+property as a rental apartment complex the entire time — real external evidence pointing the
+*opposite* direction from the conclusion, which the model simply didn't engage with. A populated
+DB field like this is a reason to research harder — it's one of the signals that triggers deeper
+investigation, and can corroborate a genuinely external Tier 1/2 finding within the bounded
+exceptions below — but it is never itself Tier 1, 2, or 3 evidence, and can never be the stated
+reason for a determination. **Enforced in code with two absolute floors:**
+- **Every Override must cite at least 1 real external source in `sources`** — one with zero cited
+  sources is automatically rejected regardless of which evidence tier is claimed. This applies even
+  to ordinary (non-Tier-3-exception) overrides claiming Mixed or Tier 1/2 evidence, which the
+  §4.1/§4.2 exception-specific gates below don't otherwise touch.
+- **A reverse-direction override (DB APT → COA/HOA) that leans on a fee in its reasoning, and isn't
+  invoking the bounded §4.2 exception, must have at least one cited source whose own fetched text
+  actually describes HOA/COA governance** (an association, a declaration, covenants, a board) —
+  otherwise it's automatically rejected. The DB's own fee field has no legitimate role outside
+  §4.2's fully-gated condition 3.
 
 **A past individual sale record is evidence of historical ownership and legal structure, not proof
 of current ownership.** Some buildings convert from individually-owned condos back into
@@ -1283,35 +1291,51 @@ legal-entity string requires a state business registry search for that exact nam
 also fail the 3+ distinct-URL gate on their own, so removing the dual-association check from the
 absolute-gate list (see §4.1) doesn't change the outcome for either of these two real cases.
 
-### Reserve at Falcon Point (DB: APT) — the case that motivated the minimum-sources floor
+### Reserve at Falcon Point (DB: APT) — the case that motivated the fee-evidence floor
 
 A DB-listed APT record, overridden to COA with `evidence_tier_used: Mixed` and reasoning that read
 in full: *"The property is marketed as rental apartments, but a recurring monthly association fee
 indicates an HOA/COA governance structure. This overrides the APT label due to the HOA-like
 governance rules."* `tier3_exception_invoked` was `no` — this wasn't even claiming the bounded §4.2
-exception, just an ordinary override — and `sources` was completely empty. No external record was
-ever found or cited; the only "evidence" was the DB's own `Master_Monthly Association Fees` field
-being echoed back as if it proved something about itself. Meanwhile the property's actual online
-presence (its own leasing site, aggregator listings) describes it as a straightforward rental
-apartment complex the whole time.
+exception, just an ordinary override. Two sources were actually cited — the property's own leasing
+site (`villagegreen.com/.../the-reserve-at-falcon-pointe-apartments/`) and a Trulia listing — and
+both describe a straightforward rental apartment community. Real external evidence pointed one way
+(APT), and the override went the other way (COA) on the strength of the DB's own
+`Master_Monthly Association Fees` field alone — the model's own reasoning even acknowledged the
+rental-apartment marketing and then overrode it anyway on the fee.
 
-This slipped through because `_enforce_tier3_override_guardrail()`'s guardrail is deliberately
-scoped to Tier-3/Mixed overrides that are (or should be) invoking one of §4.1/§4.2's bounded
-exceptions — an ordinary "Mixed" override that isn't invoking either exception is assumed to be
-based on genuine, ordinary Tier 1/2 evidence, which isn't that guardrail's concern. Nothing else was
-checking that the claimed evidence was actually external.
+This slipped through because `_enforce_tier3_override_guardrail()` is deliberately scoped to
+Tier-3/Mixed overrides that are (or should be) invoking one of §4.1/§4.2's bounded exceptions — an
+ordinary "Mixed" override that isn't invoking either exception is assumed to be based on genuine,
+ordinary Tier 1/2 evidence, which isn't that guardrail's concern. Nothing else was checking that the
+claimed evidence was actually external, or that the cited sources actually supported the direction
+of the override.
 
 | Field | Value |
 |---|---|
 | `determined_type` | **APT** (no change) |
 | `decision` | **Not Enough Info** |
-| `evidence_tier_used` | `Mixed`, but with zero cited sources — not genuine Tier 1/2 evidence at all |
-| `sources` | Empty — no external record was ever found or cited |
+| `evidence_tier_used` | `Mixed`, but the only "Tier 1/2" evidence was the DB's own fee field |
+| `sources` | 2 real URLs, both describing a rental apartment community — contradicting the override, not supporting it |
 | `tier3_exception_invoked` | `no` — this wasn't even claiming the bounded exception |
 
-This is why every Override — not just the Tier-3/Mixed ones already covered by §4.1/§4.2's own
-gates — must now cite at least 1 real external source in `sources`, enforced in code as an
-absolute floor: an Override with zero cited sources is automatically rejected, regardless of which
-evidence tier is claimed. See §4's evidence hierarchy for the general principle: the DB's own
-pre-filled fields on the record being checked are never themselves Tier 1, 2, or 3 evidence — they
-describe what's being verified, not proof of it.
+Two code-level floors now cover this, neither relying on the model's self-report alone:
+1. **`_enforce_tier3_override_guardrail()`** now also fails an ordinary (non-exception) override
+   if `tier3_internal_db_corroboration` is non-empty — the schema tells the model this field must
+   be an empty string whenever `tier3_exception_invoked` is `no`, so a non-empty value there means
+   the model named an internal DB field as evidence outside the one path where that's ever
+   legitimate.
+2. **`_enforce_reverse_override_fee_evidence_guardrail()`** independently re-fetches the cited
+   `sources` (same `fetch_url_cached()` used elsewhere) whenever a reverse-direction override's
+   reasoning leans on a fee and isn't invoking §4.2: if none of the actually-fetched source text
+   describes real HOA/COA governance (an association, a declaration, covenants, a board), the
+   override is rejected regardless of what the reasoning claims. This is scoped narrowly — only
+   reverse-direction overrides that mention a fee at all, and only when the bounded exception isn't
+   invoked — so it doesn't touch legitimate cases with real external Tier 1/2 evidence and no fee
+   mention, or the already fully-gated §4.2 exception path.
+
+Separately, an Override with literally zero cited sources (a simpler variant of this same failure
+mode) is caught by `_enforce_minimum_sources_guardrail()` — every Override must cite at least 1
+real external source in `sources`, regardless of evidence tier. See §4's evidence hierarchy for the
+general principle: the DB's own pre-filled fields on the record being checked are never themselves
+Tier 1, 2, or 3 evidence — they describe what's being verified, not proof of it.

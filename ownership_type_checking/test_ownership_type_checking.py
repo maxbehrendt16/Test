@@ -515,12 +515,34 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
 
     def test_mixed_tier_override_not_invoking_exception_is_left_alone(self):
         # A "Mixed"-tier Override that isn't invoking the §4.1 exception at all is relying on
-        # ordinary Tier 1/2 corroboration for a ordinary override -- not this guardrail's concern.
+        # ordinary Tier 1/2 corroboration for a ordinary override -- not this guardrail's concern,
+        # as long as it doesn't cite internal DB corroboration either (schema: that field must be
+        # an empty string when tier3_exception_invoked is "no" -- see
+        # test_internal_db_corroboration_cited_without_exception_fails below for the case where
+        # it isn't).
         row = self._large_row()
-        result = self._clean_override(evidence_tier_used="Mixed", tier3_exception_invoked="no")
+        result = self._clean_override(
+            evidence_tier_used="Mixed", tier3_exception_invoked="no", tier3_internal_db_corroboration=""
+        )
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
         self.assertFalse(fixed["tier3_exception_used"])
+
+    def test_internal_db_corroboration_cited_without_exception_fails(self):
+        # Real, previously-mishandled failure: a DB-APT record was overridden to COA with
+        # evidence_tier_used "Mixed" and tier3_exception_invoked "no" (an ordinary override, not
+        # the bounded exception), while still citing an internal DB field as corroboration. The
+        # schema tells the model tier3_internal_db_corroboration must be empty in that scenario --
+        # a non-empty value means the model leaned on internal DB data outside the one path
+        # (§4.1/§4.2) where that's ever legitimate, and cross-checked in code.
+        row = self._large_row()
+        result = self._clean_override(
+            evidence_tier_used="Mixed",
+            tier3_exception_invoked="no",
+            tier3_internal_db_corroboration="Master_Monthly Association Fees is $0.75/month",
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Not Enough Info")
 
     def test_newly_built_property_can_still_qualify(self):
         # There is no minimum-age/build-year requirement for this exception -- a recently
@@ -847,13 +869,10 @@ class MinimumSourcesGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_minimum_sources_guardrail(result)
         self.assertEqual(fixed["decision"], "Confirmed")
 
-    def test_reserve_at_falcon_point_end_to_end(self):
-        # Real reported failure: DB-APT record overridden to COA on reasoning that cited ONLY the
-        # DB's own Master_Monthly Association Fees field ("a recurring monthly association fee
-        # indicates an HOA/COA governance structure") -- evidence_tier_used was "Mixed",
-        # tier3_exception_invoked was "no" (an ordinary override, not the bounded exception), and
-        # `sources` was empty the entire time. External listings for this property actually
-        # describe it as a rental apartment complex.
+    def test_reserve_at_falcon_point_no_sources_case_is_downgraded(self):
+        # A hypothetical variant with literally zero cited sources -- this guardrail alone is
+        # enough to catch that case; see ReverseOverrideFeeEvidenceGuardrailTests for the real,
+        # corrected version of this failure (which actually had two rental-oriented sources).
         row = {
             "RecordID": "060701608",
             "Master_Property Name": "Reserve at Falcon Point",
@@ -893,6 +912,128 @@ class MinimumSourcesGuardrailTests(unittest.TestCase):
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "APT")
+
+
+class ReverseOverrideFeeEvidenceGuardrailTests(unittest.TestCase):
+    """A reverse-direction override (DB APT -> COA/HOA) that isn't invoking the bounded §4.2
+    exception has no legitimate fee-based path -- only §4.2's condition 3 (already fully gated
+    elsewhere) legitimately uses a real fee as corroboration. Real failure: "Reserve at Falcon
+    Point" (DB: APT) was overridden to COA on reasoning citing ONLY the DB's own fee field, with
+    tier3_exception_invoked "no" and both actually-cited sources (its own leasing site, a Trulia
+    listing) being rental-apartment-oriented -- neither described any HOA/COA governance."""
+
+    ROW = {
+        "RecordID": "060701608",
+        "Master_Property Name": "Reserve at Falcon Point",
+        "Address": "3987 Pasture Drive, East Lansing, MI 48823-6170, USA",
+        "Master_Ownership Type": "APT",
+        "Master_Monthly Association Fees": "0.75",
+    }
+    REAL_SOURCES = [
+        "https://villagegreen.com/mi/east-lansing/the-reserve-at-falcon-pointe-apartments/",
+        "https://www.trulia.com/home/3987-pasture-dr-f320a52c6-east-lansing-mi-48823-449244578",
+    ]
+    FEE_REASONING = (
+        "The property is marketed as rental apartments, but a recurring monthly association fee "
+        "indicates an HOA/COA governance structure. This overrides the APT label due to the "
+        "HOA-like governance rules."
+    )
+
+    def _result(self, **overrides):
+        result = {
+            "decision": "Override",
+            "determined_type": "COA",
+            "reasoning": self.FEE_REASONING,
+            "sources": list(self.REAL_SOURCES),
+            "tier3_exception_invoked": "no",
+        }
+        result.update(overrides)
+        return result
+
+    def test_reserve_at_falcon_point_end_to_end_with_real_rental_sources(self):
+        # Both real cited sources fetched -- a leasing site and a Trulia listing -- describe
+        # rental apartment content with no mention of HOA/COA governance at all.
+        rental_page_text = (
+            "The Reserve at Falcon Pointe Apartments -- apply now, schedule a tour, floor plans, "
+            "leasing office open daily. Luxury 1, 2, and 3 bedroom apartment homes for rent."
+        )
+        trulia_page_text = "3987 Pasture Dr, East Lansing, MI -- rental estimate, nearby rentals."
+        fetched = {self.REAL_SOURCES[0]: rental_page_text, self.REAL_SOURCES[1]: trulia_page_text}
+        with mock.patch(
+            "ownership_type_checking.fetch_url_cached",
+            side_effect=lambda url, cache: fetched.get(url),
+        ):
+            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(self.ROW, self._result(), {})
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_source_actually_describing_hoa_governance_allows_override(self):
+        governance_text = "This community is governed by a registered Homeowners Association with recorded covenants."
+        fetched = {self.REAL_SOURCES[0]: governance_text, self.REAL_SOURCES[1]: "rental listing"}
+        with mock.patch(
+            "ownership_type_checking.fetch_url_cached",
+            side_effect=lambda url, cache: fetched.get(url),
+        ):
+            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(self.ROW, self._result(), {})
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_reasoning_without_any_fee_mention_is_not_this_guardrails_concern(self):
+        result = self._result(reasoning="County tax assessor records list this as a condominium.")
+        with mock.patch("ownership_type_checking.fetch_url_cached", return_value="rental listing"):
+            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(self.ROW, result, {})
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_tier3_exception_invoked_is_left_to_the_other_guardrail(self):
+        result = self._result(tier3_exception_invoked="yes")
+        with mock.patch("ownership_type_checking.fetch_url_cached", return_value="rental listing"):
+            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(self.ROW, result, {})
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_forward_direction_override_is_not_this_guardrails_concern(self):
+        # This guardrail is specifically about the reverse direction (DB APT -> COA/HOA) --
+        # a forward override (DB COA/HOA -> APT) mentioning a fee is a completely different
+        # claim (a null fee corroborating APT), already covered by the tier3 guardrail.
+        row = dict(self.ROW, **{"Master_Ownership Type": "COA"})
+        result = self._result(determined_type="APT", reasoning="Master_Monthly Association Fees is null, no fee on file.")
+        with mock.patch("ownership_type_checking.fetch_url_cached", return_value="rental listing"):
+            fixed = otc._enforce_reverse_override_fee_evidence_guardrail(row, result, {})
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_reserve_at_falcon_point_full_pipeline_end_to_end(self):
+        rental_page_text = "Apply now, schedule a tour, floor plans, leasing office open daily."
+        fetched = {self.REAL_SOURCES[0]: rental_page_text, self.REAL_SOURCES[1]: "rental estimate"}
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Override",
+            "confidence": "Medium",
+            "evidence_tier_used": "Mixed",
+            "reasoning": self.FEE_REASONING,
+            "sources": list(self.REAL_SOURCES),
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch(
+                 "ownership_type_checking.fetch_url_cached",
+                 side_effect=lambda url, cache: fetched.get(url),
+             ):
+            result = otc.process_property(None, "gpt-4o", self.ROW, {})
         self.assertEqual(result["decision"], "Not Enough Info")
         self.assertEqual(result["determined_type"], "APT")
 

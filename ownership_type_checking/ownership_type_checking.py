@@ -252,14 +252,19 @@ Name`, or anything else already given to you about this specific row.** Those fi
 the very thing you're being asked to verify -- they are not proof of it, and this data can be \
 wrong or stale, which is the whole reason the research step exists. A real, previously-mishandled \
 failure: reasoning said "a recurring monthly association fee indicates an HOA/COA governance \
-structure," and used that ALONE to override a DB-APT record to COA, with `sources` empty and \
-external listings describing the property as a rental apartment complex the entire time -- no \
-external record was ever found or cited; the DB's own field was mistaken for evidence about \
-itself. `Master_Monthly Association Fees` being populated is a reason to go research harder (it's \
-one of the signals that triggers deeper investigation in the first place, and can corroborate \
-Tier 1/2 findings you've independently made per the bounded exceptions below) -- it is never \
-itself a Tier 1, 2, or 3 source, and can never be the reason you give for a determination. **Every \
-Override must cite at least one real external source you actually found it in, in `sources` -- an \
+structure," and used that ALONE to override a DB-APT record to COA -- while its own two cited \
+sources (its own leasing site, a home-listing aggregator) both described the property as a rental \
+apartment complex the entire time. Real external evidence pointed one way, and the override went \
+the other way on the strength of the DB's own field alone; the DB's own field was mistaken for \
+evidence about itself instead of the thing being verified. `Master_Monthly Association Fees` being \
+populated is a reason to go research harder (it's one of the signals that triggers deeper \
+investigation in the first place, and can corroborate Tier 1/2 findings you've independently made \
+per the bounded exceptions below) -- it is never itself a Tier 1, 2, or 3 source, and can never be \
+the reason you give for a determination. If your own cited sources describe rental/apartment \
+operation and you're about to override to COA/HOA anyway on a fee alone, that's the same mistake -- \
+stop and default to Confirmed/the DB label unless you're genuinely invoking and satisfying the \
+§4.2 exception below. **Every Override must cite at least one real external source you actually \
+found it in, in `sources` -- an \
 Override with no cited sources is invalid and will be automatically rejected in code regardless of \
 what the reasoning says**, no matter which evidence tier you claim.
 
@@ -1854,6 +1859,69 @@ def _enforce_master_planned_community_guardrail(row: dict, db_type: str, result:
     return result
 
 
+FEE_CITED_IN_REASONING_RE = re.compile(r"\bfee\b", re.IGNORECASE)
+EXTERNAL_GOVERNANCE_EVIDENCE_RE = re.compile(
+    r"homeowners?\s+association|condominium\s+association|\bhoa\b|\bassociation\s+fee\b|"
+    r"governing\s+documents?|declaration\s+of\s+condominium|board\s+of\s+directors|\bcc&rs?\b|"
+    r"\bcovenants?\b",
+    re.IGNORECASE,
+)
+
+
+def _enforce_reverse_override_fee_evidence_guardrail(row: dict, result: dict, url_cache: dict) -> dict:
+    """A reverse-direction override (DB APT -> COA/HOA) that isn't going through the bounded §4.2
+    exception has no legitimate fee-based path at all -- the evidence hierarchy's Tier 1/2
+    categories (county recorder declarations, state registry entity types, tax assessor use-codes,
+    GIS parcel maps, published unit counts) never include the DB's own fee field. Only §4.2's
+    condition 3 legitimately uses a real fee as corroboration, and that path is already fully
+    gated (Attempt 2 exhausted, 3+ genuinely-agreeing external Tier 3 sources, zero contradicting
+    evidence) by _enforce_tier3_override_guardrail().
+
+    Real failure this guards against: "Reserve at Falcon Point" (DB: APT) was overridden to COA
+    on reasoning that read in full: "The property is marketed as rental apartments, but a
+    recurring monthly association fee indicates an HOA/COA governance structure. This overrides
+    the APT label due to the HOA-like governance rules." tier3_exception_invoked was "no" -- this
+    wasn't even claiming the bounded exception -- and both actually-cited sources (the property's
+    own leasing site, a home-listing aggregator) were rental-apartment-oriented; neither one
+    independently described any HOA/COA governance. The DB's own fee field was mistaken for
+    evidence about itself.
+
+    Scoped narrowly to minimize false positives on legitimate cases: only fires when (a) this is
+    genuinely the reverse direction (DB says APT, override targets COA/HOA), (b) the bounded
+    exception isn't invoked (which already gets its own, more thorough fee cross-check), and (c)
+    the reasoning itself leans on a fee at all -- an override that never mentions a fee isn't this
+    guardrail's concern. When those hold, it independently re-fetches the cited sources (same
+    fetch_url_cached() used elsewhere) and requires at least one to actually describe HOA/COA
+    governance in its own fetched text, rather than trusting the model's bare claim."""
+    if result.get("decision") != "Override" or result.get("determined_type") not in ("COA", "HOA"):
+        return result
+    if _norm_text(row.get("Master_Ownership Type")).upper() != "APT":
+        return result
+    if result.get("tier3_exception_invoked") == "yes":
+        return result
+    if not FEE_CITED_IN_REASONING_RE.search(result.get("reasoning", "") or ""):
+        return result
+
+    for url in result.get("sources", []) or []:
+        fetched = fetch_url_cached(url, url_cache)
+        if fetched and EXTERNAL_GOVERNANCE_EVIDENCE_RE.search(fetched):
+            return result
+
+    result = dict(result)
+    original = result.get("reasoning", "")
+    result["decision"] = "Not Enough Info"
+    result["confidence"] = "Low"
+    result["reasoning"] = (
+        "Automatically downgraded: this reverse-direction override (APT -> COA/HOA) leans on a "
+        "fee as its stated evidence but isn't invoking the bounded §4.2 exception (which "
+        "independently cross-checks fee-based corroboration alongside real external Tier 3 "
+        "agreement), and none of the cited sources' actual fetched text describes any HOA/COA "
+        "governance, association, or declaration. The DB's own fee field is never itself valid "
+        f"evidence outside that exception. Original reasoning: {original}"
+    )
+    return result
+
+
 def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dict) -> dict:
     """§2.1's governing principle, restated as code: the correct DB label reflects who we'd
     actually have to sell to right now, not the legal condo/HOA declaration on file.
@@ -2070,9 +2138,26 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
     if result.get("tier3_exception_invoked") != "yes":
         # Not attempting either exception at all. A pure-Tier-3 Override can never stand
         # without one. A "Mixed"-tier Override that isn't invoking one is instead relying on
-        # ordinary Tier 1/2 corroboration for a normal override -- not this guardrail's concern.
+        # ordinary Tier 1/2 corroboration for a normal override -- not this guardrail's concern,
+        # EXCEPT: the schema tells the model tier3_internal_db_corroboration must be an empty
+        # string whenever tier3_exception_invoked is "no" (internal DB fields are only ever valid
+        # corroboration inside one of the two explicitly-gated exception paths, where they're
+        # cross-checked against the row's own data). A non-empty value here means the model named
+        # an internal DB field as its evidence for an "ordinary" override anyway -- exactly the
+        # backwards pattern a real failure exhibited ("Reserve at Falcon Point," DB: APT,
+        # overridden to COA on "a recurring monthly association fee indicates an HOA/COA
+        # governance structure" with tier3_exception_invoked "no" and evidence_tier_used "Mixed").
         if result.get("evidence_tier_used") == "Tier 3":
             return _downgrade_tier3_override(result, "did not invoke either bounded exception")
+        if _norm_text(result.get("tier3_internal_db_corroboration")):
+            return _downgrade_tier3_override(
+                result,
+                "the model cited internal DB field corroboration "
+                f"({result.get('tier3_internal_db_corroboration')!r}) for an override that isn't "
+                "invoking either bounded exception -- internal DB fields are never valid "
+                "evidence for an ordinary override, only as cross-checked corroboration inside "
+                "one of the two explicitly-gated exception paths",
+            )
         return result
 
     direction = result.get("tier3_exception_direction")
@@ -2357,6 +2442,7 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         result = _enforce_functional_ownership_guardrail(row, db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _enforce_minimum_sources_guardrail(result)
+        result = _enforce_reverse_override_fee_evidence_guardrail(row, result, url_cache)
         result = _reconcile_decision_and_type(db_type, result)
         result = _enforce_hoa_coa_naming_match(row, db_type, result)
         result = _enforce_multi_name_guardrail(row, db_type, result)
