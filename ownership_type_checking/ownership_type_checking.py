@@ -229,6 +229,24 @@ are a common real-world pattern for this: even if one phase looks like a single-
 block, if ANY phase or unit anywhere in the master association is individually owned, Rule B \
 applies to the whole thing.
 
+**A same-named neighborhood/subdivision is NOT this property, and "the same association" is NOT \
+"the same address."** When you're using Rule B to pull an APT-listed property away from APT, the \
+individual-ownership evidence you cite must be about THIS property's own name and address \
+together, not just its name in isolation. Real, previously-mishandled failures: "Wesley Commons" \
+(DB: APT) was overridden to COA on "individual units in Wesley Commons are currently listed for \
+sale" -- but one of the two cited sources was a Redfin URL for the whole *neighborhood* of that \
+name (a `/neighborhood/...` page listing condos generally in that area of Arlington, TX), not a \
+listing for this specific DB record; a neighborhood or community sharing this property's name is \
+not proof anything at this exact address is individually owned. "Reserve at Falcon Point" (DB: \
+APT, address 3987 Pasture Drive) was overridden to COA on "a unit at 3893 Quarterhorse (same \
+condo association, $160 HOA fee) sold" -- 3893 Quarterhorse is a different street address from \
+the DB's own 3987 Pasture Drive; being asserted to share "the same association" does not make a \
+sale at a different address evidence of individual ownership at this one. Set \
+`ownership_concentration_evidence_anchored_to_address` to `yes` only if a source ties this \
+property's own name AND address together with the individual-ownership/sale evidence -- this is \
+enforced in code as an absolute gate (alongside a direct scan for neighborhood-page URLs and \
+"same association" framing) whenever Rule B is being used this way, regardless of what you submit.
+
 **This is a required check, not an optional one -- before finalizing any decision, explicitly \
 check current ownership concentration (single owner vs. any individual owners), not just legal \
 declaration status.** `ownership_concentration` is `not_applicable` only when neither pattern is \
@@ -1091,6 +1109,29 @@ SUBMIT_SCHEMA = {
                 "'not_applicable' if ownership_concentration is not 'single_owner_full_bulk'."
             ),
         },
+        "ownership_concentration_evidence_anchored_to_address": {
+            "type": "string",
+            "enum": YES_NO_NA_LABELS,
+            "description": (
+                "Only meaningful when ownership_concentration is 'individual_owner_present' AND "
+                "this property's Master_Ownership Type is currently APT (i.e. Rule B is pulling "
+                "an APT-listed property away from APT): 'yes' only if at least one source "
+                "explicitly ties the individual-ownership/sale evidence to THIS property's own "
+                "name AND address together -- not a same-named neighborhood or subdivision, and "
+                "not a different street address merely asserted to share 'the same association.' "
+                "Two real, previously-mishandled failures this exists to catch: 'Wesley Commons' "
+                "(DB: APT) was overridden to COA on \"individual units in Wesley Commons are "
+                "currently listed for sale,\" but one cited source was a Redfin *neighborhood* "
+                "page for the Wesley Commons area, not a listing for this specific property -- a "
+                "same-named neighborhood is not this property. 'Reserve at Falcon Point' (DB: "
+                "APT, address 3987 Pasture Drive) was overridden to COA on \"a unit at 3893 "
+                "Quarterhorse (same condo association) sold\" -- a different street address is "
+                "not evidence of individual ownership AT this address just because it's framed as "
+                "the same association. 'no' if your only evidence is about a same-named "
+                "neighborhood/community in general, or about a different specific address. "
+                "'not_applicable' otherwise."
+            ),
+        },
         "tier3_sales_evidence_found": {
             "type": "string",
             "enum": YES_NO_NA_LABELS,
@@ -1228,7 +1269,7 @@ SUBMIT_SCHEMA = {
         "tier3_sales_listing_search_performed", "tier3_sales_evidence_found",
         "ownership_concentration_verified_externally", "ownership_concentration_contradicting_evidence",
         "tier3_dual_association_search_performed", "tier3_entity_name_registry_search_performed",
-        "apt_override_sale_evidence_found",
+        "apt_override_sale_evidence_found", "ownership_concentration_evidence_anchored_to_address",
     ],
     "additionalProperties": False,
 }
@@ -1931,6 +1972,25 @@ SALE_EVIDENCE_NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Content-based backstops for Rule B's address-anchor requirement (see the "individual_owner_
+# present" branch of _enforce_functional_ownership_guardrail()): two real, previously-mishandled
+# failures had the model cite genuine-looking individual-ownership evidence that, on closer read,
+# was never actually about THIS property's own address. "Wesley Commons" (DB: APT) was overridden
+# to COA on "individual units in Wesley Commons are currently listed for sale," but one cited
+# source was a Redfin URL for the whole *neighborhood* of that name
+# (.../neighborhood/49632/TX/Arlington/Wesley-Commons/condos) -- a same-named neighborhood is not
+# this specific property. NEIGHBORHOOD_SOURCE_URL_RE catches that pattern directly from the URL,
+# regardless of what the reasoning text says. "Reserve at Falcon Point" (DB: APT, address 3987
+# Pasture Drive) was overridden to COA on "a unit at 3893 Quarterhorse (same condo association,
+# $160 HOA fee) sold" -- a different street address tied in only by asserting it's "the same
+# association" is not evidence of individual ownership AT this property. SAME_ASSOCIATION_
+# DIFFERENT_ADDRESS_RE catches that specific framing in the reasoning text.
+NEIGHBORHOOD_SOURCE_URL_RE = re.compile(r"/neighborhood/", re.IGNORECASE)
+SAME_ASSOCIATION_DIFFERENT_ADDRESS_RE = re.compile(
+    r"same\s+(?:condo(?:minium)?\s+)?association\b",
+    re.IGNORECASE,
+)
+
 
 def _enforce_coop_mention_guardrail(db_type: str, result: dict) -> dict:
     """A second, independent backstop for the same policy as _enforce_structural_edge_case_
@@ -2177,6 +2237,18 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
     model's own words describing a real association, rather than cross-checking against internal
     DB data that isn't reliable enough to trust either way.
 
+    Rule B, when pulling an APT-listed property (db_type == "APT") away from APT, is gated the
+    same way -- the evidence must actually be ABOUT this property's own address, not a same-named
+    neighborhood/subdivision (`NEIGHBORHOOD_SOURCE_URL_RE`, e.g. a Redfin `/neighborhood/...` URL)
+    or a different street address merely asserted to share "the same association"
+    (`SAME_ASSOCIATION_DIFFERENT_ADDRESS_RE`), falling back to the self-reported
+    `ownership_concentration_evidence_anchored_to_address` when neither backstop fires. Real
+    failures this catches: "Wesley Commons" overridden to COA on evidence that included a Redfin
+    *neighborhood* page, and "Reserve at Falcon Point" overridden to COA on a sale at a
+    demonstrably different address (3893 Quarterhorse vs. the DB's 3987 Pasture Drive) tied in
+    only by "same condo association" framing. Not applied to an ordinary COA<->HOA relabeling
+    (db_type already COA/HOA) -- that has nothing to do with neighborhood/address conflation.
+
     Skipped entirely for a structural edge case (housing co-op, condo-hotel, etc., whether
     flagged via structural_edge_case or caught by the co-op-mention backstop) -- those are their
     own category, resolved by "never override" (§5.7), and functional bulk-ownership evidence is
@@ -2272,6 +2344,48 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
             f"NOT a confirmation that APT holds. Original reasoning: {original}"
         )
     elif concentration == "individual_owner_present":
+        # Before trusting Rule B to pull an APT-listed property away from APT, confirm the
+        # individual-ownership evidence is actually anchored to THIS property's own address --
+        # see NEIGHBORHOOD_SOURCE_URL_RE / SAME_ASSOCIATION_DIFFERENT_ADDRESS_RE above for the two
+        # real failures ("Wesley Commons," "Reserve at Falcon Point") this guards against. Scoped
+        # to db_type == "APT" only -- an ordinary COA<->HOA relabeling (db_type already COA/HOA)
+        # has nothing to do with a property being confused for a same-named neighborhood and must
+        # not be disturbed by this check.
+        if db_type == "APT":
+            anchor_failure = None
+            joined_sources = " ".join(result.get("sources", []) or [])
+            reasoning_text = result.get("reasoning", "") or ""
+            if NEIGHBORHOOD_SOURCE_URL_RE.search(joined_sources):
+                anchor_failure = (
+                    "at least one cited source is a neighborhood/subdivision-level page (its URL "
+                    "path contains '/neighborhood/'), not a listing for this specific property -- "
+                    "a same-named neighborhood or community is not the same thing as this DB "
+                    "record's actual property"
+                )
+            elif SAME_ASSOCIATION_DIFFERENT_ADDRESS_RE.search(reasoning_text):
+                anchor_failure = (
+                    "the model's own reasoning describes sale/ownership evidence at what it "
+                    "itself frames as a different unit or address, tied to this property only by "
+                    "asserting it's part of 'the same association' -- that is not evidence of "
+                    "individual ownership AT this property's own address"
+                )
+            elif result.get("ownership_concentration_evidence_anchored_to_address") != "yes":
+                anchor_failure = (
+                    "the individual-ownership evidence wasn't confirmed to be anchored to this "
+                    "property's own name and address together -- rather than a same-named "
+                    "neighborhood/subdivision, or a different address"
+                )
+
+            if anchor_failure:
+                original = result.get("reasoning", "")
+                result["determined_type"] = db_type
+                result["decision"] = "Not Enough Info"
+                result["reasoning"] = (
+                    f"Automatically downgraded: the model invoked §2.1's Rule B (individual "
+                    f"ownership keeps COA/HOA), but {anchor_failure}. Original reasoning: {original}"
+                )
+                return result
+
         # determined_type already correctly reflects Rule B (not APT) here -- but `decision`
         # itself isn't independently trustworthy, and leaving a wrong value in place is actively
         # dangerous: _reconcile_decision_and_type() later assumes "Confirmed"/"Not Enough Info"

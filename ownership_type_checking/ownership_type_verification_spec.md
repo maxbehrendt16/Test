@@ -168,6 +168,26 @@ is already correctly non-APT, `decision` is set from that comparison directly (`
 differs from the DB label, `Confirmed` if it doesn't) rather than trusted from whatever the model
 separately typed.
 
+**A same-named neighborhood/subdivision is NOT this property, and "the same association" is NOT
+"the same address."** When Rule B is pulling an APT-listed property away from APT, the
+individual-ownership evidence must be about THIS property's own name and address together, not
+just its name in isolation. Two real, previously-mishandled failures: *"Wesley Commons"* (DB: APT)
+was overridden to COA on *"Multiple independent listing platforms show individual units in Wesley
+Commons are currently listed for sale"* — but one of the two cited sources was a Redfin URL for
+the whole **neighborhood** of that name (`.../neighborhood/49632/TX/Arlington/Wesley-Commons/
+condos`), not a listing for this specific DB record. *"Reserve at Falcon Point"* (DB: APT, address
+3987 Pasture Drive) was overridden to COA on *"a unit at 3893 Quarterhorse (same condo
+association, $160 HOA fee) sold"* — 3893 Quarterhorse is a different street address from the DB's
+own 3987 Pasture Drive; sharing "the same association" does not make a sale at a different address
+evidence of individual ownership at this one. This is now enforced on three layers whenever Rule B
+targets an APT-listed property: (1) a direct scan of cited source URLs for a neighborhood/
+subdivision-level path (`/neighborhood/`), (2) a direct scan of the reasoning for "same \[condo\]
+association" framing tied to a different unit/address, and (3) failing both of those, the
+self-reported `ownership_concentration_evidence_anchored_to_address` field, which must be `yes`.
+Any of the three failing downgrades the result to Not Enough Info at the DB's current (APT) label.
+Deliberately scoped to `db_type == "APT"` only — an ordinary COA↔HOA relabeling has nothing to do
+with neighborhood/address conflation and must not be disturbed by this check.
+
 **This is a required verification step, not an optional one:** before finalizing any decision,
 explicitly check current ownership concentration (single owner vs. any individual owners), not
 just legal declaration status — see §6. Neither rule applies (`ownership_concentration`:
@@ -930,6 +950,7 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
 | `tier3_dual_association_search_performed` | Per §4.1's recommended practice (not an absolute gate): `yes` if Attempt 2 touched on evidence of BOTH a condominium association AND an HOA, regardless of which one the DB currently lists; tracked for manual QC visibility only, does not block an override on its own |
 | `tier3_entity_name_registry_search_performed` | Per §4.1's absolute gate, required whenever `Master_Property Name` contains a full formal legal-entity string: `yes` only if a state business registry search for that exact entity name was run; `not_applicable` for ordinary names |
 | `apt_override_sale_evidence_found` | Per §2.1's absolute, universal requirement: required whenever overriding an APT-listed property to COA/HOA (any evidence tier or exception path) — `yes` only if genuine evidence was found that at least one unit is currently listed for individual sale, or was sold within roughly the last 12 months; a legal/structural condo designation or a real fee alone is never sufficient. Enforced interactively (a submission without `yes` is rejected and the model is asked to search before resubmitting, per §4.2), and trusted directly once reported `yes` — deliberately not cross-checked against search-query text the way §4.1's forward gate is, since that cross-check previously rejected genuinely-evidenced responses over query phrasing |
+| `ownership_concentration_evidence_anchored_to_address` | Per §2.1's Rule B, only meaningful when pulling an APT-listed property away from APT: `yes` only if a source ties this property's own name AND address together with the individual-ownership/sale evidence — not a same-named neighborhood/subdivision, and not a different street address merely asserted to share "the same association." Backed by two code-level backstops that fire regardless of this self-report: a scan of cited source URLs for a `/neighborhood/`-style path, and a scan of the reasoning for "same \[condo\] association" framing |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -1534,3 +1555,41 @@ mode) is caught by `_enforce_minimum_sources_guardrail()` — every Override mus
 real external source in `sources`, regardless of evidence tier. See §4's evidence hierarchy for the
 general principle: the DB's own pre-filled fields on the record being checked are never themselves
 Tier 1, 2, or 3 evidence — they describe what's being verified, not proof of it.
+
+### Wesley Commons & Reserve at Falcon Point (DB: APT) — the cases that motivated Rule B's address anchor
+
+Two more DB-listed APT records, both overridden to COA via Rule B on evidence that, on close read,
+was never actually about the specific property being checked.
+
+**Wesley Commons** (address 2339 Bloomfield Drive, Arlington, TX) was overridden on: *"Multiple
+independent listing platforms show individual units in Wesley Commons are currently listed for
+sale, confirming individual ownership and mandating COA designation under Rule B."* Two sources
+were cited — a Realtor.com search page and a Redfin URL,
+`redfin.com/neighborhood/49632/TX/Arlington/Wesley-Commons/condos`. That second URL is Redfin's
+page for the whole **neighborhood** named Wesley Commons, not a listing for this specific DB
+record — a same-named neighborhood is not proof that any unit at this exact address is
+individually owned.
+
+**Reserve at Falcon Point** (address 3987 Pasture Drive, East Lansing, MI) was overridden on:
+*"Tier-1 evidence shows the property is legally a site condominium with an HOA, and sale evidence:
+a unit at 3893 Quarterhorse (same condo association, $160 HOA fee) sold on January 13, 2026 — so
+individual owners exist and override to COA is required."* 3893 Quarterhorse is a different street
+address from the DB's own 3987 Pasture Drive; being asserted to share "the same condo association"
+does not make a sale at a different address evidence of individual ownership at this one.
+
+| Field | Wesley Commons | Reserve at Falcon Point |
+|---|---|---|
+| `determined_type` | **APT** (no change) | **APT** (no change) |
+| `decision` | **Not Enough Info** | **Not Enough Info** |
+| Failure caught by | Neighborhood-level source URL (`/neighborhood/` in path) | "Same condo association" framing tied to a different address in the reasoning |
+
+Both are caught by the same fix, applied whenever Rule B is used to pull an APT-listed property
+away from APT (see §2.1 above and `_enforce_functional_ownership_guardrail()`'s
+`individual_owner_present` branch): a direct scan of cited source URLs for a neighborhood/
+subdivision-level path, a direct scan of the reasoning for "same [condo] association" framing, and
+— failing both — a required self-report, `ownership_concentration_evidence_anchored_to_address`,
+that must be `yes`. Any of the three failing downgrades the result back to Not Enough Info at the
+DB's current (APT) label, regardless of how strong the underlying sale/ownership evidence otherwise
+looks. Not applied to an ordinary COA↔HOA relabeling (`db_type` already COA/HOA) — that distinction
+has nothing to do with a property being confused for a same-named neighborhood or a different
+address.
