@@ -1161,6 +1161,7 @@ class AptOverrideSaleEvidenceGuardrailTests(unittest.TestCase):
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
             "apt_override_sale_evidence_found": "no",
+            "ownership_concentration_evidence_anchored_to_address": "yes",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
@@ -2500,6 +2501,7 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
             "apt_override_sale_evidence_found": "not_applicable",
+            "ownership_concentration_evidence_anchored_to_address": "yes",
         }
         fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
         self.assertEqual(fixed["determined_type"], "COA")
@@ -2526,6 +2528,147 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
         self.assertEqual(fixed["determined_type"], "COA")
         self.assertEqual(fixed["decision"], "Confirmed")
+
+    def test_neighborhood_level_source_url_blocks_rule_b_override(self):
+        # Real, previously-mishandled failure: "Wesley Commons" (DB: APT) was overridden to COA
+        # on "Multiple independent listing platforms show individual units in Wesley Commons are
+        # currently listed for sale" -- but one of the two cited sources was a Redfin *neighborhood*
+        # page, not a listing for this specific property. The self-report field is (wrongly)
+        # claimed "yes" here to prove the URL-based backstop catches this even when the model is
+        # overconfident about the anchor.
+        result = {
+            "decision": "Override",
+            "determined_type": "COA",
+            "reasoning": (
+                "Multiple independent listing platforms show individual units in Wesley Commons "
+                "are currently listed for sale, confirming individual ownership and mandating COA "
+                "designation under Rule B."
+            ),
+            "sources": [
+                "https://www.realtor.com/realestateandhomes-search/Wesley-Commons_Arlington_TX",
+                "https://www.redfin.com/neighborhood/49632/TX/Arlington/Wesley-Commons/condos",
+            ],
+            "ownership_concentration": "individual_owner_present",
+            "ownership_concentration_evidence_anchored_to_address": "yes",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_same_association_different_address_blocks_rule_b_override(self):
+        # Real, previously-mishandled failure: "Reserve at Falcon Point" (DB: APT, address 3987
+        # Pasture Drive) was overridden to COA on "a unit at 3893 Quarterhorse (same condo
+        # association, $160 HOA fee) sold" -- a different street address tied in only by "same
+        # condo association" framing. The self-report field is (wrongly) claimed "yes" here to
+        # prove the content backstop catches this even when the model is overconfident.
+        result = {
+            "decision": "Override",
+            "determined_type": "COA",
+            "reasoning": (
+                "Tier-1 evidence shows the property is legally a site condominium with an HOA, "
+                "and sale evidence: a unit at 3893 Quarterhorse (same condo association, $160 HOA "
+                "fee) sold on January 13, 2026 -- so individual owners exist and override to COA "
+                "is required."
+            ),
+            "sources": [
+                "https://www.remax-michigan.com/realestate/details/78448716/3893-quarterhorse-east-lansing-mi-48823",
+                "https://www.jeffburkeassociates.com/east-lansing/falcon-pointe/",
+            ],
+            "ownership_concentration": "individual_owner_present",
+            "ownership_concentration_evidence_anchored_to_address": "yes",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_missing_anchor_self_report_blocks_rule_b_override(self):
+        # Even with no neighborhood URL or "same association" phrasing, the self-reported
+        # ownership_concentration_evidence_anchored_to_address must actually be "yes" -- absence
+        # (or "no") is not trusted by default.
+        result = {
+            "decision": "Override",
+            "determined_type": "COA",
+            "reasoning": "Individual units are individually owned per Rule B.",
+            "sources": ["https://example.com/listing"],
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
+        self.assertEqual(fixed["determined_type"], "APT")
+        self.assertEqual(fixed["decision"], "Not Enough Info")
+
+    def test_confirmed_anchor_allows_rule_b_override(self):
+        # A genuinely address-anchored Rule B override must still go through cleanly.
+        result = {
+            "decision": "Override",
+            "determined_type": "COA",
+            "reasoning": "Zillow confirms Unit 4B at this exact address sold to an individual buyer.",
+            "sources": ["https://zillow.com/unit-4b-sold"],
+            "ownership_concentration": "individual_owner_present",
+            "ownership_concentration_evidence_anchored_to_address": "yes",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail({}, "APT", result)
+        self.assertEqual(fixed["determined_type"], "COA")
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_neighborhood_url_check_does_not_disturb_ordinary_coa_hoa_relabel(self):
+        # db_type is already COA/HOA (not APT) -- this is an ordinary COA<->HOA relabel, unrelated
+        # to the neighborhood/address-anchor concern, and must not be disturbed even with a
+        # neighborhood-flavored URL present.
+        result = {
+            "decision": "Override",
+            "determined_type": "HOA",
+            "reasoning": "Individually owned units, governed as an HOA not a COA.",
+            "sources": ["https://www.redfin.com/neighborhood/12345/TX/Somewhere/condos"],
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
+        }
+        fixed = otc._enforce_functional_ownership_guardrail({}, "COA", result)
+        self.assertEqual(fixed["determined_type"], "HOA")
+        self.assertEqual(fixed["decision"], "Override")
 
     def test_not_applicable_concentration_is_a_no_op(self):
         result = {
@@ -3066,12 +3209,118 @@ class FunctionalOwnershipIntegrationTests(unittest.TestCase):
             "tier3_dual_association_search_performed": "not_applicable",
             "tier3_entity_name_registry_search_performed": "not_applicable",
             "apt_override_sale_evidence_found": "yes",
+            "ownership_concentration_evidence_anchored_to_address": "yes",
         }
         with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
              mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
             result = otc.process_property(None, "gpt-4o", row, {})
         self.assertEqual(result["decision"], "Override")
         self.assertEqual(result["determined_type"], "COA")
+
+    def test_wesley_commons_end_to_end(self):
+        # Real reported failure: RecordID 39874536 -- "Wesley Commons" (DB: APT) was overridden
+        # to COA on "Multiple independent listing platforms show individual units in Wesley
+        # Commons are currently listed for sale," but one of the two cited sources was a Redfin
+        # *neighborhood* page, not a listing for this specific property. The model is also given
+        # (wrongly) an affirmative self-report for the new anchor field, to prove the URL-based
+        # content backstop -- not just the self-report -- is what actually catches this.
+        row = {
+            "RecordID": "39874536",
+            "Master_Property Name": "Wesley Commons",
+            "Master_Ownership Type": "APT",
+            "Address": "2339 Bloomfield Drive, Arlington, TX 76012-3675, USA",
+        }
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Override",
+            "confidence": "Medium",
+            "evidence_tier_used": "Tier 3",
+            "reasoning": (
+                "Multiple independent listing platforms show individual units in Wesley Commons "
+                "are currently listed for sale, confirming individual ownership and mandating "
+                "COA designation under Rule B."
+            ),
+            "sources": [
+                "https://www.realtor.com/realestateandhomes-search/Wesley-Commons_Arlington_TX",
+                "https://www.redfin.com/neighborhood/49632/TX/Arlington/Wesley-Commons/condos",
+            ],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+            "ownership_concentration_evidence_anchored_to_address": "yes",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "APT")
+
+    def test_reserve_at_falcon_point_end_to_end(self):
+        # Real reported failure: RecordID 60701608 -- "Reserve at Falcon Point" (DB: APT, address
+        # 3987 Pasture Drive) was overridden to COA on "a unit at 3893 Quarterhorse (same condo
+        # association, $160 HOA fee) sold" -- a different street address tied in only by "same
+        # condo association" framing, not evidence about this property's own address.
+        row = {
+            "RecordID": "60701608",
+            "Master_Property Name": "Reserve at Falcon Point",
+            "Master_Ownership Type": "APT",
+            "Address": "3987 Pasture Drive, East Lansing, MI 48823-6170, USA",
+        }
+        fake_result = {
+            "determined_type": "COA",
+            "decision": "Override",
+            "confidence": "Medium",
+            "evidence_tier_used": "Mixed",
+            "reasoning": (
+                "Tier-1 evidence shows the property is legally a site condominium with an HOA, "
+                "and sale evidence: a unit at 3893 Quarterhorse (same condo association, $160 "
+                "HOA fee) sold on January 13, 2026 -- so individual owners exist and override to "
+                "COA is required."
+            ),
+            "sources": [
+                "https://www.remax-michigan.com/realestate/details/78448716/3893-quarterhorse-east-lansing-mi-48823",
+                "https://www.jeffburkeassociates.com/east-lansing/falcon-pointe/",
+            ],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "individual_owner_present",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "yes",
+            "ownership_concentration_evidence_anchored_to_address": "yes",
+        }
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "APT")
 
 
 class MasterPlannedCommunityGuardrailTests(unittest.TestCase):
