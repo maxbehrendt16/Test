@@ -1707,6 +1707,33 @@ def _reverse_sale_search_correction_message(row: dict) -> str:
     )
 
 
+def _submission_has_rule_b_contradiction(result: dict) -> bool:
+    """The model set ownership_concentration to 'individual_owner_present' (it found at least one
+    individually-owned unit) while ALSO setting determined_type to APT -- a direct, real
+    self-contradiction, since §2.1's Rule B means the property cannot be APT once that's true, no
+    matter how small the individually-owned fraction is. A real, previously-mishandled failure:
+    reasoning read "...suggests some units are individually owned. This triggers Rule B,
+    indicating a COA/HOA structure" while determined_type was still submitted as APT -- and
+    without this check, _enforce_functional_ownership_guardrail() has no reliable way to know
+    which of COA/HOA the model actually meant, so it fell back to the DB's own current label,
+    which produced a confusing result when that label was itself APT (the exact thing Rule B just
+    disproved)."""
+    return result.get("ownership_concentration") == "individual_owner_present" and result.get("determined_type") == "APT"
+
+
+def _rule_b_contradiction_correction_message(row: dict) -> str:
+    name = _norm_text(row.get("Master_Property Name")) or "this property"
+    return (
+        "Before I can accept that conclusion: you set ownership_concentration to "
+        "'individual_owner_present' (meaning you found at least one individually-owned unit at "
+        f"{name}), which per §2.1's Rule B means this property CANNOT be APT, no matter how "
+        "small a fraction of the building is bulk-owned -- but you also set determined_type to "
+        "APT, which directly contradicts that finding. Call submit_assessment again with "
+        "determined_type set to whichever of COA or HOA your own research actually supports, "
+        "consistent with your own Rule B finding."
+    )
+
+
 def research_property(client, row: dict, triggers: list, url_cache: dict, model: str) -> dict:
     input_items = [{"role": "user", "content": build_user_message(row, triggers, url_cache)}]
     tools = [OPENAI_WEB_SEARCH_TOOL, OPENAI_SUBMIT_TOOL]
@@ -1753,17 +1780,19 @@ def research_property(client, row: dict, triggers: list, url_cache: dict, model:
                 _submission_requires_reverse_sale_search(row, result)
                 and result.get("apt_override_sale_evidence_found") != "yes"
             )
+            needs_rule_b_correction = _submission_has_rule_b_contradiction(result)
             if (
                 not is_last_turn
                 and sale_search_corrections_used < MAX_SALE_SEARCH_CORRECTIONS
-                and (needs_forward_correction or needs_reverse_correction)
+                and (needs_forward_correction or needs_reverse_correction or needs_rule_b_correction)
             ):
                 sale_search_corrections_used += 1
-                correction_message = (
-                    _sale_search_correction_message(row)
-                    if needs_forward_correction
-                    else _reverse_sale_search_correction_message(row)
-                )
+                if needs_forward_correction:
+                    correction_message = _sale_search_correction_message(row)
+                elif needs_reverse_correction:
+                    correction_message = _reverse_sale_search_correction_message(row)
+                else:
+                    correction_message = _rule_b_contradiction_correction_message(row)
                 # A function_call (submit_assessment) MUST be followed by a matching
                 # function_call_output before the conversation can continue via
                 # previous_response_id -- the Responses API rejects the next turn with
@@ -1863,6 +1892,18 @@ def _enforce_structural_edge_case_guardrail(db_type: str, result: dict) -> dict:
 
 
 COOP_MENTION_RE = re.compile(r"\bco-?ops?\b|\bcooperatives?\b", re.IGNORECASE)
+
+# Content-based backstop for Rule A, replacing an earlier internal-DB-fee-based hard block (see
+# _enforce_functional_ownership_guardrail()'s docstring). Deliberately targets phrasing that
+# describes a REAL, OPERATING association -- not casual mentions of "HOA"/"COA" as a category --
+# since the real failure this guards against ("Paradise Gardens One") had reasoning literally say
+# "a registered HOA exists."
+OPERATING_ASSOCIATION_MENTION_RE = re.compile(
+    r"registered\s+(hoa|coa|homeowners?\s+association|condominium\s+association)|"
+    r"\b(?:hoa|coa|association)\s+exists\b|\ban?\s+operating\s+association\b|"
+    r"\bactive\s+(?:hoa|coa)\b",
+    re.IGNORECASE,
+)
 
 
 def _enforce_coop_mention_guardrail(db_type: str, result: dict) -> dict:
@@ -2058,17 +2099,17 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
       forces determined_type away from APT, no matter how small a fraction of the building
       that unit is.
 
-    Rule A is gated by three real, deterministic checks -- a real failure showed the bare
-    self-reported 'single_owner_full_bulk' value alone isn't enough:
-    1. **A real, populated `Master_Monthly Association Fees` unconditionally blocks Rule A** --
-       a genuinely bulk-owned property with no operating association should have no fee on file
-       at all (the same logic as the §4.1 exception's own condition 3, just applied in reverse).
-       This is a hard, code-only check -- it does not depend on any self-reported field and
-       cannot be talked around. Real failure this catches: "Paradise Gardens One" was corrected
-       to APT via this rule despite a real $70/month fee on file and the model's OWN original
-       reasoning stating "a registered HOA exists" and "ownership is bulk-held, but not enough
-       for override" -- the self-reported ownership_concentration field alone let the override
-       through anyway.
+    Rule A is gated by real, deterministic checks -- a real failure showed the bare self-reported
+    'single_owner_full_bulk' value alone isn't enough:
+    1. **The reasoning itself must not describe a real, operating association**
+       (`OPERATING_ASSOCIATION_MENTION_RE` -- "a registered HOA," "an operating association," "the
+       HOA exists," etc.), regardless of what `ownership_concentration_contradicting_evidence`
+       claims. Real failure this catches: "Paradise Gardens One" reasoning stated "a registered
+       HOA exists" and "ownership is bulk-held, but not enough for override," yet
+       `ownership_concentration` was still submitted as `single_owner_full_bulk` and the
+       self-reported contradicting-evidence field didn't catch it -- a content-based backstop on
+       the model's own words, not a check against internal DB data (see the note below on why this
+       replaced an earlier fee-based version of this same idea).
     2. **`ownership_concentration_verified_externally` must be 'yes'** -- 100% single ownership
        must be verified via EXTERNAL sources (county parcel/deed records showing one owner name
        across ALL units, state business registry, or multiple independent sources), never by
@@ -2085,6 +2126,18 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
        absolute sales-listing-search gate as the forward §4.1 exception (see
        _enforce_tier3_override_guardrail); a genuine search for individual sale listings must
        have been performed before concluding no individual owner exists.
+
+    There is deliberately no independent, code-only cross-check against the row's own
+    `Master_Monthly Association Fees` field here anymore. An earlier version unconditionally
+    blocked Rule A whenever that field was populated -- also originally added to fix "Paradise
+    Gardens One" -- but the DB's own fee field can itself be stale or wrong, and a real,
+    previously-mishandled failure showed this exact hard block firing on a response whose
+    reasoning explicitly said "Dedicated sale-listing search found no individual units listed...
+    Functional Rule A applies," with no mention of a fee at all -- the DB's own (possibly-stale)
+    field contradicted nothing the model actually found or claimed. Condition 1 above is the real,
+    content-based safety net for the original Paradise-Gardens-One pattern now: it catches the
+    model's own words describing a real association, rather than cross-checking against internal
+    DB data that isn't reliable enough to trust either way.
 
     Skipped entirely for a structural edge case (housing co-op, condo-hotel, etc., whether
     flagged via structural_edge_case or caught by the co-op-mention backstop) -- those are their
@@ -2105,12 +2158,13 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
     result["reverse_conversion_used"] = False
 
     if concentration == "single_owner_full_bulk":
-        fee = _parse_number(row.get("Master_Monthly Association Fees"))
         rule_a_failure = None
-        if fee is not None and fee != 0:
+        association_mention = OPERATING_ASSOCIATION_MENTION_RE.search(result.get("reasoning", "") or "")
+        if association_mention:
             rule_a_failure = (
-                f"a real, populated Master_Monthly Association Fees ({fee:g}) contradicts "
-                f"'no operating association exists'"
+                f"the model's own reasoning describes a real, operating association "
+                f"({association_mention.group(0)!r}), contradicting 'no operating association "
+                f"exists' regardless of what ownership_concentration_contradicting_evidence claims"
             )
         elif result.get("ownership_concentration_verified_externally") != "yes":
             rule_a_failure = (
@@ -2156,14 +2210,28 @@ def _enforce_functional_ownership_guardrail(row: dict, db_type: str, result: dic
             result["functional_apt_override_used"] = True
             result["reverse_conversion_used"] = result.get("reverse_conversion_detected") == "yes"
     elif concentration == "individual_owner_present" and result.get("determined_type") == "APT":
+        # This is a direct self-contradiction the model should normally have been asked to fix
+        # in-conversation (see _submission_has_rule_b_contradiction() in research_property()) --
+        # reaching here means it still submitted this way even after that correction attempt (or
+        # ran out of turns/budget). We genuinely don't know which of COA/HOA the model meant
+        # (determined_type contradicts its own ownership_concentration finding), so this can only
+        # fall back to the DB's current label with Not Enough Info -- which, when the DB's own
+        # label is already APT, means the reported type is "APT" even though Rule B just said it
+        # can't be. That's not this guardrail re-confirming APT; it's "we can't tell you the
+        # right answer from this self-contradictory response," and the DB label is only the least
+        # of the failsafe cases the underlying framework recognizes, not a positive rule saying
+        # APT actually holds.
         original = result.get("reasoning", "")
         result["determined_type"] = db_type
         result["decision"] = "Confirmed" if db_type in ("COA", "HOA") else "Not Enough Info"
         result["reasoning"] = (
-            f"Automatically corrected per §2.1: at least one individually-owned unit was found, "
-            f"so this cannot be APT no matter how small a fraction of the building is "
-            f"bulk-owned -- a real individual-owner relationship exists either way. Original "
-            f"reasoning: {original}"
+            f"Automatically flagged per §2.1: at least one individually-owned unit was found, so "
+            f"this cannot be APT no matter how small a fraction of the building is bulk-owned -- "
+            f"but the model's own determined_type still said APT, a direct self-contradiction "
+            f"that survived the in-conversation correction attempt. Since we can't reliably tell "
+            f"which of COA/HOA was actually meant, this falls back to the current DB label "
+            f"({db_type!r}) with low confidence rather than asserting APT is correct -- it is "
+            f"NOT a confirmation that APT holds. Original reasoning: {original}"
         )
 
     return result
@@ -2274,6 +2342,19 @@ def _enforce_tier3_override_guardrail(row: dict, result: dict) -> dict:
         return result
 
     if result.get("tier3_exception_invoked") != "yes":
+        # Real, previously-mishandled failure, the single biggest downgrade bucket in a real
+        # batch (22 of 33 auto-adjustments): §2.1's Rule A ('single_owner_full_bulk') and Rule B
+        # ('individual_owner_present') are their OWN legitimate, independent override paths,
+        # already fully vetted by _enforce_functional_ownership_guardrail() (which runs before
+        # this one) -- a genuine individual-unit-sale record IS strong, direct evidence on its
+        # own and was never meant to also need the elaborate 4-condition Tier-3 exception on top.
+        # Real examples: "Multiple individual condo-for-sale listings exist ... Rule B applies,"
+        # "Multiple independent sale listings and sold units demonstrate individual ownership,
+        # confirming Rule B" -- all correctly concluded via Rule B, using genuinely strong Tier 3
+        # evidence (actual sale records), and were being wrongly downgraded here for not also
+        # invoking a completely separate mechanism that Rule A/B was never meant to require.
+        if result.get("ownership_concentration") in ("individual_owner_present", "single_owner_full_bulk"):
+            return result
         # Not attempting either exception at all. A pure-Tier-3 Override can never stand
         # without one. A "Mixed"-tier Override that isn't invoking one is instead relying on
         # ordinary Tier 1/2 corroboration for a normal override -- not this guardrail's concern,

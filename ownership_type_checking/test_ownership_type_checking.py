@@ -621,6 +621,30 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         self.assertEqual(fixed["decision"], "Not Enough Info")
         self.assertFalse(fixed["tier3_exception_used"])
 
+    def test_rule_b_override_not_invoking_exception_is_left_alone(self):
+        # Real, previously-mishandled failure (the single biggest downgrade bucket in a real
+        # batch, 22 of 33 auto-adjustments): §2.1's Rule B is its own legitimate, independent
+        # override path -- a genuine individual-unit-sale record is strong evidence on its own
+        # and doesn't need to also invoke the Tier-3 exception. Real example: "Multiple individual
+        # condo-for-sale listings exist ... Rule B applies -- property cannot be functionally APT."
+        row = self._large_row()
+        result = self._clean_override(
+            tier3_exception_invoked="no",
+            ownership_concentration="individual_owner_present",
+            reasoning="Multiple individual condo-for-sale listings exist with unique sales and monthly HOA fees, showing individual ownership. Rule B applies.",
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+
+    def test_rule_a_override_not_invoking_exception_is_left_alone(self):
+        row = self._large_row()
+        result = self._clean_override(
+            tier3_exception_invoked="no",
+            ownership_concentration="single_owner_full_bulk",
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+
     def test_fewer_than_three_sources_fails_condition_one(self):
         row = self._large_row()
         result = self._clean_override(sources=["https://crosscreekapts.com"], tier3_independent_source_count=1)
@@ -1382,6 +1406,35 @@ class ReverseSaleSearchCorrectionMessageTests(unittest.TestCase):
         self.assertIn("Foxcroft Of Shelby for sale", message)
 
 
+class SubmissionHasRuleBContradictionTests(unittest.TestCase):
+    def test_individual_owner_present_with_apt_determined_type_is_a_contradiction(self):
+        result = {"ownership_concentration": "individual_owner_present", "determined_type": "APT"}
+        self.assertTrue(otc._submission_has_rule_b_contradiction(result))
+
+    def test_individual_owner_present_with_coa_determined_type_is_not_a_contradiction(self):
+        result = {"ownership_concentration": "individual_owner_present", "determined_type": "COA"}
+        self.assertFalse(otc._submission_has_rule_b_contradiction(result))
+
+    def test_single_owner_full_bulk_with_apt_is_not_a_contradiction(self):
+        # That's exactly what Rule A is supposed to produce -- not a contradiction at all.
+        result = {"ownership_concentration": "single_owner_full_bulk", "determined_type": "APT"}
+        self.assertFalse(otc._submission_has_rule_b_contradiction(result))
+
+
+class RuleBContradictionCorrectionMessageTests(unittest.TestCase):
+    def test_message_names_the_property(self):
+        row = {"Master_Property Name": "175 Upper Via Casitas"}
+        message = otc._rule_b_contradiction_correction_message(row)
+        self.assertIn("175 Upper Via Casitas", message)
+        self.assertIn("individual_owner_present", message)
+        self.assertIn("determined_type", message)
+
+    def test_falls_back_to_generic_phrase_when_name_is_missing(self):
+        row = {"Master_Property Name": ""}
+        message = otc._rule_b_contradiction_correction_message(row)
+        self.assertIn("this property", message)
+
+
 class ResearchPropertySaleSearchCorrectionLoopTests(unittest.TestCase):
     """research_property() must not accept a premature Override-to-APT submission (via the
     forward Tier-3 exception or Rule A) that lacks a genuine sale-listing search -- it should
@@ -1632,6 +1685,42 @@ class ResearchPropertySaleSearchCorrectionLoopTests(unittest.TestCase):
 
         self.assertEqual(mock_call.call_count, 1)
         self.assertEqual(result["decision"], "Confirmed")
+
+    def test_rule_b_contradiction_is_rejected_and_corrected(self):
+        # Real, previously-mishandled failure: reasoning read "...suggests some units are
+        # individually owned. This triggers Rule B, indicating a COA/HOA structure" while
+        # determined_type was still submitted as APT -- a direct self-contradiction. The loop
+        # should reject this and ask the model to resubmit with a consistent determined_type.
+        row = {"Master_Property Name": "175 Upper Via Casitas", "Master_Ownership Type": "APT"}
+        contradictory_result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "ownership_concentration": "individual_owner_present",
+            "sources": ["https://a.com", "https://b.com"],
+        }
+        first_response = self._FakeResponse(
+            output=[self._submit_item(contradictory_result)],
+            id_="resp_1",
+        )
+        corrected_result = dict(contradictory_result)
+        corrected_result["determined_type"] = "COA"
+        # Avoid also triggering the (unrelated) reverse-direction sale-search correction on this
+        # second submission -- this test is specifically about the Rule B self-consistency fix.
+        corrected_result["apt_override_sale_evidence_found"] = "yes"
+        second_response = self._FakeResponse(
+            output=[self._submit_item(corrected_result)],
+            id_="resp_2",
+        )
+        with mock.patch(
+            "ownership_type_checking.call_openai_with_backoff",
+            side_effect=[first_response, second_response],
+        ) as mock_call:
+            result = otc.research_property(None, row, [], {}, "gpt-4o")
+
+        self.assertEqual(mock_call.call_count, 2)
+        self.assertEqual(result["determined_type"], "COA")
+        second_call_input = mock_call.call_args_list[1].kwargs["input"]
+        self.assertIn("individual_owner_present", second_call_input[1]["content"])
 
 
 class MountainRidgeAndCastleApartmentsRegressionTests(unittest.TestCase):
@@ -2381,12 +2470,13 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
         self.assertEqual(fixed["determined_type"], "COA")
         self.assertNotIn("functional_apt_override_used", fixed)
 
-    def test_real_populated_fee_unconditionally_blocks_rule_a(self):
+    def test_operating_association_mention_in_reasoning_blocks_rule_a(self):
         # Real reported failure ("Paradise Gardens One"): the model's own reasoning stated "a
         # registered HOA exists" and "ownership is bulk-held, but not enough for override," yet
-        # ownership_concentration was still set to single_owner_full_bulk and the override stood.
-        # A real, populated fee is a hard, code-only block -- it doesn't depend on any
-        # self-reported field and can't be talked around.
+        # ownership_concentration was still set to single_owner_full_bulk, and the self-reported
+        # ownership_concentration_contradicting_evidence field (here "no", inconsistent with the
+        # model's own reasoning) let the override through anyway. The content-based backstop
+        # catches this from the reasoning text directly, regardless of what that self-report says.
         row = {"Master_Monthly Association Fees": "70"}
         result = {
             "decision": "Override",
@@ -2404,6 +2494,36 @@ class FunctionalOwnershipGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_functional_ownership_guardrail(row, "HOA", result)
         self.assertEqual(fixed["decision"], "Not Enough Info")
         self.assertEqual(fixed["determined_type"], "HOA")
+
+    def test_populated_fee_alone_no_longer_blocks_rule_a(self):
+        # Real reported failure: a response whose reasoning never mentioned a fee at all --
+        # "Dedicated sale-listing search found no individual units listed. All units are rented
+        # off-market and bulk-owned by Kaftan Communities. Functional Rule A applies." -- was
+        # downgraded purely because the row's own (possibly-stale) Master_Monthly Association Fees
+        # field happened to be populated. The DB's own fee field is no longer an independent,
+        # code-only block; only the model's own reasoning (via OPERATING_ASSOCIATION_MENTION_RE
+        # above) or its self-reported fields can block Rule A now.
+        row = {"Master_Monthly Association Fees": "180"}
+        result = {
+            "decision": "Override",
+            "determined_type": "APT",
+            "reasoning": (
+                "Dedicated sale-listing search found no individual units listed. All units are "
+                "rented off-market and bulk-owned by Kaftan Communities. Functional Rule A applies."
+            ),
+            "ownership_concentration": "single_owner_full_bulk",
+            "reverse_conversion_detected": "not_applicable",
+            "tier3_sales_listing_search_performed": "yes",
+            "ownership_concentration_verified_externally": "yes",
+            "ownership_concentration_contradicting_evidence": "no",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
+            "_searched_queries": ["Kaftan Communities units for sale"],
+        }
+        fixed = otc._enforce_functional_ownership_guardrail(row, "COA", result)
+        self.assertEqual(fixed["decision"], "Override")
+        self.assertEqual(fixed["determined_type"], "APT")
 
     def test_zero_or_blank_fee_does_not_block_rule_a(self):
         row = {"Master_Monthly Association Fees": ""}
