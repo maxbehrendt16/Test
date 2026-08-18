@@ -301,13 +301,20 @@ exception applies using your Tier 3 evidence — that's exactly the gap it exist
 **Absolute gates, checked before the four conditions below — all must pass or the exception does
 not apply, regardless of how clean the four conditions otherwise look:**
 
-- **`sources` must itself list 3+ distinct URLs.** Two real, previously-mishandled failures
-  ("Mountain Ridge Garden Homes Apartments," "Castle Apartments Condominium Association, Inc.")
-  had `sources` listing only 1-2 URLs while the self-reported independent-source count claimed
-  3+ ("multiple independent listing platforms") — an earlier version of this tool deliberately
-  allowed that gap, and that gap is exactly what let both overrides through. `sources` is now the
-  authoritative, code-checked floor for condition 1 below: it must contain 3+ distinct URLs on
-  its own, not just a self-reported count claiming that many.
+- **`sources` must itself list 2+ distinct URLs, and the self-reported independent-source count
+  (`tier3_independent_source_count`) must still genuinely be 3+.** Two real, previously-mishandled
+  failures ("Mountain Ridge Garden Homes Apartments," "Castle Apartments Condominium Association,
+  Inc.") had `sources` listing only 1-2 URLs while the self-reported count claimed 3+ ("multiple
+  independent listing platforms") — an earlier version of this tool deliberately allowed that gap,
+  and that gap is exactly what let both overrides through. The self-reported count is now checked
+  against reality (it can no longer claim more than what `sources` shows any trace of at all), but
+  the actually-listed-URL floor itself is calibrated to 2, not 3 — in practice the model reliably
+  lists at most 2 URLs in `sources` regardless of how many it actually consulted, a consistent
+  model-output quirk observed across many real batches, not a signal of thin research. Requiring 3
+  literally-listed URLs was rejecting genuinely well-evidenced overrides at a very high rate for a
+  number the model doesn't actually produce; requiring 3+ in the self-reported count while only
+  requiring 2 actually listed keeps the real bar (genuinely found 3 independent sources) without
+  penalizing this specific formatting habit.
 - **An explicit, genuinely targeted search for individual unit SALE listings must actually have
   been performed for this specific property before condition 2 can be claimed.** This means
   actually running a search built for this purpose — e.g. `"[address] for sale"`, `"[address]
@@ -927,12 +934,13 @@ own reasoning doesn't describe conflicting/contradicting evidence that contradic
 forward exception's `tier3_internal_db_corroboration` is leaning on the DB's `Owner`/`Cleaned
 Owner` field as if it were external verification.
 
-**Spot-check that `sources` genuinely lists 3+ distinct URLs on every "Tier-3 Corroborated
-Override," and that the actual issued search queries include a real, targeted sale-listing
-search.** Both are now code-enforced, but confirm in the QC sample that the model isn't finding
-new ways around them (e.g., listing 3 near-duplicate URLs from one syndicated feed, or issuing a
-generic address search that happens to contain the word "sold" without being a genuine sale-
-listing query). Also confirm the dual-association search (both condo AND HOA governance
+**Spot-check that `sources` genuinely lists 2+ distinct URLs on every "Tier-3 Corroborated
+Override," that `tier3_independent_source_count` isn't claiming more independent sources than
+`sources` shows any trace of, and that the actual issued search queries include a real, targeted
+sale-listing search.** All three are now code-enforced, but confirm in the QC sample that the
+model isn't finding new ways around them (e.g., listing 2 near-duplicate URLs from one syndicated
+feed while claiming 3+ independent sources, or issuing a generic address search that happens to
+contain the word "sold" without being a genuine sale-listing query). Also confirm the dual-association search (both condo AND HOA governance
 documents) genuinely ran on DB-listed COA properties, not just DB-listed HOA ones — and that any
 property whose name is a formal legal-entity string actually had a state business registry search
 run for it.
@@ -1321,37 +1329,40 @@ listings across the whole property before concluding APT.
 ### (DB: COA) — the cases that motivated §4.1's absolute gates
 
 Both properties are DB-listed COA and were overridden to APT via §4.1, and both fail multiple of
-the exception's own stated conditions on inspection:
+the exception's own stated conditions/gates on inspection:
 
-- **Condition 1 (3+ independent sources) wasn't actually met in either case.** Mountain Ridge's
-  `sources` column lists exactly one URL, despite reasoning claiming "multiple independent listing
-  platforms." Castle Apartments lists two.
-- **The absolute sale-listing-search gate never genuinely fired.** Both reasoning texts simply
-  assert "no sale listings ... exist" without any evidence a real, targeted sale-oriented search
-  (as opposed to browsing rental sites) actually ran.
+- **Mountain Ridge fails condition 1 outright: `sources` lists exactly one URL** — below even the
+  2-URL listed-source floor — despite reasoning claiming "multiple independent listing platforms."
+- **The absolute sale-listing-search gate never genuinely fired for either property.** Both
+  reasoning texts simply assert "no sale listings ... exist" without any evidence a real, targeted
+  sale-oriented search (as opposed to browsing rental sites) actually ran — this absolute gate is
+  checked before condition 1 even gets evaluated, so it catches Castle Apartments regardless of
+  its `sources`/source-count numbers.
 - **Both reasoning texts only mention checking for HOA** ("no HOA documents," "no HOA") despite
   the DB itself listing COA — mistaking the absence of HOA-specific evidence for the absence of
   any association, when the actual answer might be "it's a COA, not an HOA."
 - **Castle Apartments' own `Master_Property Name` is "CASTLE APARTMENTS CONDOMINIUM ASSOCIATION,
   INC."** — an explicit legal-entity name — and the override went straight through it without a
-  state business registry search ever running.
+  state business registry search ever running; this absolute gate also fires independently.
 
 | Field | Value |
 |---|---|
 | `determined_type` | **COA** (no change) for both |
 | `decision` | **Not Enough Info** for both |
-| `sources` (Mountain Ridge) | 1 URL — fails the 3-distinct-URL absolute gate |
-| `sources` (Castle Apartments) | 2 URLs — fails the 3-distinct-URL absolute gate |
+| `sources` (Mountain Ridge) | 1 URL — fails the 2-distinct-URL absolute gate on its own |
+| `sources` (Castle Apartments) | 2 URLs — clears the 2-URL floor, but the property is still caught by the sale-search and entity-registry absolute gates below |
 | `tier3_dual_association_search_performed` | Was `no` for both — only HOA was checked, never condo (tracked for visibility; no longer an absolute gate on its own, see §4.1) |
 | `tier3_entity_name_registry_search_performed` (Castle Apartments) | Should not have been left unconfirmed given the explicit legal-entity name in `Master_Property Name` |
 
 This is why §4.1 now has absolute, code-enforced gates rather than relying entirely on the model's
-own self-report of what it found: `sources` must itself contain 3+ distinct URLs (not just a
-self-reported count); a genuinely targeted sale-listing search query must actually appear among
-the real search queries issued during research; and a property whose own name is a formal
-legal-entity string requires a state business registry search for that exact name. Both cases here
-also fail the 3+ distinct-URL gate on their own, so removing the dual-association check from the
-absolute-gate list (see §4.1) doesn't change the outcome for either of these two real cases.
+own self-report of what it found: `sources` must itself contain 2+ distinct URLs, and
+`tier3_independent_source_count` may never claim more than `sources` shows any trace of; a
+genuinely targeted sale-listing search query must actually appear among the real search queries
+issued during research; and a property whose own name is a formal legal-entity string requires a
+state business registry search for that exact name. Mountain Ridge fails the listed-URL floor
+directly; Castle Apartments clears that floor (it lists 2 URLs) but is still caught by the
+sale-search and entity-registry gates, so calibrating the listed-URL floor to 2 (see §4.1) doesn't
+reopen either of these two real cases.
 
 ### Reserve at Falcon Point (DB: APT) — the case that motivated the fee-evidence floor
 

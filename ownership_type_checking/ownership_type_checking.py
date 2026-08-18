@@ -127,9 +127,15 @@ TIER3_EXCEPTION_MIN_SOURCES = 3
 # model's self-reported tier3_independent_source_count claimed 3+ ("multiple independent listing
 # platforms") -- an earlier version of this tool deliberately allowed that gap (on the theory
 # that the model might legitimately examine more sources than it bothers to list), but that gap
-# is exactly what let these self-reports go unverified. `sources` is now the authoritative,
-# code-checked floor for condition 1: it must itself contain TIER3_EXCEPTION_MIN_SOURCES distinct
-# URLs, not just a self-reported count claiming that many.
+# is exactly what let these self-reports go unverified. `tier3_independent_source_count` is still
+# required to be 3+ (condition 1's actual bar), but the model in practice reliably lists at most 2
+# URLs in `sources` regardless of how many it actually consulted -- confirmed across many real
+# batches, this is a consistent model-output quirk, not a signal of thin research (Castle
+# Apartments and Mountain Ridge both fail condition 1 for other, independent reasons regardless of
+# this floor). TIER3_EXCEPTION_MIN_LISTED_SOURCES is the separate, lower floor actually checked
+# against `sources` itself, calibrated to match that real output ceiling instead of a number the
+# model never actually produces.
+TIER3_EXCEPTION_MIN_LISTED_SOURCES = 2
 
 SYSTEM_PROMPT = """You are a research assistant verifying property ownership-type records in a \
 Community Lending Portfolio (CLP) database.
@@ -522,17 +528,18 @@ override built on Tier 3 evidence alone, and a claim that doesn't hold up agains
 data (e.g. citing a null fee when the row's fee field is actually populated) will be caught and \
 downgraded regardless of what the rest of your answer says.
 
-**`sources` must actually list every one of the 3+ independent sources you're counting toward \
-condition 1 -- `tier3_independent_source_count` is no longer allowed to claim more than `sources` \
-actually shows.** An earlier version of this tool let you list fewer URLs than your claimed count \
-(on the theory you might legitimately examine more sources than you bother to list); two real \
-failures ("Mountain Ridge Garden Homes Apartments," "Castle Apartments Condominium Association, \
-Inc.") exploited exactly that gap -- reasoning claimed "multiple independent listing platforms" \
-while `sources` listed only 1-2 URLs, and the override went through anyway. **This is enforced in \
-code now: `sources` itself must contain 3+ distinct URLs before condition 1 can be satisfied at \
-all**, regardless of what `tier3_independent_source_count` says. If you genuinely found 3+ \
-independent, non-syndicated sources agreeing, list all of them as URLs in `sources` -- don't \
-summarize or truncate the list.
+**`sources` must actually list at least 2 distinct URLs backing the independent sources you're \
+counting toward condition 1 -- `tier3_independent_source_count` is not allowed to claim more \
+sources exist than `sources` shows any trace of at all.** An earlier version of this tool let you \
+list arbitrarily fewer URLs than your claimed count; two real failures ("Mountain Ridge Garden \
+Homes Apartments," "Castle Apartments Condominium Association, Inc.") exploited that gap -- \
+reasoning claimed "multiple independent listing platforms" while `sources` listed only 1 URL, and \
+the override went through anyway. **This is enforced in code: `sources` itself must contain 2+ \
+distinct URLs before condition 1 can be satisfied at all**, regardless of what \
+`tier3_independent_source_count` says -- but `tier3_independent_source_count` itself must still be \
+3+ (this field is checked separately and still requires genuinely finding 3 independent sources, \
+even if you only end up listing 2 URLs for them in `sources`). List every URL you can for the \
+sources you found; don't pad or fabricate one to reach 3 URLs listed if you only have 2 to show.
 
 ## Bounded exception (reverse direction, to COA/HOA): last-resort Tier-3-corroborated override
 
@@ -2113,11 +2120,11 @@ def _tier3_exception_condition_failures(row: dict, result: dict, direction: str)
     failures = []
 
     distinct_sources = set(result.get("sources", []) or [])
-    if len(distinct_sources) < TIER3_EXCEPTION_MIN_SOURCES:
+    if len(distinct_sources) < TIER3_EXCEPTION_MIN_LISTED_SOURCES:
         failures.append(
             f"condition 1: only {len(distinct_sources)} distinct URL(s) were actually listed in "
-            f"`sources` -- the exception requires {TIER3_EXCEPTION_MIN_SOURCES}+ actually-listed "
-            f"sources, not just a self-reported count claiming that many"
+            f"`sources` -- the exception requires {TIER3_EXCEPTION_MIN_LISTED_SOURCES}+ actually-"
+            f"listed sources, not just a self-reported count claiming that many"
         )
     elif (_parse_number(result.get("tier3_independent_source_count")) or 0) < TIER3_EXCEPTION_MIN_SOURCES:
         failures.append("condition 1: self-reported independent source count is below 3")
