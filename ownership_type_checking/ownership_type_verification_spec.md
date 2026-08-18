@@ -117,6 +117,25 @@ just legal declaration status — see §6. Neither rule applies (`ownership_conc
 `not_applicable`) when this can't be clearly established, or when the property's legal type and
 functional reality already agree.
 
+**Absolute requirement, checked in code, for ANY override of an APT-listed property to COA/HOA —
+regardless of evidence tier or exception path (§4.1/§4.2 included):** genuine evidence that at
+least one unit at that property is CURRENTLY listed for individual sale, or was sold within
+roughly the last 12 months, must have been found. A legal/structural condo designation (a county
+assessor record, a recorded declaration, a state registry entity type) and a real recurring
+association fee are **never sufficient by themselves** for this direction — a huge share of
+legally-platted condo/HOA properties are functionally single-owner apartment communities today
+with no individual sales at all, exactly Rule A above; being legally condo-platted only means the
+units COULD be individually sold, not that anyone currently does. Real failure: **"Foxcroft Of
+Shelby"** (DB: APT) was overridden to COA at High confidence on "Tier 1 legal evidence (...
+assessor record lists Units 1-48 Foxcroft of Shelby Condos) and recurring association fees,"
+concluding "likely individual owners" under Rule B — but the cited sources were the property's own
+single-management-company leasing site (Kaftan Communities) and a LoopNet listing for the whole
+66-unit complex as one asset, neither of which is evidence any individual unit has ever actually
+been sold or listed. "Likely" is a guess, not a finding. Enforced in code via
+`apt_override_sale_evidence_found`, cross-checked against the actual search queries issued (the
+same mechanism as §4.1's sale-search gate) so a bare "yes" self-report isn't trusted without a
+real sale-oriented search having been run.
+
 **Neither rule applies when a structural edge case (§5.7) is in play** — a housing cooperative,
 condo-hotel/timeshare, manufactured home community, or senior/student housing is resolved by
 "never override" regardless of ownership concentration, and functional bulk-ownership evidence is
@@ -216,6 +235,31 @@ rather than two naming rules that likely share the same root cause).
 - MLS / Zillow / Realtor.com listing presence, individual sale histories
 - Property's own marketing/leasing website ("apply now," "leasing office," "floor plans")
 - General web search snippets, forum mentions, local news human-interest coverage
+
+**None of these three tiers is ever satisfied by the DB's own pre-filled fields on the record being
+checked** — `Master_Monthly Association Fees`, `Owner`/`Cleaned Owner`, `Property Manager`,
+`Developer Name`, or any other column already given about that specific row. Those fields describe
+the very thing being verified, not proof of it, and that data can be wrong or stale — which is the
+whole reason the research step exists in the first place. A real, previously-mishandled failure
+("Reserve at Falcon Point," DB: APT — see the worked example at the end of §11) was overridden to
+COA on reasoning that cited ONLY the DB's own `Master_Monthly Association Fees` field
+(`tier3_exception_invoked` was `no` — not even claiming the bounded exception), while its two
+actually-cited sources (its own leasing site, a home-listing aggregator) both described the
+property as a rental apartment complex the entire time — real external evidence pointing the
+*opposite* direction from the conclusion, which the model simply didn't engage with. A populated
+DB field like this is a reason to research harder — it's one of the signals that triggers deeper
+investigation, and can corroborate a genuinely external Tier 1/2 finding within the bounded
+exceptions below — but it is never itself Tier 1, 2, or 3 evidence, and can never be the stated
+reason for a determination. **Enforced in code with two absolute floors:**
+- **Every Override must cite at least 1 real external source in `sources`** — one with zero cited
+  sources is automatically rejected regardless of which evidence tier is claimed. This applies even
+  to ordinary (non-Tier-3-exception) overrides claiming Mixed or Tier 1/2 evidence, which the
+  §4.1/§4.2 exception-specific gates below don't otherwise touch.
+- **A reverse-direction override (DB APT → COA/HOA) that leans on a fee in its reasoning, and isn't
+  invoking the bounded §4.2 exception, must have at least one cited source whose own fetched text
+  actually describes HOA/COA governance** (an association, a declaration, covenants, a board) —
+  otherwise it's automatically rejected. The DB's own fee field has no legitimate role outside
+  §4.2's fully-gated condition 3.
 
 **A past individual sale record is evidence of historical ownership and legal structure, not proof
 of current ownership.** Some buildings convert from individually-owned condos back into
@@ -482,7 +526,15 @@ its own gate above, and stacking two leniency mechanisms on top of each other wo
 beyond what this exception is meant to allow. All four conditions, plus the Attempt 2 gate, are
 required every time.
 
-**If the gate and all four conditions hold:**
+**Even after the gate and all four conditions hold, §2.1's absolute
+`apt_override_sale_evidence_found` requirement still applies on top — this exception's own
+condition 3 (a real, populated fee) is not a substitute for it.** Satisfying the gate and all four
+conditions here without ALSO having found genuine individual-unit sale evidence (a current
+listing, or a sale within roughly the last 12 months) is not enough to override; default to Not
+Enough Info instead. A real fee and Tier 3 governance description tell you an association likely
+exists; they don't tell you anyone currently owns (and could sell) an individual unit there.
+
+**If the gate, all four conditions, AND the sale-evidence requirement hold:**
 
 - The override is allowed, but **confidence is capped at Medium, never High**, for the same reason
   as §4.1.
@@ -783,6 +835,7 @@ a record with 2+ comma-separated sub-names is downgraded to Not Enough Info in c
 | `ownership_concentration_contradicting_evidence` | Per §2.1's Rule A: `yes` if any evidence of genuine, operating HOA/COA governance was found despite the bulk-ownership appearance — blocks Rule A in code regardless of the bulk-ownership signal |
 | `tier3_dual_association_search_performed` | Per §4.1's recommended practice (not an absolute gate): `yes` if Attempt 2 touched on evidence of BOTH a condominium association AND an HOA, regardless of which one the DB currently lists; tracked for manual QC visibility only, does not block an override on its own |
 | `tier3_entity_name_registry_search_performed` | Per §4.1's absolute gate, required whenever `Master_Property Name` contains a full formal legal-entity string: `yes` only if a state business registry search for that exact entity name was run; `not_applicable` for ordinary names |
+| `apt_override_sale_evidence_found` | Per §2.1's absolute, universal requirement: required whenever overriding an APT-listed property to COA/HOA (any evidence tier or exception path) — `yes` only if genuine evidence was found that at least one unit is currently listed for individual sale, or was sold within roughly the last 12 months; a legal/structural condo designation or a real fee alone is never sufficient. Cross-checked in code against the actual search queries issued, so a bare `yes` isn't trusted without a real sale-oriented search having run |
 
 ## 8. Architecture (mirroring the prior dedup tool)
 
@@ -1109,9 +1162,10 @@ scale.
 ### Casa Gataway Hoa (DB: APT) — the case that motivated §4.2
 
 The reverse-direction mirror of the Cross Creek case above. DB-listed as APT, but multiple Tier 3
-sources independently describe the property as an HOA community, and `Master_Monthly Association
+sources independently describe the property as an HOA community, `Master_Monthly Association
 Fees` is populated ($461/month) — a real, recurring-looking fee, which corroborates rather than
-contradicts that description.
+contradicts that description — and one of the three sources, a Redfin record, shows unit 204 sold
+eight months ago.
 
 | Field | Value |
 |---|---|
@@ -1121,6 +1175,7 @@ contradicts that description.
 | `evidence_tier_used` | Tier 3 (three independent sources; a thorough Attempt 2 — including a state business registry search — found no Tier 1/2 evidence either way) |
 | `tier3_exception_direction` | `to_coa_hoa` |
 | `tier3_reverse_attempt2_exhausted` | `yes` |
+| `apt_override_sale_evidence_found` | `yes` — the Redfin record of unit 204's sale eight months ago |
 | `archetype_flag` | Tier-3 Corroborated Override |
 
 **Why this is not simply "run §4.1 backwards":** before this exception existed, this case landed on
@@ -1135,9 +1190,41 @@ registry under the property's name and plausible variants and came up empty, in 
 county recorder and tax assessor searches — and all four §4.2 conditions hold on top of that gate:
 3+ independent, non-mirrored Tier 3 sources with a confirmed name/address anchor; zero contradicting
 evidence; the fee itself populated and corroborating (not null, which would point the other way);
-and no structural edge case (co-op, condo-hotel, senior/student housing) fitting better. Had Attempt
-2 not been genuinely exhausted, or had the fee been null instead of populated, this would fall back
-to Not Enough Info exactly as it did before §4.2 existed.
+and no structural edge case (co-op, condo-hotel, senior/student housing) fitting better. **On top of
+all of that, `apt_override_sale_evidence_found` is `yes`** — the Redfin sale record is real,
+individual-unit sale evidence, satisfying §2.1's absolute requirement that now sits above this
+entire exception. Had Attempt 2 not been genuinely exhausted, had the fee been null instead of
+populated, or had no individual-unit sale evidence existed at all (the fee and Tier 3 governance
+description alone are no longer enough, per the case below), this would fall back to Not Enough
+Info.
+
+### Foxcroft Of Shelby (DB: APT) — the case that motivated the universal sale-evidence requirement
+
+DB-listed as APT. Overridden to COA at **High** confidence on `evidence_tier_used: Tier 1` —
+reasoning cited a MACOMB County assessor record listing "Units 1-48 Foxcroft of Shelby Condos" plus
+recurring association fees, concluding "likely individual owners" under §2.1's Rule B. The two
+actually-cited sources were the property's own single-management-company leasing site (Kaftan
+Communities, which manages and presumably owns the whole 66-unit complex as one rental community)
+and a LoopNet listing for the whole complex as one commercial asset — neither one is evidence any
+individual unit has ever actually been sold or listed to an individual buyer.
+
+| Field | Value |
+|---|---|
+| `determined_type` | **APT** (no change) |
+| `decision` | **Not Enough Info** |
+| `evidence_tier_used` | `Tier 1`, but the only "Tier 1" fact (a legal condo-platting record) says nothing about CURRENT individual ownership |
+| `apt_override_sale_evidence_found` | Should have been `no` — no individual unit sale or listing evidence exists in either cited source |
+| `ownership_concentration` | Self-reported as `individual_owner_present` based on "likely individual owners" — a guess, not a verified finding |
+
+**This is exactly the gap §2.1's Rule A/B distinction exists to prevent, reached from an unexpected
+angle.** A legal condo declaration and an assessor record showing platted units tell you the
+property COULD have individual owners — they do not tell you it currently DOES. This property looks,
+from its own cited sources, exactly like a single-owner apartment complex under one management
+company (Rule A territory), yet the model treated the mere existence of a legal Tier 1 record as
+settling the question, and hedged the actual functional-ownership question with "likely" instead of
+verifying it. This is why `apt_override_sale_evidence_found` is now an absolute, universal
+requirement for ANY override of an APT-listed property to COA/HOA, regardless of evidence tier —
+Tier 1 legal evidence is not exempt from it.
 
 ### Sky Nashville (DB: HOA) — the case that motivated §4.1's sales-listing gate
 
@@ -1265,3 +1352,52 @@ the real search queries issued during research; and a property whose own name is
 legal-entity string requires a state business registry search for that exact name. Both cases here
 also fail the 3+ distinct-URL gate on their own, so removing the dual-association check from the
 absolute-gate list (see §4.1) doesn't change the outcome for either of these two real cases.
+
+### Reserve at Falcon Point (DB: APT) — the case that motivated the fee-evidence floor
+
+A DB-listed APT record, overridden to COA with `evidence_tier_used: Mixed` and reasoning that read
+in full: *"The property is marketed as rental apartments, but a recurring monthly association fee
+indicates an HOA/COA governance structure. This overrides the APT label due to the HOA-like
+governance rules."* `tier3_exception_invoked` was `no` — this wasn't even claiming the bounded §4.2
+exception, just an ordinary override. Two sources were actually cited — the property's own leasing
+site (`villagegreen.com/.../the-reserve-at-falcon-pointe-apartments/`) and a Trulia listing — and
+both describe a straightforward rental apartment community. Real external evidence pointed one way
+(APT), and the override went the other way (COA) on the strength of the DB's own
+`Master_Monthly Association Fees` field alone — the model's own reasoning even acknowledged the
+rental-apartment marketing and then overrode it anyway on the fee.
+
+This slipped through because `_enforce_tier3_override_guardrail()` is deliberately scoped to
+Tier-3/Mixed overrides that are (or should be) invoking one of §4.1/§4.2's bounded exceptions — an
+ordinary "Mixed" override that isn't invoking either exception is assumed to be based on genuine,
+ordinary Tier 1/2 evidence, which isn't that guardrail's concern. Nothing else was checking that the
+claimed evidence was actually external, or that the cited sources actually supported the direction
+of the override.
+
+| Field | Value |
+|---|---|
+| `determined_type` | **APT** (no change) |
+| `decision` | **Not Enough Info** |
+| `evidence_tier_used` | `Mixed`, but the only "Tier 1/2" evidence was the DB's own fee field |
+| `sources` | 2 real URLs, both describing a rental apartment community — contradicting the override, not supporting it |
+| `tier3_exception_invoked` | `no` — this wasn't even claiming the bounded exception |
+
+Two code-level floors now cover this, neither relying on the model's self-report alone:
+1. **`_enforce_tier3_override_guardrail()`** now also fails an ordinary (non-exception) override
+   if `tier3_internal_db_corroboration` is non-empty — the schema tells the model this field must
+   be an empty string whenever `tier3_exception_invoked` is `no`, so a non-empty value there means
+   the model named an internal DB field as evidence outside the one path where that's ever
+   legitimate.
+2. **`_enforce_reverse_override_fee_evidence_guardrail()`** independently re-fetches the cited
+   `sources` (same `fetch_url_cached()` used elsewhere) whenever a reverse-direction override's
+   reasoning leans on a fee and isn't invoking §4.2: if none of the actually-fetched source text
+   describes real HOA/COA governance (an association, a declaration, covenants, a board), the
+   override is rejected regardless of what the reasoning claims. This is scoped narrowly — only
+   reverse-direction overrides that mention a fee at all, and only when the bounded exception isn't
+   invoked — so it doesn't touch legitimate cases with real external Tier 1/2 evidence and no fee
+   mention, or the already fully-gated §4.2 exception path.
+
+Separately, an Override with literally zero cited sources (a simpler variant of this same failure
+mode) is caught by `_enforce_minimum_sources_guardrail()` — every Override must cite at least 1
+real external source in `sources`, regardless of evidence tier. See §4's evidence hierarchy for the
+general principle: the DB's own pre-filled fields on the record being checked are never themselves
+Tier 1, 2, or 3 evidence — they describe what's being verified, not proof of it.
