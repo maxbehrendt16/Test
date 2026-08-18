@@ -87,17 +87,38 @@ declaration. Tag this with the archetype flag **"Legally Condo, Functionally Apa
   Falls of Portofino"** was overridden to APT with reasoning stating "DB 'Owner' is Prime Group,
   satisfying the criteria for functional override to APT" — citing the DB's own field as if it
   were external verification.
-- **Zero contradicting evidence of genuine, operating HOA/COA governance** — a registered
-  HOA/COA entity, HOA governance documents/declaration, a real association fee, or any
-  individually owned/listed unit all block Rule A regardless of how strong the bulk-ownership
-  signal looks. **A real, populated `Master_Monthly Association Fees` value on the row
-  unconditionally blocks Rule A**, independent of any self-reported field — a genuinely
-  bulk-owned property with no operating association should have no fee on file at all. Real
-  failure: **"Paradise Gardens One"** was corrected to APT despite a real $70/month fee on file
-  and the model's OWN reasoning stating "Conflicting evidence: a registered HOA exists ...
-  Ownership is bulk-held, but not enough for override" — the model's own finding of contradicting
-  evidence was never cross-checked against the bare `ownership_concentration` value that let the
-  override through anyway.
+- **The reasoning itself must not describe a real, operating HOA/COA** — phrasing like "a
+  registered HOA," "an operating association," or "the HOA/COA exists" blocks Rule A directly
+  from the model's own words, regardless of what the self-reported contradicting-evidence field
+  claims. Real failure: **"Paradise Gardens One"** was corrected to APT despite the model's OWN
+  reasoning stating "Conflicting evidence: a registered HOA exists ... Ownership is bulk-held, but
+  not enough for override" — the model's own finding of contradicting evidence was never
+  cross-checked against the bare `ownership_concentration` value that let the override through
+  anyway. This is a content-based check on the reasoning text, not a check against the row's own
+  `Master_Monthly Association Fees` field — an earlier version of this rule unconditionally
+  blocked Rule A whenever that field was populated, but the DB's own fee field can itself be stale
+  or wrong, and a real, previously-mishandled failure showed that hard block firing on a response
+  whose reasoning never mentioned a fee at all ("Dedicated sale-listing search found no individual
+  units listed... Functional Rule A applies") — the DB's own field contradicted nothing the model
+  actually found or claimed.
+- **Zero contradicting evidence of genuine, operating HOA/COA governance**, per the model's own
+  self-reported `ownership_concentration_contradicting_evidence` field — a registered HOA/COA
+  entity, HOA governance documents/declaration, a real association fee, or any individually
+  owned/listed unit all block Rule A regardless of how strong the bulk-ownership signal looks.
+- **100% single ownership must be verified via EXTERNAL sources** — and this is a different
+  question from "is it operated as a rental?", which rental-listing platforms and property-
+  management sites answer without saying anything about who legally owns every unit. A real
+  search aimed at ownership specifically — a county property appraiser/recorder lookup for the
+  address, or a state business registry search for the owning entity's name — is what this
+  requires; multiple independent Tier 3 sources with a confirmed anchor can also satisfy it, but
+  only if they actually corroborate ownership, not just rental operation. **The DB's own
+  `Owner`/`Cleaned Owner` field must never be used as evidence toward an APT designation.** This
+  data is not reliable enough on its own: a majority-but-not-full owner (e.g. an investor holding
+  39 of 40 units) is very often still the DB's sole listed Owner, so a single Owner name tells you
+  nothing about whether the last unit is also owned by that same entity. Real failure: **"The
+  Falls of Portofino"** was overridden to APT with reasoning stating "DB 'Owner' is Prime Group,
+  satisfying the criteria for functional override to APT" — citing the DB's own field as if it
+  were external verification.
 - **An explicit search for individual unit SALE listings must have been performed** — the same
   absolute gate as §4.1's forward-direction exception below (see `tier3_sales_listing_search_
   performed`).
@@ -110,6 +131,29 @@ we'd have to work through. **"Master associations"** — an overarching HOA/COA 
 sub-associations or phases within a larger development — are a common real-world pattern for
 this: even if one phase looks like a single-owner rental block, if ANY phase or unit anywhere in
 the master association is individually owned, Rule B applies to the whole thing.
+
+**Rule A and Rule B are their own legitimate, independent override paths — they do not also need
+to invoke the bounded §4.1/§4.2 Tier-3 exception.** A genuine individual-unit-sale record found
+via Rule B, or a genuinely-verified 100% single ownership found via Rule A, is strong, direct
+evidence on its own; requiring it to ALSO satisfy the elaborate 4-condition exception machinery
+was a real, previously-mishandled failure that quietly rejected a large share of correctly-reasoned
+Rule B overrides in one real batch (22 of 33 auto-adjustments in that batch, the single largest
+bucket) — real examples: *"Multiple individual condo-for-sale listings exist ... Rule B applies —
+property cannot be functionally APT,"* *"Multiple independent sale listings and sold units
+demonstrate individual ownership, confirming Rule B."* These are correctly-reasoned overrides using
+genuinely strong Tier 3 evidence (actual sale records) that were being downgraded purely for not
+invoking a completely separate mechanism Rule A/B was never meant to require.
+
+**A submission with `ownership_concentration: individual_owner_present` but `determined_type: APT`
+is a direct self-contradiction** — Rule B means the property cannot be APT once an individually-
+owned unit is found, no matter how small that fraction is. A real, previously-mishandled failure:
+reasoning read *"...suggests some units are individually owned. This triggers Rule B, indicating a
+COA/HOA structure"* while `determined_type` was still submitted as APT. This is now caught
+interactively: the code rejects a submission with this contradiction and asks the model to
+resubmit with `determined_type` set to whichever of COA/HOA its own research actually supports,
+rather than silently falling back to the DB's current label (which, when that label is itself
+APT, previously produced a confusing "Not Enough Info, APT" result that looked like the tool was
+agreeing with APT right after just explaining why it can't be).
 
 **This is a required verification step, not an optional one:** before finalizing any decision,
 explicitly check current ownership concentration (single owner vs. any individual owners), not
