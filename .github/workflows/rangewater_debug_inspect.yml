@@ -1,0 +1,29 @@
+name: RangeWater Debug - Inspect City Page
+
+on:
+  workflow_dispatch:
+    inputs:
+      city_url:
+        description: "City page URL to inspect"
+        required: false
+        default: "https://www.liverangewater.com/city/auburn"
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 lxml
+
+      - name: Inspect city page structure
+        env:
+          RANGEWATER_DEBUG_CITY_URL: ${{ inputs.city_url }}
+        run: python debug_inspect_city_page.py
