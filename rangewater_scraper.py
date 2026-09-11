@@ -270,6 +270,27 @@ NON_PROPERTY_DOMAINS = [
 ]
 
 
+CITY_STATE_PATTERN = re.compile(r"^[A-Za-z .'\-]+,\s*[A-Z]{2}$")
+PROPERTY_TYPE_LABELS = {"multifamily": "Multifamily", "build-to-rent": "Build-to-Rent",
+                         "build to rent": "Build-to-Rent"}
+
+
+def _classify_card_leaf_text(text):
+    """Given one leaf text node inside a property card, decide what field it
+    is. Confirmed against real liverangewater.com markup: a card is an <a>
+    wrapping a photo, a <span> type-tag ("Multifamily"/"Build-to-Rent"), and
+    three plain text divs (name, "City, ST", phone) with no distinguishing
+    CSS classes -- so classify by content shape instead of by selector."""
+    low = text.lower()
+    if PHONE_PATTERN.fullmatch(text.strip()) or (PHONE_PATTERN.search(text) and len(text) < 20):
+        return "phone", text
+    if low in PROPERTY_TYPE_LABELS:
+        return "property_type", PROPERTY_TYPE_LABELS[low]
+    if CITY_STATE_PATTERN.match(text):
+        return "city_state", text
+    return "name", text
+
+
 def parse_city_page(html, city_url, failures_writer):
     """Extract every property card on a city page: name, phone, property
     type tag, and outbound link to the property's own site. If a card's
@@ -285,12 +306,17 @@ def parse_city_page(html, city_url, failures_writer):
     for chrome in soup.find_all(["header", "footer", "nav"]):
         chrome.decompose()
 
-    # Heuristic: treat each <a> that points to an external domain (or, if
-    # none nearby, an internal property subpage) as anchoring one property
-    # "card" -- walk up to a reasonably small containing block and pull the
-    # name/phone/type text out of it.
-    candidate_links = soup.find_all("a", href=True)
-    for link in candidate_links:
+    # Scope to the "Our Properties" section when present, so unrelated CTA
+    # links elsewhere on the page ("See our vision" / "The RangeWater
+    # Story") never get treated as property cards.
+    scope = soup
+    heading = soup.find(string=re.compile(r"our properties", re.I))
+    if heading:
+        section = heading.find_parent("section")
+        if section:
+            scope = section
+
+    for link in scope.find_all("a", href=True):
         href = link["href"]
         # Skip obvious nav/social/anchor/JS-handler junk (real hrefs only).
         if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
@@ -298,30 +324,25 @@ def parse_city_page(html, city_url, failures_writer):
         if any(d in href.lower() for d in NON_PROPERTY_DOMAINS):
             continue
 
-        # Find a reasonably-scoped ancestor "card" container to pull text from.
-        card = link
-        for _ in range(4):
-            if card.parent is None:
-                break
-            card = card.parent
-            text = card.get_text(" ", strip=True)
-            if text and 10 <= len(text) <= 600:
-                break
+        # Classify each leaf (no nested div/span/p) text node inside the
+        # card: content shape identifies the field, not a CSS class.
+        fields = {"name": "", "city_state": "", "phone": "", "property_type": ""}
+        for el in link.find_all(["div", "span", "p"]):
+            if el.find(["div", "span", "p"]):
+                continue  # container, not a leaf -- its children get visited instead
+            text = el.get_text(strip=True)
+            if not text:
+                continue
+            kind, value = _classify_card_leaf_text(text)
+            if not fields.get(kind):
+                fields[kind] = value
 
-        card_text = card.get_text(" ", strip=True) if card else link.get_text(" ", strip=True)
-        if not card_text:
-            continue
-
-        name = (link.get("title") or link.get_text(strip=True) or "").strip()
+        name = fields["name"] or (link.get("title") or "").strip()
         if not name:
-            # fall back to the first line of the card text
-            name = card_text.split("  ")[0][:80].strip()
-        if not name or name.lower() in ("read more", "learn more", "view", "details"):
-            # try alt text on an image inside the link
             img = link.find("img")
             if img and img.get("alt"):
                 name = img["alt"].strip()
-        if not name or len(name) < 3:
+        if not name or len(name) < 2:
             continue
 
         dedupe_key = (name.lower(), href)
@@ -329,27 +350,21 @@ def parse_city_page(html, city_url, failures_writer):
             continue
         seen_names.add(dedupe_key)
 
-        phone_match = PHONE_PATTERN.search(card_text)
-        phone = phone_match.group(0) if phone_match else ""
-
-        if re.search(r"build[\s-]?to[\s-]?rent", card_text, re.I):
-            prop_type = "Build-to-Rent"
-        elif re.search(r"multifamily", card_text, re.I):
-            prop_type = "Multifamily"
-        else:
-            prop_type = ""
+        city_from_card = ""
+        if fields["city_state"]:
+            city_from_card = fields["city_state"].split(",")[0].strip()
 
         resolved_url = urljoin(city_url, href)
         if not is_external(resolved_url):
-            # Follow the internal page once to find the real outbound site link.
+            # Follow the internal page once to find the real outbound link.
             inner_html = fetch(resolved_url, "resolve_property_link", failures_writer)
             resolved_url = _find_outbound_site_link(inner_html) if inner_html else resolved_url
 
         leads.append(PropertyLead(
             name=name,
-            city="",  # filled in by caller from city metadata
-            phone=phone,
-            property_type=prop_type,
+            city=city_from_card,  # overridden by caller's city metadata only if empty
+            phone=fields["phone"],
+            property_type=fields["property_type"],
             property_url=resolved_url,
             source_city_page=city_url,
         ))

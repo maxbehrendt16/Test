@@ -32,20 +32,42 @@ FIND_YOUR_HOME_HTML = """
 </body></html>
 """
 
-CITY_PAGE_HTML = """
-<html><body>
-<div class="card">
-  <a href="https://sterlingnashvillewest.com" title="Sterling Nashville West">
-    <img src="thumb.jpg" alt="Sterling Nashville West">
-  </a>
-  <p>Nashville, TN | (615) 555-0123 | Multifamily</p>
+# Card structure confirmed against the real liverangewater.com/city/auburn
+# page (pulled via a GitHub Actions diagnostic run, since the dev sandbox
+# has no network access to the live site): name/city-state/phone are three
+# plain sibling <div>s with no distinguishing CSS class, and the type tag is
+# a <span> whose text is exactly "Multifamily" or "Build-to-Rent" -- all
+# nested INSIDE the <a>, not in a sibling element.
+def _property_card_html(url, name, city_state, phone, prop_type):
+    return f"""
+    <div class="px-1 w-full md:w-1/2 lg:w-1/3 xl:w-1/4 mb-2 flex">
+      <a class="w-full group" href="{url}" target="_blank">
+        <div class="pt-4x3 relative"><picture><img alt="{name}"></picture></div>
+        <div class="flex flex-row"><span class="mx-p5 italic text-teal">{prop_type}</span></div>
+        <div class="flex-1 relative">
+          <div class="space-y-p25 text-center">
+            <div class="font-sans-1 text-1p2 uppercase">{name}</div>
+            <div>{city_state}</div>
+            <div class="font-sans-1">{phone}</div>
+          </div>
+        </div>
+      </a>
+    </div>
+    """
+
+
+CITY_PAGE_HTML = f"""
+<html><body><main>
+<section>
+<h2>Our Properties</h2>
+<div class="-mx-1 flex flex-row flex-wrap">
+{_property_card_html("https://sterlingnashvillewest.com", "Sterling Nashville West",
+                      "Nashville, TN", "(615) 555-0123", "Multifamily")}
+{_property_card_html("/property/rangewater-riverside", "RangeWater Riverside",
+                      "Nashville, TN", "(615) 555-0199", "Build-to-Rent")}
 </div>
-<div class="card">
-  <a href="/property/rangewater-riverside" title="RangeWater Riverside">
-    <img src="thumb2.jpg" alt="RangeWater Riverside">
-  </a>
-  <p>Nashville, TN | (615) 555-0199 | Build-to-Rent</p>
-</div>
+</section>
+</main>
 <a href="https://www.facebook.com/rangewater">Facebook</a>
 </body></html>
 """
@@ -59,17 +81,24 @@ INTERNAL_PROPERTY_PAGE_HTML = """
 
 # Regression fixture: real liverangewater.com pages carry global nav/footer
 # chrome (corporate "Our Story"/"Our Team" links, a javascript:; placeholder,
-# and a TermsFeed privacy-policy attribution link) that must NOT be treated
-# as property cards or as a property's outbound site.
-CITY_PAGE_WITH_CHROME_HTML = """
+# a TermsFeed privacy-policy attribution link, and an unrelated CTA link
+# further down the page) that must NOT be treated as property cards or as a
+# property's outbound site.
+CITY_PAGE_WITH_CHROME_HTML = f"""
 <html><body>
 <nav><a href="/our-story">Our Story</a> <a href="javascript:;">Menu</a></nav>
 <header><a href="/our-team">Our Team</a></header>
 <main>
-  <div class="card">
-    <a href="https://sterlingnashvillewest.com" title="Sterling Nashville West"></a>
-    <p>Nashville, TN | (615) 555-0123 | Multifamily</p>
+<section>
+  <h2>Our Properties</h2>
+  <div class="-mx-1 flex flex-row flex-wrap">
+  {_property_card_html("https://sterlingnashvillewest.com", "Sterling Nashville West",
+                        "Nashville, TN", "(615) 555-0123", "Multifamily")}
   </div>
+</section>
+<section>
+  <a href="https://liverangewater.com/our-story">The RangeWater Story</a>
+</section>
 </main>
 <footer>
   <a href="/news-media">News &amp; Media</a>
@@ -106,6 +135,96 @@ PROPERTY_SITE_HTML = """
 <p>Enjoy bulk internet included in your rent, plus a dog park and clubhouse.</p>
 <p>Now Leasing! Rents starting at $1,450 - $2,100.</p>
 <p>250 units in a gated community.</p>
+</body></html>
+"""
+
+# Distilled from the real https://www.liverangewater.com/city/auburn HTML
+# (picture/svg markup and duplicate megamenu columns stripped for brevity;
+# structure and every href/class name otherwise verbatim).
+REAL_AUBURN_CITY_PAGE_HTML = """
+<html><body class="cities">
+<noscript><a href="https://www.termsfeed.com/">TermsFeed</a></noscript>
+<a href="#main-content" class="sr-only">Skip to main content</a>
+<header>
+ <div class="px-p75"><a href="tel:404.835.1475">404.835.1475</a></div>
+ <a class="navigation__logo" href="/">RangeWater Residential</a>
+ <nav>
+  <ul>
+   <li class="px-p75">
+    <a class="nav-megamenu__pill" href="https://liverangewater.com/our-story"><span>Our Story</span></a>
+   </li>
+   <li class="px-p75">
+    <a class="nav-megamenu__pill" href="https://liverangewater.com/our-team"><span>Our Team</span></a>
+   </li>
+   <li class="px-p75">
+    <a class="nav-megamenu__pill" href="https://liverangewater.com/news-media"><span>News &amp; Media</span></a>
+   </li>
+   <li class="nav-item"><a class="nav-item__link" href="https://liverangewater.com/find-your-home"><span>Find Your Home</span></a></li>
+   <li class="nav-item"><a class="nav-item__link" href="https://liverangewater.com/careers"><span>Careers</span></a></li>
+   <li class="nav-item"><a class="nav-item__link" href="https://liverangewater.com/contact"><span>Contact</span></a></li>
+  </ul>
+ </nav>
+</header>
+<div id="smooth-wrapper"><div id="smooth-content"><div class="relative">
+<main class="overflow-hidden" id="main-content" role="main">
+ <section class="px-float-spacing">
+  <div class="py-4"><h1>Auburn, Alabama</h1></div>
+ </section>
+ <div class="px-float-spacing"><div id="city-map"></div></div>
+ <section class="my-6 lg:my-8">
+  <div class="px-1 max-w-screen-xl mx-auto">
+   <h2>Our Properties</h2>
+   <div class="-mx-1 flex flex-row flex-wrap">
+    <div class="px-1 w-full md:w-1/2 lg:w-1/3 xl:w-1/4 mb-2 flex">
+     <a class="w-full group" href="https://www.theglennauburn.com/" target="_blank">
+      <div class="pt-4x3 relative bg-gray-200"></div>
+      <div class="flex flex-row flex-wrap justify-center text-p75 p-p5 bg-blue-200">
+       <span class="mx-p5 mb-p25 italic text-teal">Multifamily</span>
+      </div>
+      <div class="flex-1 pt-1 pr-2 pb-1 pl-1 relative transition bg-white">
+       <div class="space-y-p25 text-center">
+        <div class="font-sans-1 text-1p2 uppercase">The Glenn</div>
+        <div>Auburn, AL</div>
+        <div class="font-sans-1">(334) 694-4313</div>
+       </div>
+      </div>
+     </a>
+    </div>
+   </div>
+  </div>
+ </section>
+ <section class="my-6 lg:my-8 px-floating-space">
+  <div class="relative max-w-screen-xl mx-auto">
+   <div class="relative w-full">
+    <div class="-mx-1 flex flex-row flex-wrap">
+     <div class="px-1 w-full flex">
+      <div class="relative w-full p-4 bg-blue-600 text-white flex flex-col justify-center">
+       <h2>See our vision</h2>
+       <a class="group p-p5 italic" href="https://liverangewater.com/our-story">The RangeWater Story</a>
+      </div>
+     </div>
+    </div>
+   </div>
+  </div>
+ </section>
+</main>
+</div></div></div>
+<div class="floating-social-media">
+ <a href="https://www.facebook.com/liverangewater">Go to our Facebook profile</a>
+ <a href="https://www.linkedin.com/company/liverangewater/">Go to our LinkedIn profile</a>
+ <a href="https://www.instagram.com/liverangewater/">Go to our Instagram profile</a>
+</div>
+<footer>
+ <a href="/">RangeWater Residential, LLC</a>
+ <a href="https://goo.gl/maps/e1T8Y9VRSBNkbciy5">5605 Glenridge Drive Suite 800 Atlanta, GA 30342</a>
+ <a href="tel:404.835.1475">404.835.1475</a>
+ <a href="tel:404.835.1476">404.835.1476</a>
+ <a href="mailto:info@liverangewater.com">info@liverangewater.com</a>
+ <a href="https://www.facebook.com/liverangewater">Go to our Facebook profile</a>
+ <a href="https://liverangewater.com/privacy-policy">Privacy Policy</a>
+ <a href="javascript:;">Update cookies preferences</a>
+ <a href="https://2dimes.com">Paradigm</a>
+</footer>
 </body></html>
 """
 
@@ -171,6 +290,24 @@ class TestCityPageParsing(unittest.TestCase):
     def test_termsfeed_footer_link_not_used_as_outbound_site(self):
         result = rw._find_outbound_site_link(INTERNAL_PAGE_WITH_FOOTER_TERMSFEED_HTML)
         self.assertEqual(result, "")
+
+    def test_real_auburn_city_page_golden_fixture(self):
+        """Distilled (picture/svg stripped) but structurally verbatim copy of
+        the real https://www.liverangewater.com/city/auburn markup, pulled
+        via a GitHub Actions diagnostic run. Locks in the fix for the actual
+        bad output seen in production: this page used to yield "TermsFeed",
+        "Our Story", "Our Team", "News & Media" as fake properties instead
+        of the one real one, "The Glenn"."""
+        leads = rw.parse_city_page(REAL_AUBURN_CITY_PAGE_HTML,
+                                    "https://www.liverangewater.com/city/auburn",
+                                    failures_writer=MagicMock())
+        self.assertEqual(len(leads), 1)
+        lead = leads[0]
+        self.assertEqual(lead.name, "The Glenn")
+        self.assertEqual(lead.city, "Auburn")
+        self.assertEqual(lead.phone, "(334) 694-4313")
+        self.assertEqual(lead.property_type, "Multifamily")
+        self.assertEqual(lead.property_url, "https://www.theglennauburn.com/")
 
 
 class TestJsonLdExtraction(unittest.TestCase):
