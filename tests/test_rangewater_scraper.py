@@ -377,6 +377,33 @@ class TestScrapePropertySiteIntegration(unittest.TestCase):
         self.assertTrue(record.internet_isp_mention)
         self.assertEqual(record.leasing_status.lower(), "now leasing")
 
+    def test_stops_after_homepage_once_address_found_even_without_isp_mention(self):
+        """Speed fix: a real run showed a property with a full JSON-LD
+        address/amenities on the homepage still burned 4 extra requests (all
+        404s) trying every subpage in search of an ISP mention that wasn't
+        anywhere on the site. Once an address is found, stop -- don't keep
+        probing subpages just to look for an ISP mention."""
+        html_with_address_no_isp_mention = """
+        <html><head>
+        <script type="application/ld+json">
+        {"name": "The Glenn", "telephone": "(334) 694-4313",
+         "address": {"streetAddress": "2568 E Glenn Ave", "addressLocality": "Auburn",
+                     "addressRegion": "AL", "postalCode": "36830"}}
+        </script>
+        </head><body><p>Now Leasing. No internet mentions anywhere on this page.</p></body></html>
+        """
+        lead = rw.PropertyLead(
+            name="The Glenn", city="Auburn", phone="",
+            property_type="Multifamily", property_url="https://www.theglennauburn.com/",
+            source_city_page="https://www.liverangewater.com/city/auburn",
+        )
+        with patch.object(rw, "fetch", return_value=html_with_address_no_isp_mention) as mock_fetch:
+            record, used_llm = rw.scrape_property_site(lead, failures_writer=MagicMock())
+        mock_fetch.assert_called_once()  # homepage only -- no subpages probed
+        self.assertEqual(record.address_source, "json_ld")
+        self.assertEqual(record.street_address, "2568 E Glenn Ave")
+        self.assertEqual(record.internet_isp_mention, "")
+
     def test_llm_fallback_used_when_no_jsonld(self):
         lead = rw.PropertyLead(
             name="Willow Creek Apartments", city="Knoxville", phone="",

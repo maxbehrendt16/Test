@@ -566,13 +566,15 @@ def scrape_property_site(lead, failures_writer):
     ]
 
     for i, url in enumerate(urls_to_try):
-        # Always fetch the homepage; only fetch subpages if we still need data.
-        if i > 0 and jsonld_address and combined_text_parts:
-            need_more = (
-                not extract_regex_fields(" ".join(combined_text_parts)).get("internet_isp_mention")
-            )
-            if not need_more:
-                break
+        # Always fetch the homepage. Once a JSON-LD address has been found,
+        # stop -- the address is the field that actually requires probing
+        # subpages (and it's what LLM fallback needs page text for too).
+        # In practice ISP mentions turn out to be rare wherever they appear,
+        # so continuing to guess at 4-5 more subpages on every property just
+        # to look for one is expensive for a low hit rate; we settle for
+        # whatever ISP/amenity text turns up on the pages already fetched.
+        if i > 0 and jsonld_address:
+            break
 
         html = fetch(url, "property_site_fetch", failures_writer)
         if not html:
