@@ -1,0 +1,57 @@
+name: RangeWater Portfolio Scraper
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_cities:
+        description: "Smoke test: only crawl the first N city pages (blank = all cities)"
+        required: false
+        default: ""
+      max_properties:
+        description: "Smoke test: only scrape the first N unique properties (blank = all properties)"
+        required: false
+        default: ""
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-rangewater-scraper.txt
+
+      - name: Run RangeWater scraper
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RANGEWATER_MAX_CITIES: ${{ inputs.max_cities }}
+          RANGEWATER_MAX_PROPERTIES: ${{ inputs.max_properties }}
+        run: python rangewater_scraper.py
+
+      - name: Upload results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rangewater-portfolio-results
+          path: |
+            rangewater_portfolio.csv
+            rangewater_scrape_failures.csv
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Print summary to log
+        if: always()
+        run: |
+          echo "=== rangewater_portfolio.csv ==="
+          cat rangewater_portfolio.csv 2>/dev/null || echo "(not created)"
+          echo
+          echo "=== rangewater_scrape_failures.csv ==="
+          cat rangewater_scrape_failures.csv 2>/dev/null || echo "(not created)"

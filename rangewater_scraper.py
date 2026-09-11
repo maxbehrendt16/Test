@@ -718,6 +718,13 @@ def main():
 
         all_leads = []
         city_items = list(cities.items())
+
+        max_cities = os.environ.get("RANGEWATER_MAX_CITIES")
+        if max_cities:
+            city_items = city_items[:int(max_cities)]
+            print(f"RANGEWATER_MAX_CITIES set — limiting this run to the first "
+                  f"{len(city_items)} cities (smoke-test mode).\n")
+
         for idx, (slug, meta) in enumerate(city_items, start=1):
             city_url = meta["url"]
             html = fetch(city_url, "city_page_fetch", failures_writer)
@@ -741,14 +748,21 @@ def main():
         print(f"\n{len(unique_leads)} unique property leads to scrape "
               f"(from {len(all_leads)} listings across all cities).\n")
 
-        for i, lead in enumerate(unique_leads.values(), start=1):
+        leads_to_scrape = list(unique_leads.values())
+        max_properties = os.environ.get("RANGEWATER_MAX_PROPERTIES")
+        if max_properties:
+            leads_to_scrape = leads_to_scrape[:int(max_properties)]
+            print(f"RANGEWATER_MAX_PROPERTIES set — limiting this run to the first "
+                  f"{len(leads_to_scrape)} properties (smoke-test mode).\n")
+
+        for i, lead in enumerate(leads_to_scrape, start=1):
             url_key = (lead.property_url.strip().lower(),)
             if url_key in done_urls:
                 stats["skipped_already_done"] += 1
-                print(f"[{i}/{len(unique_leads)}] Skipping (already scraped): {lead.name}")
+                print(f"[{i}/{len(leads_to_scrape)}] Skipping (already scraped): {lead.name}")
                 continue
 
-            print(f"[{i}/{len(unique_leads)}] Scraping: {lead.name} -> {lead.property_url}")
+            print(f"[{i}/{len(leads_to_scrape)}] Scraping: {lead.name} -> {lead.property_url}")
             try:
                 record, used_llm = scrape_property_site(lead, failures_writer)
             except Exception as exc:
