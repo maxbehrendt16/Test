@@ -84,18 +84,42 @@ def main():
         end = min(len(body_text), m.end() + 20)
         print(f"  ...{body_text[start:end]}...")
 
+    # Base64 image data URIs are huge and worthless for structure inspection --
+    # strip them so the character budget goes to actual markup instead.
+    for tag in soup.find_all(True):
+        for attr in ("src", "data-src", "srcset", "data-srcset"):
+            val = tag.get(attr)
+            if val and "base64," in val:
+                tag[attr] = "[BASE64_STRIPPED]"
+            elif val and val.startswith("data:"):
+                tag[attr] = "[DATA_URI_STRIPPED]"
+    for tag in soup.find_all(["script", "style"]):
+        tag.decompose()
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment)):
+        c.extract()
+
     print("\n" + "=" * 70)
-    print("FULL PRETTIFIED <body> HTML (script/style stripped, truncated to 45000 chars)")
+    print("'OUR PROPERTIES' / PROPERTY-LISTING SECTION (full, untruncated)")
+    print("=" * 70)
+    heading = soup.find(string=re.compile(r"our properties", re.I))
+    if heading:
+        section = heading.find_parent(["section", "div"])
+        # walk up a bit further to make sure we captured the whole card grid
+        for _ in range(2):
+            if section and section.parent:
+                section = section.parent
+        print(section.prettify() if section else "(could not resolve parent section)")
+    else:
+        print("(no element containing 'Our Properties' text found)")
+
+    print("\n" + "=" * 70)
+    print("FULL PRETTIFIED <body> HTML (script/style/base64 stripped, truncated to 60000 chars)")
     print("=" * 70)
     body = soup.body or soup
-    for tag in body.find_all(["script", "style"]):
-        tag.decompose()
-    for c in body.find_all(string=lambda t: isinstance(t, Comment)):
-        c.extract()
     pretty = body.prettify()
-    print(pretty[:45000])
-    if len(pretty) > 45000:
-        print(f"\n...[TRUNCATED, {len(pretty) - 45000} more chars]...")
+    print(pretty[:60000])
+    if len(pretty) > 60000:
+        print(f"\n...[TRUNCATED, {len(pretty) - 60000} more chars]...")
 
 
 if __name__ == "__main__":
