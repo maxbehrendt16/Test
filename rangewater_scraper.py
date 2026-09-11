@@ -257,6 +257,19 @@ def is_external(url):
     return bool(host) and "liverangewater.com" not in host
 
 
+
+# Links that show up on every page's chrome or footer boilerplate and must
+# never be mistaken for a property's own site (privacy-policy generators,
+# social platforms, app stores, etc.).
+NON_PROPERTY_DOMAINS = [
+    "facebook.com", "instagram.com", "twitter.com", "x.com", "linkedin.com",
+    "youtube.com", "tiktok.com", "pinterest.com",
+    "termsfeed.com", "iubenda.com", "cookiebot.com", "onetrust.com",
+    "google.com", "apple.com", "play.google.com", "apps.apple.com",
+    "maps.google.com", "goo.gl",
+]
+
+
 def parse_city_page(html, city_url, failures_writer):
     """Extract every property card on a city page: name, phone, property
     type tag, and outbound link to the property's own site. If a card's
@@ -266,6 +279,12 @@ def parse_city_page(html, city_url, failures_writer):
     leads = []
     seen_names = set()
 
+    # Site chrome (global nav, footer legal links, etc.) repeats on every
+    # page and is never itself a property card -- drop it before scanning
+    # so we don't mistake "Our Story" / "Our Team" / footer links for leads.
+    for chrome in soup.find_all(["header", "footer", "nav"]):
+        chrome.decompose()
+
     # Heuristic: treat each <a> that points to an external domain (or, if
     # none nearby, an internal property subpage) as anchoring one property
     # "card" -- walk up to a reasonably small containing block and pull the
@@ -273,11 +292,10 @@ def parse_city_page(html, city_url, failures_writer):
     candidate_links = soup.find_all("a", href=True)
     for link in candidate_links:
         href = link["href"]
-        # Skip obvious nav/social/anchor junk
-        if href.startswith("#") or href.startswith("mailto:") or href.startswith("tel:"):
+        # Skip obvious nav/social/anchor/JS-handler junk (real hrefs only).
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
-        if any(s in href.lower() for s in ["facebook.com", "instagram.com", "twitter.com",
-                                             "linkedin.com", "youtube.com"]):
+        if any(d in href.lower() for d in NON_PROPERTY_DOMAINS):
             continue
 
         # Find a reasonably-scoped ancestor "card" container to pull text from.
@@ -343,10 +361,17 @@ def _find_outbound_site_link(html):
     """Given an internal liverangewater.com property page, find the actual
     outbound link to the property's own dedicated site."""
     soup = BeautifulSoup(html, "html.parser")
+    for chrome in soup.find_all(["header", "footer", "nav"]):
+        chrome.decompose()
     for link in soup.find_all("a", href=True):
-        href = urljoin(BASE_URL, link["href"])
-        if is_external(href):
-            return href
+        href = link["href"]
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        if any(d in href.lower() for d in NON_PROPERTY_DOMAINS):
+            continue
+        resolved = urljoin(BASE_URL, href)
+        if is_external(resolved):
+            return resolved
     return ""
 
 
