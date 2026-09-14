@@ -5,18 +5,17 @@ access to the real liverangewater.com / property sites, so this is how the
 extraction logic (JSON-LD parsing, regex field extraction, dedupe, resumable
 CSV I/O, LLM-fallback wiring) was verified before handing the script off.
 
-Run: python3 tests/test_rangewater_scraper.py
+Run: python3 rangewater_scraper/test_rangewater_scraper.py
 """
 
 import csv
-import io
 import os
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import rangewater_scraper as rw
 

@@ -5,9 +5,11 @@ network-enabled environment, e.g. a GitHub Actions runner) and print its
 actual link/DOM structure, so parse_city_page() in rangewater_scraper.py can
 be tuned against real markup instead of guesswork.
 
-Not part of the scraper pipeline itself -- run manually / via the
-rangewater_debug_inspect workflow, read the printed output, then delete
-once parse_city_page() is confirmed working.
+Not part of the scraper pipeline itself. Kept here for future use if the
+site's markup changes again -- there's no standing workflow for it anymore
+(it was removed once parse_city_page() was confirmed working against real
+markup), so re-add a workflow_dispatch step calling this script, or run it
+directly wherever there's network access to liverangewater.com, as needed.
 """
 
 import os

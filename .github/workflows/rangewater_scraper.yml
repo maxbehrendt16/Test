@@ -27,13 +27,14 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements-rangewater-scraper.txt
+        run: pip install -r rangewater_scraper/requirements.txt
 
       - name: Run RangeWater scraper
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RANGEWATER_MAX_CITIES: ${{ inputs.max_cities }}
           RANGEWATER_MAX_PROPERTIES: ${{ inputs.max_properties }}
+        working-directory: rangewater_scraper
         run: python rangewater_scraper.py
 
       - name: Upload results as artifact
@@ -42,13 +43,14 @@ jobs:
         with:
           name: rangewater-portfolio-results
           path: |
-            rangewater_portfolio.csv
-            rangewater_scrape_failures.csv
+            rangewater_scraper/rangewater_portfolio.csv
+            rangewater_scraper/rangewater_scrape_failures.csv
           retention-days: 30
           if-no-files-found: warn
 
       - name: Print summary to log
         if: always()
+        working-directory: rangewater_scraper
         run: |
           echo "=== rangewater_portfolio.csv ==="
           cat rangewater_portfolio.csv 2>/dev/null || echo "(not created)"
