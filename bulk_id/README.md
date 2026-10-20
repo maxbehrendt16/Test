@@ -5,7 +5,7 @@ Runs the bulk ID prompt (stored in the OpenAI dashboard) against every property 
 ## Run from GitHub (one button)
 1. Upload your input CSV into this `bulk_id/` folder.
 2. Go to **Actions → Bulk ID Test Run → Run workflow**.
-3. Enter the file name and optionally a limit (use `3` for a test run).
+3. Enter the file name, optionally a limit (use `3` for a test run), and the concurrency (how many properties run in parallel, default 5).
 4. Download `<input name>_results.csv` from the run's **Artifacts**. For a limited test run, the log also prints each property's variables, model, web search calls and parsed output.
 
 The API key comes from the repo's `OPENAI_API_KEY` secret. Other settings come from `.env.example`.
