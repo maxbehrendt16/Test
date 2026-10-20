@@ -1,0 +1,56 @@
+name: Bulk ID Test Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_file:
+        description: "Input CSV path, relative to bulk_id/"
+        required: true
+        default: "sample_input.csv"
+      run_id:
+        description: "Run ID"
+        required: true
+        type: choice
+        options: ["1", "2", "3", "4"]
+        default: "1"
+      limit:
+        description: "Only process the first N properties (e.g. 3 for a test; leave blank for a full run)"
+        required: false
+        default: ""
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r bulk_id/requirements.txt
+
+      - name: Run bulk ID prompt
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        working-directory: bulk_id
+        run: |
+          cp .env.example .env
+          args=(--input "${{ inputs.input_file }}" --run-id "${{ inputs.run_id }}" --output "bulk_id_run${{ inputs.run_id }}.csv")
+          if [ -n "${{ inputs.limit }}" ]; then
+            args+=(--limit "${{ inputs.limit }}")
+          fi
+          python run_bulk_id.py "${args[@]}"
+
+      - name: Upload results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bulk-id-run${{ inputs.run_id }}-results
+          path: bulk_id/bulk_id_run${{ inputs.run_id }}.csv
+          retention-days: 30
+          if-no-files-found: warn

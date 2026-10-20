@@ -1,0 +1,4 @@
+record_id,dma_code,address,master_property name,ownership_type,units,building_count,owner,property_manager,test_group,truth_label
+000580189,528,"1000 Biscayne Boulevard, Miami, FL 33132",1000 Museum,COA,83,1,,,sample,
+040582296,528,"2399 Collins Avenue, Miami Beach, FL 33139",1 Hotel South Beach Residences,COA,,1,,,sample,
+001234567,528,,Example Property,APT,250,,,,sample,
