@@ -7,12 +7,6 @@ on:
         description: "Input CSV path, relative to bulk_id/"
         required: true
         default: "sample_input.csv"
-      run_id:
-        description: "Run ID"
-        required: true
-        type: choice
-        options: ["1", "2", "3", "4"]
-        default: "1"
       limit:
         description: "Only process the first N properties (e.g. 3 for a test; leave blank for a full run)"
         required: false
@@ -40,7 +34,9 @@ jobs:
         working-directory: bulk_id
         run: |
           cp .env.example .env
-          args=(--input "${{ inputs.input_file }}" --run-id "${{ inputs.run_id }}" --output "bulk_id_run${{ inputs.run_id }}.csv")
+          input_name="$(basename "${{ inputs.input_file }}")"
+          echo "OUTPUT_FILE=${input_name%.*}_results.csv" >> "$GITHUB_ENV"
+          args=(--input "${{ inputs.input_file }}" --output "${input_name%.*}_results.csv")
           if [ -n "${{ inputs.limit }}" ]; then
             args+=(--limit "${{ inputs.limit }}")
           fi
@@ -50,7 +46,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bulk-id-run${{ inputs.run_id }}-results
-          path: bulk_id/bulk_id_run${{ inputs.run_id }}.csv
+          name: bulk-id-results
+          path: bulk_id/${{ env.OUTPUT_FILE }}
           retention-days: 30
           if-no-files-found: warn
