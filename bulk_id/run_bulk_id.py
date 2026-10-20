@@ -103,7 +103,7 @@ def load_config():
     config = {
         "api_key": get("OPENAI_API_KEY"),
         "prompt_id": get("PROMPT_ID", "pmpt_6ad7815d491c81909d2bee5ecda0a244033afdc5acb88564"),
-        "prompt_version": get("PROMPT_VERSION", "4"),
+        "prompt_version": get("PROMPT_VERSION", "5"),
         "model": get("MODEL", "gpt-4o"),
         "max_tool_calls": int(get("MAX_TOOL_CALLS", "100")),
         "parallel_tool_calls": as_bool(get("PARALLEL_TOOL_CALLS", "true")),
