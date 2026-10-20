@@ -74,6 +74,10 @@ RESULT_COLUMNS = [
     "evidence_json",
     "web_search_urls",
     "web_search_calls",
+    "web_search_count",
+    "web_open_page_count",
+    "web_find_in_page_count",
+    "web_search_queries",
     "input_tokens",
     "output_tokens",
     "response_id",
@@ -257,8 +261,11 @@ def unique(items):
 
 
 def web_search_info(response):
-    """Count web search calls and collect URLs from both the search calls and the output's url_citations."""
+    """Count web search calls by action type, and collect the search queries plus URLs from both the
+    search calls and the output's url_citations."""
     calls = 0
+    action_counts = {"search": 0, "open_page": 0, "find_in_page": 0}
+    queries = []
     urls = []
     for item in response.output or []:
         item_type = getattr(item, "type", None)
@@ -266,6 +273,12 @@ def web_search_info(response):
             calls += 1
             action = getattr(item, "action", None)
             if action is not None:
+                action_type = getattr(action, "type", None)
+                if action_type in action_counts:
+                    action_counts[action_type] += 1
+                if action_type == "search":
+                    queries.extend(getattr(action, "queries", None) or [])
+                    queries.append(getattr(action, "query", None))
                 urls.append(getattr(action, "url", None))
                 for source in getattr(action, "sources", None) or []:
                     urls.append(getattr(source, "url", None))
@@ -274,7 +287,14 @@ def web_search_info(response):
                 for ann in getattr(part, "annotations", None) or []:
                     if getattr(ann, "type", None) == "url_citation":
                         urls.append(getattr(ann, "url", None))
-    return calls, unique(clean_url(u) for u in urls)
+    return {
+        "web_search_urls": " | ".join(unique(clean_url(u) for u in urls)),
+        "web_search_calls": calls,
+        "web_search_count": action_counts["search"],
+        "web_open_page_count": action_counts["open_page"],
+        "web_find_in_page_count": action_counts["find_in_page"],
+        "web_search_queries": " | ".join(unique(q.strip() for q in queries if q)),
+    }
 
 
 def domain_of(url):
@@ -316,13 +336,11 @@ def evidence_fields(parsed):
 def build_result(response):
     raw = response.output_text or ""
     parsed = parse_output(raw)
-    calls, search_urls = web_search_info(response)
     usage = response.usage
     result = {field: format_value(parsed.get(field)) if parsed else "" for field in PARSED_FIELDS}
     result.update(evidence_fields(parsed))
     result.update({
-        "web_search_urls": " | ".join(search_urls),
-        "web_search_calls": calls,
+        **web_search_info(response),
         "input_tokens": usage.input_tokens if usage else 0,
         "output_tokens": usage.output_tokens if usage else 0,
         "response_id": response.id,
@@ -344,6 +362,9 @@ def process_property(client, config, row):
         result.update({
             "evidence_count": 0,
             "web_search_calls": 0,
+            "web_search_count": 0,
+            "web_open_page_count": 0,
+            "web_find_in_page_count": 0,
             "input_tokens": 0,
             "output_tokens": 0,
             "parse_ok": "false",
@@ -370,6 +391,9 @@ def print_test_detail(row, variables, result, parsed, config):
     print(f"Model reported: {model}  [{model_flag}]")
     calls = result.get("web_search_calls", 0)
     print(f"Web search calls: {calls}" + ("" if calls else "  [WARNING: web search did not run]"))
+    print(f"  searches={result.get('web_search_count', 0)}, open_page={result.get('web_open_page_count', 0)}, "
+          f"find_in_page={result.get('web_find_in_page_count', 0)}")
+    print(f"Web search queries: {result.get('web_search_queries') or '(none)'}")
     print(f"Web search URLs: {result.get('web_search_urls') or '(none)'}")
     print(f"Evidence URLs ({result.get('evidence_count', 0)}): {result.get('evidence_urls') or '(none)'}")
     print(f"Tokens: in={result.get('input_tokens')} out={result.get('output_tokens')}")
@@ -400,6 +424,13 @@ def main():
     existing = read_existing(output_path)
     existing_columns = list(existing.columns) if existing is not None else None
     columns = existing_columns or output_columns(df.columns)
+    added = [c for c in output_columns(df.columns) if existing_columns and c not in existing_columns]
+    if added:
+        # Output came from an older version of this script: add the new columns so they aren't dropped.
+        columns = existing_columns + added
+        existing = existing.reindex(columns=columns, fill_value="")
+        existing.to_csv(output_path, index=False, encoding="utf-8")
+        print(f"Added {len(added)} new column(s) to existing output: {', '.join(added)}")
     done_keys = set()
     if existing is not None:
         done_keys = {row_key(r) for r in existing.to_dict("records") if not r["error"].strip()}
