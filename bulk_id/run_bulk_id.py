@@ -5,17 +5,18 @@ Runs the bulk ID prompt (stored in the OpenAI dashboard) against every property 
 input CSV using the OpenAI Responses API with web search enabled -- one call per
 property -- and writes each property's parsed result to an output CSV.
 
-This script does NOT combine runs or classify properties as bulk/retail; it is run once
-per run_id (1-4) and rollup is done separately.
+This script does NOT combine runs or classify properties as bulk/retail. The run_id comes
+from each input row and is copied to the output; rollup across runs is done separately.
 
 Usage:
-    python run_bulk_id.py --input <input.csv> --run-id <1-4> --output <output.csv> [--limit N]
+    python run_bulk_id.py --input <input.csv> --output <output.csv> [--limit N]
 
 Configuration is read from a .env file next to this script (see .env.example). Values
 already set in the environment (e.g. OPENAI_API_KEY from a GitHub secret) take precedence.
 
-Resumable: if the output file already exists, record_ids already in it are skipped and
-the remaining properties are appended.
+Resumable: if the output file already exists, rows whose (record_id, run_id) pair already
+has a successful result are skipped. Everything else is processed, and any previously failed
+rows for those pairs are replaced.
 """
 import argparse
 import csv
@@ -49,7 +50,7 @@ VARIABLE_MAP = {
     "owner": "owner",
     "property_manager": "property_manager",
 }
-REQUIRED_INPUT_COLUMNS = ["record_id", "dma_code", *VARIABLE_MAP]
+REQUIRED_INPUT_COLUMNS = ["record_id", "dma_code", "run_id", *VARIABLE_MAP]
 
 # Fields copied straight from the model's parsed JSON.
 PARSED_FIELDS = [
@@ -130,11 +131,27 @@ def output_columns(input_columns):
     return ["record_id", "dma_code", "run_id", *carried, *RESULT_COLUMNS]
 
 
-def read_completed_ids(path):
+def row_key(row):
+    return (str(row["record_id"]).strip(), str(row["run_id"]).strip())
+
+
+def read_existing(path):
     if not path.exists() or path.stat().st_size == 0:
-        return set(), None
-    existing = pd.read_csv(path, dtype=str, keep_default_na=False)
-    return set(existing["record_id"]), list(existing.columns)
+        return None
+    return pd.read_csv(path, dtype=str, keep_default_na=False)
+
+
+def drop_failed_rows(path, existing, keys):
+    """Rewrite the output without previously failed rows for the given (record_id, run_id) keys."""
+    failed = existing["error"].str.strip() != ""
+    in_keys = existing.apply(lambda r: row_key(r) in keys, axis=1)
+    drop = failed & in_keys
+    if not drop.any():
+        return 0
+    tmp = path.with_name(path.name + ".tmp")
+    existing[~drop].to_csv(tmp, index=False, encoding="utf-8")
+    os.replace(tmp, path)
+    return int(drop.sum())
 
 
 def build_variables(row):
@@ -309,9 +326,9 @@ def process_property(client, config, row):
 # Main
 # ---------------------------------------------------------------------------
 
-def print_test_detail(record_id, variables, result, parsed, config):
+def print_test_detail(row, variables, result, parsed, config):
     print("\n" + "=" * 78)
-    print(f"record_id: {record_id}")
+    print(f"record_id: {row['record_id']}  run_id: {row['run_id']}")
     print("Variables sent:")
     for name, value in variables.items():
         print(f"  {name}: {value!r}")
@@ -337,7 +354,6 @@ def print_test_detail(record_id, variables, result, parsed, config):
 def main():
     parser = argparse.ArgumentParser(description="Run the bulk ID prompt against every property in a CSV.")
     parser.add_argument("--input", required=True, help="Input CSV path")
-    parser.add_argument("--run-id", required=True, type=int, choices=[1, 2, 3, 4])
     parser.add_argument("--output", required=True, help="Output CSV path (appended to if it exists)")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N properties")
     args = parser.parse_args()
@@ -348,13 +364,23 @@ def main():
         df = df.head(args.limit)
 
     output_path = Path(args.output)
-    done_ids, existing_columns = read_completed_ids(output_path)
+    existing = read_existing(output_path)
+    existing_columns = list(existing.columns) if existing is not None else None
     columns = existing_columns or output_columns(df.columns)
-    todo = [row for row in df.to_dict("records") if row["record_id"] not in done_ids]
+    done_keys = set()
+    if existing is not None:
+        done_keys = {row_key(r) for r in existing.to_dict("records") if not r["error"].strip()}
+    todo = [row for row in df.to_dict("records") if row_key(row) not in done_keys]
 
     total = len(todo)
     skipped = len(df) - total
-    print(f"Run {args.run_id}: {len(df)} properties in input, {skipped} already in output, {total} to process")
+    run_ids = ", ".join(sorted(set(df["run_id"])))
+    print(f"run_id(s) {run_ids}: {len(df)} rows in input, {skipped} already successful in output, "
+          f"{total} to process")
+    if existing is not None and total:
+        replaced = drop_failed_rows(output_path, existing, {row_key(r) for r in todo})
+        if replaced:
+            print(f"Removed {replaced} previously failed row(s) from output; they will be re-run")
     print(f"Prompt {config['prompt_id']} v{config['prompt_version']}, model={config['model']}, "
           f"concurrency={config['concurrency']}", flush=True)
     if total == 0:
@@ -377,7 +403,7 @@ def main():
             for future in as_completed(futures):
                 row = futures[future]
                 variables, result, parsed = future.result()
-                out_row = {**row, "run_id": args.run_id, **result}
+                out_row = {**row, **result}
 
                 with write_lock:
                     writer.writerow(out_row)
@@ -395,9 +421,10 @@ def main():
                 stats["web_search_calls"] += int(result["web_search_calls"] or 0)
 
                 status = "ERROR" if result["error"] else ("parse failed" if result["parse_ok"] != "true" else "ok")
-                print(f"{stats['processed']} of {total} complete  (record_id {row['record_id']}: {status})", flush=True)
+                print(f"{stats['processed']} of {total} complete  "
+                      f"(record_id {row['record_id']}, run_id {row['run_id']}: {status})", flush=True)
                 if args.limit is not None:
-                    print_test_detail(row["record_id"], variables, result, parsed, config)
+                    print_test_detail(row, variables, result, parsed, config)
 
     print("\nSummary")
     print(f"  Properties processed:  {stats['processed']}")
