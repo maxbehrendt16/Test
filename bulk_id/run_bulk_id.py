@@ -200,20 +200,52 @@ def call_api(client, config, variables):
 # Response parsing
 # ---------------------------------------------------------------------------
 
-FENCE_RE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL)
+FENCE_RE = re.compile(r"```[a-zA-Z0-9_-]*[ \t]*\n?(.*?)```", re.DOTALL)
 
 
-def strip_code_fences(text):
-    match = FENCE_RE.match(text)
-    return match.group(1).strip() if match else text.strip()
+def json_candidates(text):
+    """Yield possible JSON strings: the whole text, then the contents of each code block."""
+    yield text.strip()
+    for match in FENCE_RE.finditer(text):
+        yield match.group(1).strip()
+
+
+def find_json_object(text):
+    """Find a JSON object anywhere in the text, preferring one that has the expected output fields."""
+    decoder = json.JSONDecoder()
+    fallback = None
+    for start in (m.start() for m in re.finditer(r"\{", text)):
+        try:
+            data, _ = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            if any(field in data for field in PARSED_FIELDS) or "evidence" in data:
+                return data
+            fallback = fallback or data
+    return fallback
 
 
 def parse_output(text):
-    try:
-        data = json.loads(strip_code_fences(text))
-    except (json.JSONDecodeError, TypeError):
+    if not isinstance(text, str) or not text.strip():
         return None
-    return data if isinstance(data, dict) else None
+    for candidate in json_candidates(text):
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return find_json_object(text)
+
+
+def clean_url(url):
+    """Drop the utm_source=openai tag that OpenAI adds to cited URLs, so duplicates match."""
+    if not url:
+        return url
+    parts = urlparse(url)
+    query = "&".join(q for q in parts.query.split("&") if q and q != "utm_source=openai")
+    return parts._replace(query=query).geturl()
 
 
 def unique(items):
@@ -225,6 +257,7 @@ def unique(items):
 
 
 def web_search_info(response):
+    """Count web search calls and collect URLs from both the search calls and the output's url_citations."""
     calls = 0
     urls = []
     for item in response.output or []:
@@ -241,7 +274,7 @@ def web_search_info(response):
                 for ann in getattr(part, "annotations", None) or []:
                     if getattr(ann, "type", None) == "url_citation":
                         urls.append(getattr(ann, "url", None))
-    return calls, unique(urls)
+    return calls, unique(clean_url(u) for u in urls)
 
 
 def domain_of(url):
