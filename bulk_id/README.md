@@ -10,6 +10,9 @@ Runs the bulk ID prompt (stored in the OpenAI dashboard) against every property 
 
 The API key comes from the repo's `OPENAI_API_KEY` secret. Other settings come from `.env.example`.
 
+### Test prompt
+**Actions → Bulk ID Test Prompt Run** works the same way but runs the alternate test prompt set at the top of `.github/workflows/bulk_id_test_prompt.yml` (currently `pmpt_6ad7b7273d3481958e7eceb3143d9e9f0a6be6c2a973741d`, version 1). Its output is `<input name>_test_prompt_results.csv`. All other settings come from `.env.example`.
+
 ## Run locally
 ```
 pip install -r requirements.txt

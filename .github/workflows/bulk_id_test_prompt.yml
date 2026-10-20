@@ -1,0 +1,70 @@
+name: Bulk ID Test Prompt Run
+
+# Same as bulk_id.yml, but runs the alternate test prompt below instead of the main
+# prompt in .env.example. Results are named *_test_prompt_results.csv so they can't be
+# mixed up with main-prompt results.
+env:
+  TEST_PROMPT_ID: pmpt_6ad7b7273d3481958e7eceb3143d9e9f0a6be6c2a973741d
+  TEST_PROMPT_VERSION: "1"
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_file:
+        description: "Input CSV path, relative to bulk_id/"
+        required: true
+        default: "sample_input.csv"
+      limit:
+        description: "Only process the first N properties (e.g. 3 for a test; leave blank for a full run)"
+        required: false
+        default: ""
+      concurrency:
+        description: "Number of properties to process in parallel"
+        required: true
+        default: "5"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r bulk_id/requirements.txt
+
+      - name: Run bulk ID test prompt
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+          PROMPT_ID: ${{ env.TEST_PROMPT_ID }}
+          PROMPT_VERSION: ${{ env.TEST_PROMPT_VERSION }}
+        working-directory: bulk_id
+        run: |
+          if ! [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Concurrency must be a whole number of 1 or more (got '$CONCURRENCY')"
+            exit 1
+          fi
+          cp .env.example .env
+          input_name="$(basename "${{ inputs.input_file }}")"
+          echo "OUTPUT_FILE=${input_name%.*}_test_prompt_results.csv" >> "$GITHUB_ENV"
+          args=(--input "${{ inputs.input_file }}" --output "${input_name%.*}_test_prompt_results.csv")
+          if [ -n "${{ inputs.limit }}" ]; then
+            args+=(--limit "${{ inputs.limit }}")
+          fi
+          python run_bulk_id.py "${args[@]}"
+
+      - name: Upload results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bulk-id-test-prompt-results
+          path: bulk_id/${{ env.OUTPUT_FILE }}
+          retention-days: 30
+          if-no-files-found: warn
