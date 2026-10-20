@@ -11,6 +11,10 @@ on:
         description: "Only process the first N properties (e.g. 3 for a test; leave blank for a full run)"
         required: false
         default: ""
+      concurrency:
+        description: "Number of properties to process in parallel"
+        required: true
+        default: "5"
 
 jobs:
   run:
@@ -31,8 +35,13 @@ jobs:
       - name: Run bulk ID prompt
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CONCURRENCY: ${{ inputs.concurrency }}
         working-directory: bulk_id
         run: |
+          if ! [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Concurrency must be a whole number of 1 or more (got '$CONCURRENCY')"
+            exit 1
+          fi
           cp .env.example .env
           input_name="$(basename "${{ inputs.input_file }}")"
           echo "OUTPUT_FILE=${input_name%.*}_results.csv" >> "$GITHUB_ENV"
