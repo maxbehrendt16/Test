@@ -50,7 +50,8 @@ VARIABLE_MAP = {
     "owner": "owner",
     "property_manager": "property_manager",
 }
-REQUIRED_INPUT_COLUMNS = ["record_id", "dma_code", "run_id", *VARIABLE_MAP]
+ID_COLUMNS = ["record_id", "dma_code", "run_id"]
+ALL_PROMPT_VARIABLES = list(VARIABLE_MAP.values())
 
 # Fields copied straight from the model's parsed JSON.
 PARSED_FIELDS = [
@@ -82,6 +83,7 @@ RESULT_COLUMNS = [
     "output_tokens",
     "response_id",
     "model",
+    "prompt_id",
     "prompt_version",
     "timestamp",
     "parse_ok",
@@ -111,9 +113,15 @@ def load_config():
         "search_context_size": get("SEARCH_CONTEXT_SIZE", "medium"),
         "max_output_tokens": int(get("MAX_OUTPUT_TOKENS", "4000")),
         "concurrency": int(get("CONCURRENCY", "5")),
+        "prompt_variables": [v.strip() for v in get("PROMPT_VARIABLES", ",".join(ALL_PROMPT_VARIABLES)).split(",")
+                             if v.strip()],
     }
     if not config["api_key"]:
         sys.exit("OPENAI_API_KEY is not set (add it to .env or the environment).")
+    unknown = [v for v in config["prompt_variables"] if v not in ALL_PROMPT_VARIABLES]
+    if unknown or not config["prompt_variables"]:
+        sys.exit(f"PROMPT_VARIABLES has unknown or no variable names: {', '.join(unknown) or '(empty)'}. "
+                 f"Allowed: {', '.join(ALL_PROMPT_VARIABLES)}")
     return config
 
 
@@ -121,10 +129,12 @@ def load_config():
 # Input / output
 # ---------------------------------------------------------------------------
 
-def read_input(path):
+def read_input(path, prompt_variables):
+    """Read the input CSV, requiring the ID columns plus the columns behind the prompt's variables."""
     df = pd.read_csv(path, dtype=str, keep_default_na=False)
     df.columns = [c.strip() for c in df.columns]
-    missing = [c for c in REQUIRED_INPUT_COLUMNS if c not in df.columns]
+    required = ID_COLUMNS + [col for col, var in VARIABLE_MAP.items() if var in prompt_variables]
+    missing = [c for c in required if c not in df.columns]
     if missing:
         sys.exit(f"Input file is missing required column(s): {', '.join(missing)}")
     return df
@@ -158,8 +168,9 @@ def drop_failed_rows(path, existing, keys):
     return int(drop.sum())
 
 
-def build_variables(row):
-    return {var: str(row.get(col, "") or "").strip() for col, var in VARIABLE_MAP.items()}
+def build_variables(row, names):
+    """Build the prompt variables, passing only the ones listed in PROMPT_VARIABLES."""
+    return {var: str(row.get(col, "") or "").strip() for col, var in VARIABLE_MAP.items() if var in names}
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +364,7 @@ def build_result(response):
 
 
 def process_property(client, config, row):
-    variables = build_variables(row)
+    variables = build_variables(row, config["prompt_variables"])
     try:
         response = call_api(client, config, variables)
         result, parsed = build_result(response)
@@ -371,6 +382,7 @@ def process_property(client, config, row):
             "error": f"{type(exc).__name__}: {exc}",
         })
         parsed = None
+    result["prompt_id"] = config["prompt_id"]
     result["prompt_version"] = config["prompt_version"]
     result["timestamp"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return variables, result, parsed
@@ -416,7 +428,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config()
-    df = read_input(args.input)
+    df = read_input(args.input, config["prompt_variables"])
     if args.limit is not None:
         df = df.head(args.limit)
 
@@ -447,6 +459,7 @@ def main():
             print(f"Removed {replaced} previously failed row(s) from output; they will be re-run")
     print(f"Prompt {config['prompt_id']} v{config['prompt_version']}, model={config['model']}, "
           f"concurrency={config['concurrency']}", flush=True)
+    print(f"Prompt variables: {', '.join(config['prompt_variables'])}", flush=True)
     if total == 0:
         return
 
