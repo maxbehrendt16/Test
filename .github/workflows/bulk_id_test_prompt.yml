@@ -7,6 +7,7 @@ env:
   TEST_PROMPT_ID: pmpt_6ad7b7273d3481958e7eceb3143d9e9f0a6be6c2a973741d
   TEST_PROMPT_VERSION: "1"
   TEST_PROMPT_VARIABLES: property_name,property_address
+  TEST_MODEL: gpt-4o
 
 on:
   workflow_dispatch:
@@ -47,6 +48,7 @@ jobs:
           PROMPT_ID: ${{ env.TEST_PROMPT_ID }}
           PROMPT_VERSION: ${{ env.TEST_PROMPT_VERSION }}
           PROMPT_VARIABLES: ${{ env.TEST_PROMPT_VARIABLES }}
+          MODEL: ${{ env.TEST_MODEL }}
         working-directory: bulk_id
         run: |
           if ! [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then

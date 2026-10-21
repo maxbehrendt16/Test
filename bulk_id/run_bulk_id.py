@@ -106,7 +106,8 @@ def load_config():
         "api_key": get("OPENAI_API_KEY"),
         "prompt_id": get("PROMPT_ID", "pmpt_6ad7815d491c81909d2bee5ecda0a244033afdc5acb88564"),
         "prompt_version": get("PROMPT_VERSION", "9"),
-        "model": get("MODEL", "gpt-4o"),
+        # Blank MODEL means use the model saved with the prompt in the OpenAI dashboard.
+        "model": get("MODEL", ""),
         "max_tool_calls": int(get("MAX_TOOL_CALLS", "100")),
         "parallel_tool_calls": as_bool(get("PARALLEL_TOOL_CALLS", "true")),
         "service_tier": get("SERVICE_TIER", "auto"),
@@ -188,8 +189,9 @@ def call_api(client, config, variables):
     attempt = 0
     while True:
         try:
+            model_arg = {"model": config["model"]} if config["model"] else {}
             return client.responses.create(
-                model=config["model"],
+                **model_arg,
                 prompt={
                     "id": config["prompt_id"],
                     "version": config["prompt_version"],
@@ -399,8 +401,11 @@ def print_test_detail(row, variables, result, parsed, config):
     for name, value in variables.items():
         print(f"  {name}: {value!r}")
     model = result.get("model") or "(none)"
-    model_flag = "OK" if str(model).startswith(config["model"]) else f"WARNING: expected {config['model']}"
-    print(f"Model reported: {model}  [{model_flag}]")
+    if config["model"]:
+        model_flag = "OK" if str(model).startswith(config["model"]) else f"WARNING: expected {config['model']}"
+        print(f"Model reported: {model}  [{model_flag}]")
+    else:
+        print(f"Model reported: {model}  [from prompt settings]")
     calls = result.get("web_search_calls", 0)
     print(f"Web search calls: {calls}" + ("" if calls else "  [WARNING: web search did not run]"))
     print(f"  searches={result.get('web_search_count', 0)}, open_page={result.get('web_open_page_count', 0)}, "
@@ -457,7 +462,7 @@ def main():
         replaced = drop_failed_rows(output_path, existing, {row_key(r) for r in todo})
         if replaced:
             print(f"Removed {replaced} previously failed row(s) from output; they will be re-run")
-    print(f"Prompt {config['prompt_id']} v{config['prompt_version']}, model={config['model']}, "
+    print(f"Prompt {config['prompt_id']} v{config['prompt_version']}, model={config['model'] or '(from prompt)'}, "
           f"concurrency={config['concurrency']}", flush=True)
     print(f"Prompt variables: {', '.join(config['prompt_variables'])}", flush=True)
     if total == 0:
