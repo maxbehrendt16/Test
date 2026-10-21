@@ -105,7 +105,7 @@ def load_config():
     config = {
         "api_key": get("OPENAI_API_KEY"),
         "prompt_id": get("PROMPT_ID", "pmpt_6ad7815d491c81909d2bee5ecda0a244033afdc5acb88564"),
-        "prompt_version": get("PROMPT_VERSION", "11"),
+        "prompt_version": get("PROMPT_VERSION", "12"),
         # Blank MODEL means use the model saved with the prompt in the OpenAI dashboard.
         "model": get("MODEL", ""),
         "max_tool_calls": int(get("MAX_TOOL_CALLS", "100")),
