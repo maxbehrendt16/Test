@@ -14,7 +14,7 @@ on:
       concurrency:
         description: "Number of properties to process in parallel"
         required: true
-        default: "5"
+        default: "15"
 
 jobs:
   run:
@@ -45,17 +45,30 @@ jobs:
           cp .env.example .env
           input_name="$(basename "${{ inputs.input_file }}")"
           echo "OUTPUT_FILE=${input_name%.*}_results.csv" >> "$GITHUB_ENV"
+          echo "SNOWFLAKE_FILE=${input_name%.*}_results_snowflake.csv" >> "$GITHUB_ENV"
           args=(--input "${{ inputs.input_file }}" --output "${input_name%.*}_results.csv")
           if [ -n "${{ inputs.limit }}" ]; then
             args+=(--limit "${{ inputs.limit }}")
           fi
           python run_bulk_id.py "${args[@]}"
 
+      - name: Show first rows of both output files (test runs only)
+        if: always() && inputs.limit != ''
+        working-directory: bulk_id
+        run: |
+          for f in "$OUTPUT_FILE" "$SNOWFLAKE_FILE"; do
+            [ -f "$f" ] || continue
+            echo "===== $f ====="
+            python -c "import csv,sys; [print(dict(r)) for r in csv.DictReader(open(sys.argv[1], encoding='utf-8'))]" "$f"
+          done
+
       - name: Upload results as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bulk-id-results
-          path: bulk_id/${{ env.OUTPUT_FILE }}
+          path: |
+            bulk_id/${{ env.OUTPUT_FILE }}
+            bulk_id/${{ env.SNOWFLAKE_FILE }}
           retention-days: 30
           if-no-files-found: warn
