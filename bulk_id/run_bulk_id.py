@@ -51,6 +51,16 @@ VARIABLE_MAP = {
     "property_manager": "property_manager",
 }
 ID_COLUMNS = ["record_id", "dma_code", "run_id"]
+# Other accepted names for an input column (some input files use property_name for the property name).
+COLUMN_ALIASES = {"master_property name": ["property_name"]}
+
+
+def column_value(row, col):
+    """Get an input column's value, falling back to its aliases."""
+    for name in [col, *COLUMN_ALIASES.get(col, [])]:
+        if name in row:
+            return row[name]
+    return ""
 ALL_PROMPT_VARIABLES = list(VARIABLE_MAP.values())
 
 # Fields copied straight from the model's parsed JSON.
@@ -140,7 +150,7 @@ def read_input(path, prompt_variables):
     df = pd.read_csv(path, dtype=str, keep_default_na=False)
     df.columns = [c.strip() for c in df.columns]
     required = ID_COLUMNS + [col for col, var in VARIABLE_MAP.items() if var in prompt_variables]
-    missing = [c for c in required if c not in df.columns]
+    missing = [c for c in required if not any(n in df.columns for n in [c, *COLUMN_ALIASES.get(c, [])])]
     if missing:
         sys.exit(f"Input file is missing required column(s): {', '.join(missing)}")
     return df
@@ -206,7 +216,7 @@ def snowflake_row(row):
         "record_id": row.get("record_id", ""),
         "dma_code": row.get("dma_code", ""),
         "address": row.get("address", ""),
-        "property_name": row.get("master_property name", ""),
+        "property_name": column_value(row, "master_property name"),
         "run_id": row.get("run_id", ""),
         "prompt": "",
         "created_at": to_epoch(row.get("timestamp")),
@@ -237,7 +247,7 @@ def write_snowflake(output_path):
 
 def build_variables(row, names):
     """Build the prompt variables, passing only the ones listed in PROMPT_VARIABLES."""
-    return {var: str(row.get(col, "") or "").strip() for col, var in VARIABLE_MAP.items() if var in names}
+    return {var: str(column_value(row, col) or "").strip() for col, var in VARIABLE_MAP.items() if var in names}
 
 
 # ---------------------------------------------------------------------------
