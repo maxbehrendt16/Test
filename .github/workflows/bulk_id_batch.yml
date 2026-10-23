@@ -1,0 +1,110 @@
+name: Bulk ID 4-Run Batch
+
+# Runs the four input files for a batch (runid_1 to runid_4) in parallel, one job each,
+# then puts the four regular output files into a single artifact to download.
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_name:
+        description: "Batch name at the end of the file names, e.g. 50Inc25DMAPrompt2 (runs bulk_id/*_runid_1_<name>.csv to *_runid_4_<name>.csv)"
+        required: true
+      limit:
+        description: "Only process the first N properties of each file (e.g. 3 for a test; leave blank for a full run)"
+        required: false
+        default: ""
+      concurrency:
+        description: "Number of properties to process in parallel, per file"
+        required: true
+        default: "15"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        run_id: [1, 2, 3, 4]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r bulk_id/requirements.txt
+
+      - name: Run bulk ID prompt
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+          BATCH_NAME: ${{ inputs.batch_name }}
+          LIMIT: ${{ inputs.limit }}
+        working-directory: bulk_id
+        run: |
+          if ! [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Concurrency must be a whole number of 1 or more (got '$CONCURRENCY')"
+            exit 1
+          fi
+          shopt -s nullglob
+          matches=( *_runid_${{ matrix.run_id }}_"$BATCH_NAME".csv )
+          if [ "${#matches[@]}" -ne 1 ]; then
+            echo "Expected exactly one file matching *_runid_${{ matrix.run_id }}_${BATCH_NAME}.csv in bulk_id/, found ${#matches[@]}: ${matches[*]}"
+            exit 1
+          fi
+          input_file="${matches[0]}"
+          echo "Input file: $input_file"
+          cp .env.example .env
+          echo "OUTPUT_FILE=${input_file%.*}_results.csv" >> "$GITHUB_ENV"
+          echo "SNOWFLAKE_FILE=${input_file%.*}_results_snowflake.csv" >> "$GITHUB_ENV"
+          args=(--input "$input_file" --output "${input_file%.*}_results.csv")
+          if [ -n "$LIMIT" ]; then
+            args+=(--limit "$LIMIT")
+          fi
+          python run_bulk_id.py "${args[@]}"
+
+      - name: Upload this file's results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runid-${{ matrix.run_id }}-results
+          path: |
+            bulk_id/${{ env.OUTPUT_FILE }}
+            bulk_id/${{ env.SNOWFLAKE_FILE }}
+          retention-days: 30
+          if-no-files-found: warn
+
+  combine:
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all four results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: runid-*-results
+          path: downloaded
+          merge-multiple: true
+
+      - name: Collect the regular output files
+        run: |
+          mkdir -p all_results
+          shopt -s nullglob
+          for f in downloaded/*_results.csv; do
+            cp "$f" all_results/
+          done
+          echo "Files in the combined download:"
+          ls -1 all_results
+
+      - name: Upload all four output files as one download
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-results-${{ inputs.batch_name }}
+          path: all_results/
+          retention-days: 30
+          if-no-files-found: warn

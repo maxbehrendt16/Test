@@ -8,6 +8,9 @@ Runs the bulk ID prompt (stored in the OpenAI dashboard) against every property 
 3. Enter the file name, optionally a limit (use `3` for a test run), and the concurrency (how many properties run in parallel, default 5).
 4. Download `<input name>_results.csv` and `<input name>_results_snowflake.csv` from the run's **Artifacts**. For a limited test run, the log also prints each property's variables, model, web search calls and parsed output.
 
+### Running a batch of 4 files at once
+**Actions → Bulk ID 4-Run Batch → Run workflow.** Enter the batch name from the end of the file names (for `dma_code_999_run_1_property_list_runid_1_50Inc25DMAPrompt2.csv` that's `50Inc25DMAPrompt2`). It runs the `runid_1` to `runid_4` files in parallel. When it finishes, download **all-results-<batch name>** from the run's Artifacts: one zip with the four regular output files. Each file's Snowflake export is in its own `runid-N-results` artifact.
+
 The `_snowflake` file has the columns of the Snowflake `BULK_PROPERTIES` table (`record_id, dma_code, address, property_name, run_id, prompt, created_at, response_id, response_text, web_search_urls, status, error, total_tokens, input_tokens, output_tokens`). It is rebuilt from the full main output at the end of every run.
 
 The API key comes from the repo's `OPENAI_API_KEY` secret. Other settings come from `.env.example`. `PROMPT_VARIABLES` lists which variables the prompt takes; only those are sent.
