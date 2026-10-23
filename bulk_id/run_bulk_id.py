@@ -105,7 +105,7 @@ def load_config():
     config = {
         "api_key": get("OPENAI_API_KEY"),
         "prompt_id": get("PROMPT_ID", "pmpt_6ad7815d491c81909d2bee5ecda0a244033afdc5acb88564"),
-        "prompt_version": get("PROMPT_VERSION", "12"),
+        "prompt_version": get("PROMPT_VERSION", "8"),
         # Blank MODEL means use the model saved with the prompt in the OpenAI dashboard.
         "model": get("MODEL", ""),
         "max_tool_calls": int(get("MAX_TOOL_CALLS", "100")),
@@ -113,12 +113,17 @@ def load_config():
         "service_tier": get("SERVICE_TIER", "auto"),
         "search_context_size": get("SEARCH_CONTEXT_SIZE", "medium"),
         "max_output_tokens": int(get("MAX_OUTPUT_TOKENS", "4000")),
-        "concurrency": int(get("CONCURRENCY", "5")),
+        "concurrency": int(get("CONCURRENCY", "15")),
+        # Only for reasoning models: when set, sent as reasoning={"effort": ...}. Leave unset for gpt-4o.
+        "reasoning_effort": get("REASONING_EFFORT", ""),
         "prompt_variables": [v.strip() for v in get("PROMPT_VARIABLES", ",".join(ALL_PROMPT_VARIABLES)).split(",")
                              if v.strip()],
     }
     if not config["api_key"]:
         sys.exit("OPENAI_API_KEY is not set (add it to .env or the environment).")
+    if config["reasoning_effort"] and config["model"].startswith("gpt-4o"):
+        sys.exit(f"REASONING_EFFORT is set but MODEL {config['model']} does not support reasoning settings. "
+                 "Remove REASONING_EFFORT or change MODEL.")
     unknown = [v for v in config["prompt_variables"] if v not in ALL_PROMPT_VARIABLES]
     if unknown or not config["prompt_variables"]:
         sys.exit(f"PROMPT_VARIABLES has unknown or no variable names: {', '.join(unknown) or '(empty)'}. "
@@ -169,6 +174,67 @@ def drop_failed_rows(path, existing, keys):
     return int(drop.sum())
 
 
+SNOWFLAKE_COLUMNS = [
+    "record_id", "dma_code", "address", "property_name", "run_id", "prompt", "created_at", "response_id",
+    "response_text", "web_search_urls", "status", "error", "total_tokens", "input_tokens", "output_tokens",
+]
+
+
+def snowflake_path(output_path):
+    return output_path.with_name(f"{output_path.stem}_snowflake{output_path.suffix}")
+
+
+def to_epoch(timestamp):
+    try:
+        return int(datetime.fromisoformat(timestamp).timestamp())
+    except (TypeError, ValueError):
+        return ""
+
+
+def as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def snowflake_row(row):
+    urls = [u.strip() for u in (row.get("web_search_urls") or "").split(" | ") if u.strip()]
+    completed = row.get("parse_ok") == "true" and not (row.get("error") or "").strip()
+    input_tokens, output_tokens = as_int(row.get("input_tokens")), as_int(row.get("output_tokens"))
+    return {
+        "record_id": row.get("record_id", ""),
+        "dma_code": row.get("dma_code", ""),
+        "address": row.get("address", ""),
+        "property_name": row.get("master_property name", ""),
+        "run_id": row.get("run_id", ""),
+        "prompt": "",
+        "created_at": to_epoch(row.get("timestamp")),
+        "response_id": row.get("response_id", ""),
+        "response_text": row.get("raw_response", ""),
+        "web_search_urls": json.dumps(urls),
+        "status": "completed" if completed else "failed",
+        "error": row.get("error", ""),
+        "total_tokens": input_tokens + output_tokens,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
+
+
+def write_snowflake(output_path):
+    """Rebuild the Snowflake BULK_PROPERTIES export from the full main output file."""
+    existing = read_existing(output_path)
+    if existing is None:
+        return None
+    path = snowflake_path(output_path)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=SNOWFLAKE_COLUMNS, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
+        writer.writeheader()
+        for row in existing.to_dict("records"):
+            writer.writerow(snowflake_row(row))
+    return path
+
+
 def build_variables(row, names):
     """Build the prompt variables, passing only the ones listed in PROMPT_VARIABLES."""
     return {var: str(row.get(col, "") or "").strip() for col, var in VARIABLE_MAP.items() if var in names}
@@ -189,9 +255,13 @@ def call_api(client, config, variables):
     attempt = 0
     while True:
         try:
-            model_arg = {"model": config["model"]} if config["model"] else {}
+            optional = {}
+            if config["model"]:
+                optional["model"] = config["model"]
+            if config["reasoning_effort"]:
+                optional["reasoning"] = {"effort": config["reasoning_effort"]}
             return client.responses.create(
-                **model_arg,
+                **optional,
                 prompt={
                     "id": config["prompt_id"],
                     "version": config["prompt_version"],
@@ -465,7 +535,10 @@ def main():
     print(f"Prompt {config['prompt_id']} v{config['prompt_version']}, model={config['model'] or '(from prompt)'}, "
           f"concurrency={config['concurrency']}", flush=True)
     print(f"Prompt variables: {', '.join(config['prompt_variables'])}", flush=True)
+    if config["reasoning_effort"]:
+        print(f"Reasoning effort: {config['reasoning_effort']}", flush=True)
     if total == 0:
+        print(f"Snowflake export written to {write_snowflake(output_path)}")
         return
 
     client = OpenAI(api_key=config["api_key"], max_retries=0, timeout=600)
@@ -517,6 +590,7 @@ def main():
     print(f"  Total output tokens:   {stats['output_tokens']}")
     print(f"  Total web search calls: {stats['web_search_calls']}")
     print(f"Output written to {output_path}")
+    print(f"Snowflake export written to {write_snowflake(output_path)}")
 
 
 if __name__ == "__main__":

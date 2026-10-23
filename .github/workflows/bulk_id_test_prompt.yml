@@ -58,6 +58,7 @@ jobs:
           cp .env.example .env
           input_name="$(basename "${{ inputs.input_file }}")"
           echo "OUTPUT_FILE=${input_name%.*}_test_prompt_results.csv" >> "$GITHUB_ENV"
+          echo "SNOWFLAKE_FILE=${input_name%.*}_test_prompt_results_snowflake.csv" >> "$GITHUB_ENV"
           args=(--input "${{ inputs.input_file }}" --output "${input_name%.*}_test_prompt_results.csv")
           if [ -n "${{ inputs.limit }}" ]; then
             args+=(--limit "${{ inputs.limit }}")
@@ -69,6 +70,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bulk-id-test-prompt-results
-          path: bulk_id/${{ env.OUTPUT_FILE }}
+          path: |
+            bulk_id/${{ env.OUTPUT_FILE }}
+            bulk_id/${{ env.SNOWFLAKE_FILE }}
           retention-days: 30
           if-no-files-found: warn
