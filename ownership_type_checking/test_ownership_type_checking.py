@@ -78,6 +78,24 @@ class ComputeTriggersTests(unittest.TestCase):
         rules = [t["rule"] for t in triggers]
         self.assertIn("Low Unit-to-Building Ratio", rules)
 
+    def test_unit_to_building_ratio_falls_back_to_20plus_when_50plus_is_zero(self):
+        # Real, previously-mishandled discovery: for any property under 50 units,
+        # Master_Units_50+ (and Master_Building Count_50+) is populated with a literal 0, not
+        # left blank -- every property this tool had processed before had 50+ units, so this
+        # never mattered until a batch including smaller properties came along. A plain
+        # null/empty check would treat 0 as "present" and never fall back to the _20+ fields.
+        row = {
+            "Master_Ownership Type": "COA",
+            "Master_Property Name": "Some Small Condo",
+            "Master_Units_50+": "0",
+            "Master_Building Count_50+": "0",
+            "Master_Units_20+": "8",
+            "Master_Building Count_20+": "4",
+        }
+        triggers = otc.compute_triggers(row)
+        rules = [t["rule"] for t in triggers]
+        self.assertIn("Low Unit-to-Building Ratio", rules)
+
     def test_high_floor_count_excludes_apt_and_coa(self):
         row = {"Master_Ownership Type": "APT", "Master_Property Name": "Something", "Master_Floor Count": "10"}
         self.assertEqual(otc.compute_triggers(row), [])
@@ -101,6 +119,69 @@ class ComputeTriggersTests(unittest.TestCase):
         row = {"Master_Ownership Type": "COA", "Master_Property Name": "Something", "Leasing Company": "Acme Mgmt"}
         rules = [t["rule"] for t in otc.compute_triggers(row)]
         self.assertIn("Has Leasing Info", rules)
+
+
+class UnitBuildingResolutionTests(unittest.TestCase):
+    """_first_present()/resolve_units_and_buildings(): Master_Units_50+ (and Master_Building
+    Count_50+) is populated with a literal 0 -- not left null -- for any property under 50
+    units. Every property this tool had processed before had 50+ units, so this never
+    surfaced; the first batch including smaller properties would otherwise never fall back to
+    the _20+ fields at all."""
+
+    def test_first_present_treats_zero_as_missing_when_asked(self):
+        row = {"Master_Units_50+": "0", "Master_Units_20+": "35"}
+        value = otc._first_present(row, "Master_Units_50+", "Master_Units_20+", treat_zero_as_missing=True)
+        self.assertEqual(value, 35)
+
+    def test_first_present_treats_zero_as_a_real_value_by_default(self):
+        row = {"Master_Units_50+": "0", "Master_Units_20+": "35"}
+        value = otc._first_present(row, "Master_Units_50+", "Master_Units_20+")
+        self.assertEqual(value, 0)
+
+    def test_first_present_prefers_a_genuine_nonzero_50plus_value(self):
+        row = {"Master_Units_50+": "80", "Master_Units_20+": "40"}
+        value = otc._first_present(row, "Master_Units_50+", "Master_Units_20+", treat_zero_as_missing=True)
+        self.assertEqual(value, 80)
+
+    def test_resolve_units_and_buildings_falls_back_when_50plus_fields_are_zero(self):
+        row = {
+            "Master_Units_50+": "0",
+            "Master_Building Count_50+": "0",
+            "Master_Units_20+": "35",
+            "Master_Building Count_20+": "5",
+        }
+        units, buildings = otc.resolve_units_and_buildings(row)
+        self.assertEqual(units, 35)
+        self.assertEqual(buildings, 5)
+
+    def test_format_property_shows_one_resolved_unit_count_not_zero(self):
+        row = {
+            "RecordID": "900001",
+            "Master_Property Name": "Small Condo Co-op",
+            "Master_Units_50+": "0",
+            "Master_Building Count_50+": "0",
+            "Master_Units_20+": "35",
+            "Master_Building Count_20+": "5",
+        }
+        text = otc.format_property(row, [], {})
+        self.assertIn("Unit Count: 35", text)
+        self.assertIn("Building Count: 5", text)
+        self.assertNotIn("Unit Count: 0", text)
+        self.assertNotIn("Building Count: 0", text)
+
+    def test_format_property_shows_one_resolved_line_not_two_disagreeing_raw_columns(self):
+        # Real check against ~10,700 historical records found ~4% where Master_Units_50+ and
+        # Master_Units_20+ genuinely disagreed -- the model must only ever see one number.
+        row = {
+            "RecordID": "900002",
+            "Master_Property Name": "Big Complex",
+            "Master_Units_50+": "155",
+            "Master_Units_20+": "39",
+        }
+        text = otc.format_property(row, [], {})
+        self.assertIn("Unit Count: 155", text)
+        self.assertNotIn("39", text)
+        self.assertEqual(text.count("Unit Count:"), 1)
 
 
 class GuardrailTests(unittest.TestCase):

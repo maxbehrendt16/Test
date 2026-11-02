@@ -264,8 +264,30 @@ six rules are checks against `Master_Ownership Type` (never `Master_Property Typ
 (2.85% of flagged properties).**
 
 Fall back to `Master_Units_20+` / `Master_Building Count_20+` for the ratio calculations when the
-`_50+` fields are null. Use `Building Count Bin` as a sanity cross-check on the computed ratio if
-the raw counts look inconsistent with it.
+`_50+` fields are null **or zero**. Use `Building Count Bin` as a sanity cross-check on the
+computed ratio if the raw counts look inconsistent with it.
+
+**Critical, previously-undiscovered data fact: for any property with fewer than 50 units,
+`Master_Units_50+` (and, by the same data-provenance logic, `Master_Building Count_50+`) is
+populated with a literal `0`, not left blank.** Every property this tool had ever been run
+against before had 50+ units, so `Master_Units_50+` was always a genuine positive number and
+this never mattered — a check of ~10,700 historical records found it was never null and never
+below 50. The first batch to include properties under 50 units surfaced this: a naive
+null/blank check alone would treat that `0` as "present" and never fall back to
+`Master_Units_20+`/`Master_Building Count_20+` at all, corrupting the unit-to-building ratio
+for every small property and showing the model a literal "0 units"/"0 buildings" for a real,
+populated property. `_first_present()`'s `treat_zero_as_missing` parameter (used by
+`resolve_units_and_buildings()`, the single source of truth both the trigger math and the
+model-facing prompt now share) treats a `0` in either `_50+` field the same as a null for
+fallback purposes.
+
+Separately: the model is shown a single resolved "Unit Count"/"Building Count" line (computed
+via `resolve_units_and_buildings()`), never the raw `_50+`/`_20+` columns side by side. A check
+of that same ~10,700-record history found the two columns genuinely disagreed, sometimes
+substantially, in about 4% of rows (e.g. `Master_Units_50+` = 155 vs. `Master_Units_20+` = 39)
+— showing both would risk the model seeing two different counts for the same property with no
+clear signal which one to trust, the same shape of risk as the `Bulk Flag`/`% Bulk Overall`
+confusion in §10.1.
 
 **Naming rules match on substring, not whole word.** `Contains([Master_Property Name], "apt")`
 will match "Captains," "Aptos," or any other name that happens to contain that letter sequence,
@@ -1071,8 +1093,8 @@ of columns mapped here.
 | Property name | `Master_Property Name` |
 | **DB-listed ownership type — the value being checked** | **`Master_Ownership Type`** (APT / COA / HOA) — this is the field every trigger rule and every decision is about |
 | Physical structure type (context only — do not confuse with the field above) | `Master_Property Type` (SFU/MDU) |
-| Unit count | `Master_Units_50+` (fall back to `Master_Units_20+`) |
-| Building count | `Master_Building Count_50+` (fall back to `Master_Building Count_20+`); `Building Count Bin` as a sanity cross-check — drives the Low/High Unit-to-Building Ratio triggers |
+| Unit count | `Master_Units_50+` (fall back to `Master_Units_20+` when null **or zero** — see §3) |
+| Building count | `Master_Building Count_50+` (fall back to `Master_Building Count_20+` when null **or zero**); `Building Count Bin` as a sanity cross-check — drives the Low/High Unit-to-Building Ratio triggers. The model is shown one resolved count, never the raw `_50+`/`_20+` columns side by side — see §3. |
 | Floor count | `Master_Floor Count` — drives the High Floor Count trigger |
 | Association fees | `Master_Monthly Association Fees` — drives the Has Fees trigger; cross-check against §5.8 fee-miscoding pitfall; also relevant to the §4.1 bounded-exception check |
 | Leasing company presence | `Leasing Company`, `Leasing Company Contact Name`, `Leasing Company Phone` — drives the Has Leasing Info trigger; treat per §5.1, never sufficient alone |

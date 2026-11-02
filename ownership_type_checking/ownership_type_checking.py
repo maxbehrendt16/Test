@@ -1400,22 +1400,45 @@ def _genuine_sale_search_performed(row: dict, result: dict) -> bool:
     return any(SALE_SEARCH_QUERY_RE.search(query) for query in queries)
 
 
-def _first_present(row: dict, *keys):
-    """First non-null/non-empty value among the given keys, or None."""
+def _first_present(row: dict, *keys, treat_zero_as_missing: bool = False):
+    """First non-null/non-empty value among the given keys, or None.
+
+    treat_zero_as_missing: a real, previously-mishandled discovery -- Master_Units_50+ (and,
+    by the same CLP data-provenance logic, Master_Building Count_50+) is populated with a
+    literal 0 for any property with fewer than 50 units, NOT left null. Every property this
+    tool had ever processed before had 50+ units, so Master_Units_50+ was always a genuine
+    positive number and this never mattered -- but the first batch to include smaller
+    properties would otherwise have _first_present() return that bogus 0 immediately (0 is
+    "present" under a plain null check) and never fall back to Master_Units_20+/Master_Building
+    Count_20+ at all, corrupting the unit-to-building ratio and showing the model "0 units"/"0
+    buildings" for a real, populated property."""
     for key in keys:
         val = row.get(key)
         num = _parse_number(val)
-        if num is not None:
+        if num is not None and not (treat_zero_as_missing and num == 0):
             return num
     return None
 
 
+def resolve_units_and_buildings(row: dict):
+    """The single source of truth for this property's unit/building counts, used both for the
+    Unit-to-Building-Ratio trigger (compute_unit_building_ratio()) and for what's actually shown
+    to the model (format_property()) -- previously the model was shown the two raw _50+/_20+
+    columns separately instead of this resolved value, which could show two disagreeing numbers
+    for the same property with no indication which one to trust (a real check of ~10,700
+    historical records found about 4% where Master_Units_50+ and Master_Units_20+ genuinely
+    disagreed, sometimes substantially)."""
+    units = _first_present(row, "Master_Units_50+", "Master_Units_20+", treat_zero_as_missing=True)
+    buildings = _first_present(row, "Master_Building Count_50+", "Master_Building Count_20+", treat_zero_as_missing=True)
+    return units, buildings
+
+
 def compute_unit_building_ratio(row: dict):
-    """Returns (ratio_or_None, note). Falls back from the _50+ fields to _20+ when null,
-    per Section 3. Cross-checks against Building Count Bin only to surface a note for the
-    model's context -- it never gates whether a rule fires."""
-    units = _first_present(row, "Master_Units_50+", "Master_Units_20+")
-    buildings = _first_present(row, "Master_Building Count_50+", "Master_Building Count_20+")
+    """Returns (ratio_or_None, note). Falls back from the _50+ fields to _20+ when null OR zero
+    (see _first_present's treat_zero_as_missing), per Section 3. Cross-checks against Building
+    Count Bin only to surface a note for the model's context -- it never gates whether a rule
+    fires."""
+    units, buildings = resolve_units_and_buildings(row)
     if units is None or buildings is None or buildings == 0:
         return None, None
     ratio = units / buildings
@@ -1424,6 +1447,7 @@ def compute_unit_building_ratio(row: dict):
     if bin_value:
         note = f"Building Count Bin on file: '{bin_value}' (sanity cross-check against computed ratio)."
     return ratio, note
+
 
 
 def compute_triggers(row: dict) -> list:
@@ -1507,10 +1531,6 @@ REASONING_FIELDS = [
     ("Master_Property Name", "Property Name"),
     ("Master_Ownership Type", "DB-listed Ownership Type (the field being verified)"),
     ("Master_Property Type", "Physical Structure Type (context only -- NOT the field being verified)"),
-    ("Master_Units_50+", "Unit Count (50+ threshold)"),
-    ("Master_Units_20+", "Unit Count (20+ threshold, fallback)"),
-    ("Master_Building Count_50+", "Building Count (50+ threshold)"),
-    ("Master_Building Count_20+", "Building Count (20+ threshold, fallback)"),
     ("Building Count Bin", "Building Count Bin (sanity cross-check)"),
     ("Master_Floor Count", "Floor Count"),
     ("Master_Original Build Year", "Original Build Year (general context, e.g. assessing §5.3 lease-up-phase ambiguity qualitatively -- there is no minimum-age requirement for the §4.1 Tier-3 exception)"),
@@ -1559,6 +1579,17 @@ def format_property(row: dict, triggers: list, url_cache: dict) -> str:
         if fetched:
             lines.append(f"- Pre-fetched content from prior-research URL {url_value} (verify it actually belongs to this property):")
             lines.append(f"  \"{fetched}\"")
+
+    # Unit/building counts are shown as a single resolved number rather than the raw _50+/_20+
+    # columns separately -- see resolve_units_and_buildings()'s docstring. Showing both raw
+    # columns risked the model seeing two disagreeing counts for the same property with no
+    # indication which to trust (or, for a property under 50 units, a literal "0" from the
+    # _50+ column, which is populated with 0 rather than left blank).
+    units, buildings = resolve_units_and_buildings(row)
+    if units is not None:
+        lines.append(f"- Unit Count: {units:g}")
+    if buildings is not None:
+        lines.append(f"- Building Count: {buildings:g}")
     _, ratio_note = compute_unit_building_ratio(row)
     if ratio_note:
         lines.append(f"- {ratio_note}")
