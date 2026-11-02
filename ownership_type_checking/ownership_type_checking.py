@@ -2097,19 +2097,30 @@ def _enforce_sales_evidence_guardrail(db_type: str, result: dict) -> dict:
 # - A nameless Millbrae, CA record: concluded the property is "a single-use religious property"
 #   sourced only from countyoffice.org and realtyhop.com -- commercial public-records
 #   aggregators that sound official but are not primary government/assessor sources.
-# None of these are ever a legitimate Tier 1 or 2 source on their own, regardless of what the
-# model's self-reported evidence_tier_used claims -- real Tier 1/2 evidence (a county recorder
-# declaration, a state business registry, a tax assessor's own record, a GIS parcel map) does
-# not live on these domains. Deliberately a denylist, not an allowlist: a genuine assessor/
-# registry/GIS source lives on one of thousands of different county/state domains that can't be
-# enumerated, so an unrecognized domain is never penalized -- only a claim backed EXCLUSIVELY by
-# known Tier-3-only/pseudo-official domains is downgraded.
+# A second, larger live batch surfaced the same pattern on more domains: tophap.com (confirmed,
+# independently, to be a commercial real-estate-analytics platform, not an official source --
+# "County parcel records show separate APNs..." was actually sourced only from it plus
+# countyoffice.org) and floridaparcels.com/az.propertytaxwebsite.com/condodossier.com (same
+# naming pattern -- a generic, non-.gov domain that reads as if it were an official county
+# site -- used the same way). None of these are ever a legitimate Tier 1 or 2 source on their
+# own, regardless of what the model's self-reported evidence_tier_used claims -- real Tier 1/2
+# evidence (a county recorder declaration, a state business registry, a tax assessor's own
+# record, a GIS parcel map) does not live on these domains. Deliberately a denylist, not an
+# allowlist: a genuine assessor/registry/GIS source lives on one of thousands of different
+# county/state domains that can't be enumerated, so an unrecognized domain is never penalized --
+# only a claim backed EXCLUSIVELY by known Tier-3-only/pseudo-official domains is downgraded.
+# Known residual gap (not fixable by enumeration): a genuine regional MLS site (e.g. njmls.com)
+# is correctly Tier 3 per the spec, but if a model mislabels it "Tier 2" anyway, this denylist
+# can't catch it -- there are hundreds of different regional MLS domains, unlike the small,
+# nameable set of aggregator sites that masquerade as official records.
 TIER3_ONLY_SOURCE_DOMAIN_RE = re.compile(
     r"://(?:[a-z0-9-]+\.)*(zillow\.com|redfin\.com|realtor\.com|trulia\.com|loopnet\.com|"
     r"apartments\.com|apartmentratings\.com|rent\.com|rentcafe\.com|forrent\.com|hotpads\.com|"
-    r"streeteasy\.com|compass\.com|countyoffice\.org|realtyhop\.com)",
+    r"streeteasy\.com|compass\.com|countyoffice\.org|realtyhop\.com|tophap\.com|"
+    r"floridaparcels\.com|propertytaxwebsite\.com|condodossier\.com)",
     re.IGNORECASE,
 )
+
 
 
 def _enforce_evidence_tier_domain_backstop(result: dict) -> dict:

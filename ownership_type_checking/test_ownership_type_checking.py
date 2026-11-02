@@ -1415,6 +1415,32 @@ class EvidenceTierDomainBackstopTests(unittest.TestCase):
         fixed = otc._enforce_evidence_tier_domain_backstop(result)
         self.assertEqual(fixed["evidence_tier_used"], "Tier 3")
 
+    def test_second_batch_pseudo_official_domains_also_count(self):
+        # Real reported failures from a second live batch: evidence_tier_used "Tier 1"/"Tier 2"
+        # claims sourced only from tophap.com (independently confirmed to be a commercial
+        # real-estate-analytics platform, not an official source) and floridaparcels.com -- same
+        # "sounds official, isn't" pattern as countyoffice.org/realtyhop.com.
+        result = self._override(
+            evidence_tier_used="Tier 1",
+            sources=[
+                "https://www.zillow.com/b/highland-beach-club-condominiums-boca-raton-fl-5Xn39Y/?utm_source=openai",
+                "https://www.redfin.com/FL/Highland-Beach/3604-S-Ocean-Blvd-33487/unit-105/home/42550577?utm_source=openai",
+                "https://www.countyoffice.org/property-record-3604-s-ocean-blvd-apt-101-highland-beach-fl-33487-99a/?utm_source=openai",
+                "https://floridaparcels.com/property/60/24434633420041080?utm_source=openai",
+            ],
+        )
+        fixed = otc._enforce_evidence_tier_domain_backstop(result)
+        self.assertEqual(fixed["evidence_tier_used"], "Tier 3")
+
+        result2 = self._override(
+            sources=[
+                "https://www.tophap.com/buildings/details/5812-N-12TH-ST-PHOENIX-AZ-85014/22344201?utm_source=openai",
+                "https://www.countyoffice.org/property-record-5812-n-12th-st-unit-30-phoenix-az-85014-b69/?utm_source=openai",
+            ]
+        )
+        fixed2 = otc._enforce_evidence_tier_domain_backstop(result2)
+        self.assertEqual(fixed2["evidence_tier_used"], "Tier 3")
+
     def _full_result(self, **overrides):
         result = {
             "determined_type": "COA",
