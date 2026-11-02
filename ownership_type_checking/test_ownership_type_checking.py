@@ -1345,6 +1345,161 @@ class SalesEvidenceGuardrailTests(unittest.TestCase):
         self.assertTrue(result["sales_evidence_override_blocked"])
 
 
+class EvidenceTierDomainBackstopTests(unittest.TestCase):
+    """A self-reported evidence_tier_used of Tier 1/2 must actually be backed by something other
+    than known Tier-3-only listing/aggregator sites -- otherwise it skips the Tier-3 exception's
+    entire gating mechanism, which only activates when evidence_tier_used is 'Tier 3'/'Mixed'."""
+
+    def _override(self, **overrides):
+        result = {
+            "decision": "Override",
+            "determined_type": "COA",
+            "evidence_tier_used": "Tier 2",
+            "reasoning": "Multiple sources confirm condo structure.",
+            "sources": ["https://www.zillow.com/b/some-condos/", "https://www.loopnet.com/Listing/x/"],
+        }
+        result.update(overrides)
+        return result
+
+    def test_all_sources_denylisted_downgrades_to_tier_3(self):
+        result = self._override()
+        fixed = otc._enforce_evidence_tier_domain_backstop(result)
+        self.assertEqual(fixed["evidence_tier_used"], "Tier 3")
+
+    def test_one_non_denylisted_source_is_left_alone(self):
+        result = self._override(
+            sources=["https://www.zillow.com/b/some-condos/", "https://www.co.unknowncounty.gov/assessor/x"]
+        )
+        fixed = otc._enforce_evidence_tier_domain_backstop(result)
+        self.assertEqual(fixed["evidence_tier_used"], "Tier 2")
+
+    def test_tier_3_claim_is_not_touched(self):
+        result = self._override(evidence_tier_used="Tier 3")
+        fixed = otc._enforce_evidence_tier_domain_backstop(result)
+        self.assertEqual(fixed["evidence_tier_used"], "Tier 3")
+
+    def test_confirmed_decision_is_not_touched(self):
+        result = self._override(decision="Confirmed")
+        fixed = otc._enforce_evidence_tier_domain_backstop(result)
+        self.assertEqual(fixed["evidence_tier_used"], "Tier 2")
+
+    def test_no_sources_is_not_touched(self):
+        # Caught by _enforce_minimum_sources_guardrail() instead -- not this backstop's concern.
+        result = self._override(sources=[])
+        fixed = otc._enforce_evidence_tier_domain_backstop(result)
+        self.assertEqual(fixed["evidence_tier_used"], "Tier 2")
+
+    def test_pseudo_official_aggregator_domains_also_count(self):
+        result = self._override(
+            sources=[
+                "https://www.countyoffice.org/property-record-x",
+                "https://www.realtyhop.com/property-records/x",
+            ]
+        )
+        fixed = otc._enforce_evidence_tier_domain_backstop(result)
+        self.assertEqual(fixed["evidence_tier_used"], "Tier 3")
+
+    def _full_result(self, **overrides):
+        result = {
+            "determined_type": "COA",
+            "decision": "Override",
+            "confidence": "High",
+            "evidence_tier_used": "Tier 2",
+            "reasoning": "Placeholder",
+            "sources": [],
+            "structural_edge_case": "none",
+            "tier3_exception_invoked": "no",
+            "tier3_exception_direction": "not_applicable",
+            "tier3_reverse_attempt2_exhausted": "not_applicable",
+            "tier3_independent_source_count": 0,
+            "tier3_contradicting_evidence": "not_applicable",
+            "tier3_internal_db_corroboration": "",
+            "tier3_structural_edge_case_ruled_out": "not_applicable",
+            "ownership_concentration": "not_applicable",
+            "reverse_conversion_detected": "not_applicable",
+            "multi_name_all_agree": "not_applicable",
+            "tier3_sales_listing_search_performed": "not_applicable",
+            "tier3_sales_evidence_found": "not_applicable",
+            "ownership_concentration_verified_externally": "not_applicable",
+            "ownership_concentration_contradicting_evidence": "not_applicable",
+            "tier3_dual_association_search_performed": "not_applicable",
+            "tier3_entity_name_registry_search_performed": "not_applicable",
+            "apt_override_sale_evidence_found": "not_applicable",
+            "ownership_concentration_evidence_anchored_to_address": "not_applicable",
+        }
+        result.update(overrides)
+        return result
+
+    def test_dodge_condominiums_end_to_end(self):
+        # Real reported failure from a live test batch: "Dodge Condominiums" (DB: APT) was
+        # overridden to COA on evidence_tier_used "Tier 2" -- despite its own reasoning saying
+        # "...aligning with Tier 3 evidence" -- citing only a Zillow building page, a Realtor.com
+        # unit listing, and a LoopNet commercial listing (all textbook Tier 3), plus a claimed
+        # "county tax/parcel info" finding with no corresponding source at all.
+        row = {"RecordID": "095505191", "Master_Property Name": "Dodge Condominiums", "Master_Ownership Type": "APT"}
+        fake_result = self._full_result(
+            reasoning=(
+                "Multiple individually listed and sold condo units (Apt 201, 203, 503) within "
+                "'902 Dodge Condominiums' at the specified address, with HOA fees confirmed. "
+                "Zillow's property type is 'Condo,' and county tax/parcel info supports this "
+                "structure, aligning with Tier 3 evidence."
+            ),
+            sources=[
+                "https://www.zillow.com/b/902-dodge-condominiums-omaha-ne-5XqNpn/?utm_source=openai",
+                "https://www.realtor.com/realestateandhomes-detail/902-Dodge-St-Apt-203_Omaha_NE_68102_M86264-17373?utm_source=openai",
+                "https://www.loopnet.com/Listing/902-Dodge-St-Omaha-NE/15506599/?utm_source=openai",
+            ],
+        )
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "APT")
+
+    def test_millbrae_religious_property_end_to_end(self):
+        # Real reported failure: a nameless COA-listed record was overridden to APT on
+        # evidence_tier_used "Tier 2," concluding it's "a single-use religious property," sourced
+        # only from countyoffice.org and realtyhop.com -- commercial public-records aggregators,
+        # not primary government/assessor sources.
+        row = {"RecordID": "078259764", "Master_Property Name": None, "Master_Ownership Type": "COA"}
+        fake_result = self._full_result(
+            determined_type="APT",
+            reasoning=(
+                "County records list this as a single-use religious property, not residential, "
+                "with no condo declaration, HOA, or multiple residential units. No Tier 1 evidence "
+                "found, but strong Tier 2 evidence contradicts COA label. Override to APT, "
+                "confidence Medium."
+            ),
+            confidence="Medium",
+            sources=[
+                "https://www.countyoffice.org/property-record-600-el-camino-real-millbrae-ca-94030-77d/?utm_source=openai",
+                "https://www.realtyhop.com/property-records/600-el-camino-real-millbrae-ca-94030",
+            ],
+        )
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Not Enough Info")
+        self.assertEqual(result["determined_type"], "COA")
+
+    def test_legitimate_tier_2_override_with_a_real_registry_source_still_works(self):
+        # A genuinely-earned Tier 2 override, backed by an unrecognized (but real-looking)
+        # government assessor domain, must not be disturbed by this backstop.
+        row = {"RecordID": "555999", "Master_Property Name": "Example Gardens", "Master_Ownership Type": "HOA"}
+        fake_result = self._full_result(
+            determined_type="APT",
+            reasoning="County assessor parcel data shows all units under one owner, no HOA on file.",
+            confidence="High",
+            tier3_sales_listing_search_performed="not_applicable",
+            sources=["https://www.co.examplecounty.gov/assessor/parcel/12345"],
+        )
+        with mock.patch("ownership_type_checking.research_property", return_value=fake_result), \
+             mock.patch("ownership_type_checking.fetch_url_cached", return_value=None):
+            result = otc.process_property(None, "gpt-4o", row, {})
+        self.assertEqual(result["decision"], "Override")
+        self.assertEqual(result["determined_type"], "APT")
+
+
 class SearchQueryExtractionTests(unittest.TestCase):
     """Plumbing: research_property() must inject the model's ACTUAL issued search queries into
     the result (not just the self-reported search-performed fields), so guardrails can verify a
