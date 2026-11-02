@@ -967,6 +967,22 @@ class Tier3ExceptionGuardrailTests(unittest.TestCase):
         fixed = otc._enforce_tier3_override_guardrail(row, result)
         self.assertEqual(fixed["decision"], "Override")
 
+    def test_registry_search_gate_does_not_crash_on_a_nan_property_name(self):
+        # Real reported failure: RecordID 019757682 -- Master_Property Name is a float NaN (a
+        # nameless record read via pandas), and this gate passed row.get("Master_Property Name")
+        # straight into _has_legal_entity_name() without normalizing it first. `name or ""`
+        # doesn't catch NaN (a NaN float is truthy in Python), so the regex search blew up with
+        # "TypeError: expected string or bytes-like object, got 'float'" -- silently swallowed by
+        # process_property()'s error handling, but the property never actually got researched.
+        row = self._large_row(**{"Master_Property Name": float("nan")})
+        result = self._clean_override(
+            tier3_entity_name_registry_search_performed="not_applicable",
+            _searched_queries=["147 Avenue A for sale"],
+        )
+        fixed = otc._enforce_tier3_override_guardrail(row, result)
+        self.assertEqual(fixed["decision"], "Override")
+
+
     def test_registry_search_gate_matches_owners_association_and_bare_condominium_variants(self):
         for name in ["Willow Owners Association, Inc.", "Willow Condominium, Inc."]:
             with self.subTest(name=name):

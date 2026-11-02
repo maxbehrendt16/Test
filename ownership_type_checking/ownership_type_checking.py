@@ -1362,8 +1362,8 @@ LEGAL_ENTITY_NAME_RE = re.compile(
 )
 
 
-def _has_legal_entity_name(name: str) -> bool:
-    return bool(LEGAL_ENTITY_NAME_RE.search(name or ""))
+def _has_legal_entity_name(name) -> bool:
+    return bool(LEGAL_ENTITY_NAME_RE.search(_norm_text(name)))
 
 
 # Real, previously-mishandled failures ("Mountain Ridge Garden Homes Apartments," "Castle
