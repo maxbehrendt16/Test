@@ -350,6 +350,21 @@ rather than two naming rules that likely share the same root cause).
 - Property's own marketing/leasing website ("apply now," "leasing office," "floor plans")
 - General web search snippets, forum mentions, local news human-interest coverage
 
+**Self-labeling evidence as Tier 1/2 does not make it so — this is enforced in code against the
+sources actually cited.** A real batch surfaced three Overrides self-reported as `evidence_tier_used:
+Tier 2` whose cited sources were, in every case, ONLY Zillow/Realtor.com/LoopNet-style listing
+pages or a commercial public-records aggregator (`countyoffice.org`, `realtyhop.com` — these sound
+official but merely scrape public data; they are not primary assessor/registry sources). One of
+these ("Dodge Condominiums") even said so itself: *"...aligning with Tier 3 evidence,"* in the same
+sentence it submitted `Tier 2`. When an Override's sources are EXCLUSIVELY drawn from a known list
+of Tier-3-only/pseudo-official domains, `evidence_tier_used` is corrected to `Tier 3` in code
+regardless of the self-reported label — which then subjects it to the normal §4.1/§4.2 bounded-
+exception gating (and, absent that, a downgrade to Not Enough Info) rather than letting an inflated
+tier label skip that gate entirely. This is deliberately a denylist, not an allowlist: a genuine
+assessor/registry/GIS source can live on any of thousands of different county/state domains that
+can't be enumerated, so a single source outside the known denylist (even an unrecognized one) is
+enough to leave the self-reported tier alone.
+
 **None of these three tiers is ever satisfied by the DB's own pre-filled fields on the record being
 checked** — `Master_Monthly Association Fees`, `Owner`/`Cleaned Owner`, `Property Manager`,
 `Developer Name`, or any other column already given about that specific row. Those fields describe
@@ -1615,3 +1630,43 @@ DB's current (APT) label, regardless of how strong the underlying sale/ownership
 looks. Not applied to an ordinary COA↔HOA relabeling (`db_type` already COA/HOA) — that distinction
 has nothing to do with a property being confused for a same-named neighborhood or a different
 address.
+
+### "Dodge Condominiums" & a nameless Millbrae, CA record — the cases that motivated the evidence-tier domain backstop
+
+Two Overrides from a live test batch, both self-reported as `evidence_tier_used: Tier 2`, both
+backed ONLY by sources that are textbook Tier 3 or worse.
+
+**"Dodge Condominiums"** (DB: APT) was overridden to COA on: *"Multiple individually listed and
+sold condo units (Apt 201, 203, 503) within '902 Dodge Condominiums'... Zillow's property type is
+'Condo,' and county tax/parcel info supports this structure, aligning with Tier 3 evidence."* The
+reasoning itself says "aligning with Tier 3 evidence" in the very same sentence as submitting
+`Tier 2`. Its three sources — a Zillow building page, a Realtor.com unit listing, a LoopNet
+commercial listing — are all textbook Tier 3 per this section's own hierarchy, and the claimed
+"county tax/parcel info" has no corresponding source anywhere in `sources`.
+
+**A nameless record** (DB: COA, address "600 El Camino Real, Millbrae, CA") was overridden to APT
+on: *"County records list this as a single-use religious property, not residential... strong Tier 2
+evidence contradicts COA label."* Its two sources, `countyoffice.org` and `realtyhop.com`, are
+commercial public-records aggregators that sound official but are not primary government/assessor
+sources — and concluding a DB-listed residential record is actually "a single-use religious
+property" from only those two aggregators, with no property name on file to cross-check against, is
+exactly the kind of low-plausibility, weakly-sourced conclusion this tier-mislabeling backstop
+exists to catch before it reaches a human reviewer as a confidently-labeled "Tier 2" finding.
+
+| Field | Dodge Condominiums | Millbrae record |
+|---|---|---|
+| `determined_type` | **APT** (no change) | **COA** (no change) |
+| `decision` | **Not Enough Info** | **Not Enough Info** |
+| Self-reported tier | Tier 2 | Tier 2 |
+| Corrected tier | Tier 3 (all sources denylisted) | Tier 3 (all sources denylisted) |
+
+Both are caught by `_enforce_evidence_tier_domain_backstop()` (see §4 above): when an Override's
+`evidence_tier_used` is self-reported as Tier 1 or 2 but every single cited source matches a known
+Tier-3-only/pseudo-official domain, the tier is corrected to Tier 3 in code — which then puts it
+through the normal §4.1/§4.2 bounded-exception gating via `_enforce_tier3_override_guardrail()`
+(right after this backstop in the pipeline), and since neither case was invoking either exception,
+both are downgraded to Not Enough Info. A mixed case — one denylisted source plus one genuinely
+unrecognized domain — is deliberately left untouched, since the backstop is a denylist, not an
+allowlist: a real nameless Alexandria, VA record in the same batch cited both a Zillow page AND a
+real `alexandriava.gov` PDF, and keeps its self-reported Tier 2 label since not every source is a
+known Tier-3-only domain.

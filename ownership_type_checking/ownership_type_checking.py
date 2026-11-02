@@ -2085,6 +2085,67 @@ def _enforce_sales_evidence_guardrail(db_type: str, result: dict) -> dict:
     return result
 
 
+# Content-based backstop for a self-reported evidence_tier_used that doesn't match what was
+# actually cited. Real, previously-mishandled failures from a test batch (all three claimed
+# "Tier 2" on an Override):
+# - "Dodge Condominiums": reasoning literally says "...aligning with Tier 3 evidence" in the
+#   same sentence as submitting evidence_tier_used "Tier 2" -- its three sources (a Zillow
+#   building page, a Realtor.com unit listing, a LoopNet commercial listing) are all textbook
+#   Tier 3 per the spec's own evidence hierarchy, not Tier 2.
+# - A nameless Alexandria, VA record: cited only a Zillow page and a city PDF for a claimed
+#   "assessor" finding with no assessor source anywhere.
+# - A nameless Millbrae, CA record: concluded the property is "a single-use religious property"
+#   sourced only from countyoffice.org and realtyhop.com -- commercial public-records
+#   aggregators that sound official but are not primary government/assessor sources.
+# None of these are ever a legitimate Tier 1 or 2 source on their own, regardless of what the
+# model's self-reported evidence_tier_used claims -- real Tier 1/2 evidence (a county recorder
+# declaration, a state business registry, a tax assessor's own record, a GIS parcel map) does
+# not live on these domains. Deliberately a denylist, not an allowlist: a genuine assessor/
+# registry/GIS source lives on one of thousands of different county/state domains that can't be
+# enumerated, so an unrecognized domain is never penalized -- only a claim backed EXCLUSIVELY by
+# known Tier-3-only/pseudo-official domains is downgraded.
+TIER3_ONLY_SOURCE_DOMAIN_RE = re.compile(
+    r"://(?:[a-z0-9-]+\.)*(zillow\.com|redfin\.com|realtor\.com|trulia\.com|loopnet\.com|"
+    r"apartments\.com|apartmentratings\.com|rent\.com|rentcafe\.com|forrent\.com|hotpads\.com|"
+    r"streeteasy\.com|compass\.com|countyoffice\.org|realtyhop\.com)",
+    re.IGNORECASE,
+)
+
+
+def _enforce_evidence_tier_domain_backstop(result: dict) -> dict:
+    """Downgrades a self-reported Tier 1/2 Override to Tier 3 when every single cited source is
+    a known Tier-3-only listing/aggregator domain (see TIER3_ONLY_SOURCE_DOMAIN_RE) -- letting
+    the normal Tier-3 machinery (_enforce_tier3_override_guardrail, right after this one) decide
+    whether it can actually stand, instead of an inflated tier label skipping that gate entirely.
+    Runs early, before Rule A/B and the Tier-3 exception guardrail, so everything downstream sees
+    the corrected tier rather than the model's inflated one.
+
+    Only fires when EVERY cited source matches the denylist -- a single source outside it (even
+    an unrecognized one) is enough to leave evidence_tier_used alone, since this is meant to catch
+    a tier claim resting entirely on listing sites, not to second-guess a claim that also cites
+    something that might genuinely be authoritative."""
+    if result.get("decision") != "Override" or result.get("evidence_tier_used") not in ("Tier 1", "Tier 2"):
+        return result
+    sources = result.get("sources", []) or []
+    if not sources or not all(TIER3_ONLY_SOURCE_DOMAIN_RE.search(url) for url in sources):
+        return result
+
+    result = dict(result)
+    original = result.get("reasoning", "")
+    claimed_tier = result.get("evidence_tier_used")
+    result["evidence_tier_used"] = "Tier 3"
+    result["reasoning"] = (
+        f"Automatically relabeled evidence_tier_used from a self-reported '{claimed_tier}' to "
+        f"'Tier 3': every cited source ({'; '.join(sources)}) is a known Tier-3-only listing/"
+        f"aggregator site (MLS/Zillow/Redfin/Realtor/LoopNet/Apartments.com-style listings, or a "
+        f"commercial public-records aggregator like countyoffice.org/realtyhop.com that merely "
+        f"scrapes public data rather than being a primary assessor/registry source) -- none of "
+        f"these are ever a Tier 1 or 2 source on their own, regardless of what the reasoning "
+        f"claims. Original reasoning: {original}"
+    )
+    return result
+
+
 MASTER_PLANNED_RE = re.compile(r"master[- ]planned communit", re.IGNORECASE)
 FOR_RENT_AND_SALE_RE = re.compile(
     r"for rent and for sale|for sale and for rent|for-rent and for-sale|for-sale and for-rent",
@@ -2861,6 +2922,7 @@ def process_property(client, model: str, row: dict, url_cache: dict) -> dict:
         result = _enforce_structural_edge_case_guardrail(db_type, result)
         result = _enforce_coop_mention_guardrail(db_type, result)
         result = _enforce_sales_evidence_guardrail(db_type, result)
+        result = _enforce_evidence_tier_domain_backstop(result)
         result = _enforce_functional_ownership_guardrail(row, db_type, result)
         result = _enforce_tier3_override_guardrail(row, result)
         result = _enforce_minimum_sources_guardrail(result)
